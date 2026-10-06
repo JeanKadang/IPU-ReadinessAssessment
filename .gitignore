@@ -3,6 +3,7 @@ reports/
 output/
 
 # Pester / test artifacts
+testResults.xml
 TestResults.xml
 coverage.xml
 
