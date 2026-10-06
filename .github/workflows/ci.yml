@@ -4,6 +4,17 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Weekly run on main, so changes in the runner images (Windows updates,
+  # PowerShell, tools) show up even when nobody opens a pull request.
+  # A failed scheduled run opens or updates an issue (job "notify").
+  schedule:
+    - cron: '17 5 * * 1'   # Mondays 05:17 UTC
+  workflow_dispatch:
+    inputs:
+      test_notification:
+        description: 'Run the notify job without a failure (tests the issue it writes)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -18,7 +29,9 @@ jobs:
   pester:
     # Stable job names: "pester (Windows PowerShell 5.1)" and "pester (PowerShell 7)".
     name: pester (${{ matrix.name }})
-    runs-on: windows-latest
+    # Images are named, not windows-latest, so a moved label cannot change
+    # what a green run means. The unit tests do not depend on the image.
+    runs-on: windows-2025
     strategy:
       fail-fast: false
       matrix:
@@ -49,11 +62,16 @@ jobs:
     # Runs the real script end to end on the runner (Pre, then Post against
     # the Pre result) and validates the JSON against docs/result-schema.json.
     # Nothing is uploaded: the reports describe the runner in detail.
-    name: smoke (${{ matrix.name }})
-    runs-on: windows-latest
+    # Every Windows Server image GitHub offers (2025 and 2022; 2019 was
+    # retired in 2025), because what the script reads differs per release.
+    # Stable job names: "smoke (<shell>, <image>)".
+    name: smoke (${{ matrix.name }}, ${{ matrix.image }})
+    runs-on: ${{ matrix.image }}
     strategy:
       fail-fast: false
       matrix:
+        image: [windows-2025, windows-2022]
+        name: [Windows PowerShell 5.1, PowerShell 7]
         include:
           - name: Windows PowerShell 5.1
             shell: powershell
@@ -69,7 +87,7 @@ jobs:
 
   lint:
     name: lint (PSScriptAnalyzer)
-    runs-on: windows-latest
+    runs-on: windows-2025
     defaults:
       run:
         shell: pwsh
@@ -79,3 +97,39 @@ jobs:
         run: Install-Module PSScriptAnalyzer -RequiredVersion $env:PSSA_VERSION -Scope CurrentUser -Force
       - name: Run PSScriptAnalyzer
         run: ./build/Invoke-CiLint.ps1 -FailOn Warning
+
+  notify:
+    # Makes a failed scheduled run visible: opens an issue, or comments on the
+    # open one, instead of relying on someone reading the Actions tab.
+    name: notify (scheduled run failed)
+    needs: [pester, smoke, lint]
+    if: >-
+      always() && (
+        (github.event_name == 'schedule' && contains(needs.*.result, 'failure')) ||
+        (github.event_name == 'workflow_dispatch' && inputs.test_notification)
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RESULTS: 'pester=${{ needs.pester.result }}, smoke=${{ needs.smoke.result }}, lint=${{ needs.lint.result }}'
+          TEST: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          title='Scheduled CI run failed'
+          if [ "$TEST" = 'true' ]; then title='Scheduled CI run failed (notification test)'; fi
+          body="The ${GITHUB_EVENT_NAME} CI run on main did not pass: ${RESULTS}.
+
+          Run: ${RUN_URL}
+
+          A change in the runner image (Windows updates, PowerShell, tools) can cause this without a code change. Open the run, fix the cause in a branch, and close this issue with a link to the fix."
+          existing=$(gh issue list --state open --search "\"${title}\" in:title" --json number,title --jq ".[] | select(.title == \"${title}\") | .number" | head -n 1)
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body" --label bug --label testing
+          fi
