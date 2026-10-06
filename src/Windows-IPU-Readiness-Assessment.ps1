@@ -657,27 +657,38 @@ function Invoke-NativeCapture {
     # Runs a native command with a timeout and captured output. Used for every
     # external tool so that stderr output never becomes a terminating
     # PowerShell error and a hung tool cannot stall the whole assessment.
+    # The process is started through System.Diagnostics.Process (not
+    # Start-Process -PassThru), so the exit code is available even when the
+    # tool exits at once (#66). Output is read as raw bytes in the background
+    # and decoded by ConvertFrom-NativeByteArray (sfc.exe writes UTF-16).
     param(
         [Parameter(Mandatory=$true)][string]$FilePath,
         [string[]]$ArgumentList = @(),
         [int]$TimeoutSeconds = 120
     )
-    $id = [guid]::NewGuid().ToString('N')
-    $stdout = Join-Path ([IO.Path]::GetTempPath()) ('IPU-' + $id + '.out')
-    $stderr = Join-Path ([IO.Path]::GetTempPath()) ('IPU-' + $id + '.err')
     $result = [pscustomobject]@{ ExitCode=$null; Output=''; Lines=@(); TimedOut=$false; Error='' }
+    $process = $null
     try {
         $quoted = @()
         foreach ($arg in $ArgumentList) {
             if ($arg -match '\s' -and $arg -notmatch '^".*"$') { $quoted += ('"' + $arg + '"') } else { $quoted += $arg }
         }
-        $startArgs = @{
-            FilePath = $FilePath; PassThru = $true; NoNewWindow = $true
-            RedirectStandardOutput = $stdout; RedirectStandardError = $stderr; ErrorAction = 'Stop'
-        }
-        if ($quoted.Count -gt 0) { $startArgs.ArgumentList = $quoted }
-        $process = Start-Process @startArgs
-        $null = $process.Handle   # ensures ExitCode is populated on Windows PowerShell
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $FilePath
+        $psi.Arguments = ($quoted -join ' ')
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $psi
+        $null = $process.Start()
+        $outBuffer = New-Object System.IO.MemoryStream
+        $errBuffer = New-Object System.IO.MemoryStream
+        $readers = [System.Threading.Tasks.Task[]]@(
+            $process.StandardOutput.BaseStream.CopyToAsync($outBuffer),
+            $process.StandardError.BaseStream.CopyToAsync($errBuffer)
+        )
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             $result.TimedOut = $true
             try { $null = Invoke-NativeTreeKill $process.Id } catch { Write-Swallowed $_ }
@@ -686,16 +697,17 @@ function Invoke-NativeCapture {
             $process.WaitForExit()
             $result.ExitCode = $process.ExitCode
         }
+        # A child process that outlives the tool can keep the pipes open;
+        # never wait for it longer than 15 seconds.
+        try { $null = [System.Threading.Tasks.Task]::WaitAll($readers, 15000) } catch { Write-Swallowed $_ }
         $chunks = @()
-        foreach ($file in @($stdout,$stderr)) {
-            if (Test-Path -LiteralPath $file) { $chunks += (ConvertFrom-NativeByteArray ([IO.File]::ReadAllBytes($file))) }
-        }
+        foreach ($buffer in @($outBuffer,$errBuffer)) { $chunks += (ConvertFrom-NativeByteArray $buffer.ToArray()) }
         $result.Output = (($chunks | Where-Object { $_ }) -join "`n")
         $result.Lines = @($result.Output -split '\r?\n' | ForEach-Object { $_.TrimEnd() } | Where-Object { $_ -ne '' })
     } catch {
         $result.Error = $_.Exception.Message
     } finally {
-        Remove-Item -LiteralPath $stdout,$stderr -Force -ErrorAction SilentlyContinue
+        if ($process) { try { $process.Dispose() } catch { Write-Swallowed $_ } }
     }
     return $result
 }

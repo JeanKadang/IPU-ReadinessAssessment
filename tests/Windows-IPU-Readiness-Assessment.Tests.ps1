@@ -1066,6 +1066,14 @@ Describe 'Invoke-NativeCapture (#37)' -Tag 'Integration' {
         $r.Lines | Should -Contain 'to-stdout'
         $r.Lines | Should -Contain 'to-stderr'
     }
+    It 'always has the exit code of a command that exits at once (#66)' -Skip:($env:OS -ne 'Windows_NT') {
+        $codes = @(1..25 | ForEach-Object { (Invoke-NativeCapture $script:Cmd @('/c', ('exit ' + ($_ % 4))) 30).ExitCode })
+        $expected = @(1..25 | ForEach-Object { $_ % 4 })
+        ($codes -join ',') | Should -Be ($expected -join ',')
+    }
+    It 'captures UTF-16 output (#66)' -Skip:($env:OS -ne 'Windows_NT') {
+        (Invoke-NativeCapture $script:Cmd @('/u', '/c', 'echo utf16-out') 30).Lines | Should -Contain 'utf16-out'
+    }
     It 'stops a command that exceeds the timeout' -Skip:($env:OS -ne 'Windows_NT') {
         $started = Get-Date
         $sw = [Diagnostics.Stopwatch]::StartNew()
