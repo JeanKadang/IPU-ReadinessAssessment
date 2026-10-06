@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+# Tool versions are pinned so a new release cannot change results unnoticed.
+# Actions are pinned to commit SHAs; Dependabot proposes updates.
+env:
+  PESTER_VERSION: 5.7.1
+  PSSA_VERSION: 1.23.0
+
 jobs:
   pester:
     # Stable job names: "pester (Windows PowerShell 5.1)" and "pester (PowerShell 7)".
@@ -19,19 +25,35 @@ jobs:
         include:
           - name: Windows PowerShell 5.1
             shell: powershell
+            coverage: false
           - name: PowerShell 7
             shell: pwsh
+            coverage: true
     defaults:
       run:
         shell: ${{ matrix.shell }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Pester
         run: |
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           if ($PSVersionTable.PSVersion.Major -lt 6) {
             Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
           }
-          Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+          Install-Module Pester -RequiredVersion $env:PESTER_VERSION -Scope CurrentUser -Force -SkipPublisherCheck
       - name: Run Pester
-        run: ./build/Invoke-CiTests.ps1
+        run: |
+          if ('${{ matrix.coverage }}' -eq 'true') { ./build/Invoke-CiTests.ps1 -Coverage } else { ./build/Invoke-CiTests.ps1 }
+
+  lint:
+    name: lint (PSScriptAnalyzer)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install PSScriptAnalyzer
+        run: Install-Module PSScriptAnalyzer -RequiredVersion $env:PSSA_VERSION -Scope CurrentUser -Force
+      - name: Run PSScriptAnalyzer
+        run: ./build/Invoke-CiLint.ps1 -FailOn Error
