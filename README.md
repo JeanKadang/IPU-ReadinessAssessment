@@ -146,7 +146,7 @@ Tests load the script in library mode (`IPU_ASSESSMENT_LIBRARY_ONLY=1`): functio
 so they run on any machine with PowerShell and Pester. If your machine enforces a signed-script policy, start
 the session with `pwsh -ExecutionPolicy Bypass` (process scope only).
 
-Contributing workflow and conventions: [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md](SECURITY.md).
+New contributor? Start with the [Git setup guide](docs/git-setup.md). Contributing workflow and conventions: [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md](SECURITY.md).
 Version history: [CHANGELOG.md](CHANGELOG.md).
 
 ## License

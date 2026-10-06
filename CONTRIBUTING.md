@@ -1,5 +1,10 @@
 # Contributing
 
+## Before your first commit
+
+Set up Git once (install, name and email, GitHub sign-in): [docs/git-setup.md](docs/git-setup.md). Without it your
+commits show the wrong author.
+
 ## Workflow
 
 1. Open (or pick) an issue first. Every change starts from an issue.
