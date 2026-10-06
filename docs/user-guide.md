@@ -3,7 +3,7 @@
 How to run the Windows IPU readiness assessment, read its results, and troubleshoot it.
 
 **Scripts:** `src/Windows-IPU-Readiness-Assessment.ps1` (collector version 4.0.1, runs on each server) and
-`src/Merge-IPUAssessments.ps1` (version 1.0.1, combines many servers' results, runs on an admin workstation)
+`src/Merge-IPUAssessments.ps1` (version 1.0.2, combines many servers' results, runs on an admin workstation)
 **Audience:** server and change engineers preparing or verifying a Windows Server in-place upgrade.
 
 ## Contents
@@ -359,7 +359,7 @@ HTML. The checklist and Setup compatibility scan are skipped in Post mode.
 
 ## 9. Combining many servers: fleet overview
 
-`src/Merge-IPUAssessments.ps1` (version 1.0.1, for assessment 4.0.1 and later) reads the JSON result of every
+`src/Merge-IPUAssessments.ps1` (version 1.0.2, for assessment 4.0.1 and later) reads the JSON result of every
 server in a folder and writes **one overview** for the whole estate. It is read-only for the input files.
 
 ```mermaid

@@ -102,3 +102,91 @@ Describe 'Merge-IPUAssessments.ps1' {
         { & $script:MergeScript -InputFolder $empty } | Should -Throw -ExpectedMessage '*No *-IPU-Assessment.json*'
     }
 }
+
+Describe 'Merge-IPUAssessments.ps1 - modes, order, delimiter and safety (#41)' {
+    BeforeAll {
+        $script:In2 = Join-Path $TestDrive 'in2'
+        New-Item -ItemType Directory -Path $script:In2 | Out-Null
+        $order = @(
+            @{ Name = 'SRV-E-OK';      Overall = 'OK' },
+            @{ Name = 'SRV-D-MANUAL';  Overall = 'MANUAL' },
+            @{ Name = 'SRV-C-WARNING'; Overall = 'WARNING' },
+            @{ Name = 'SRV-B-ACTION';  Overall = 'ACTION' },
+            @{ Name = 'SRV-A-BLOCKER'; Overall = 'BLOCKER' }
+        )
+        foreach ($o in $order) { Save-Result (New-FakeResult $o.Name -Overall $o.Overall) $script:In2 ($o.Name + '-IPU-Assessment.json') }
+        Save-Result (New-FakeResult 'SRV-POST' -Mode 'Post' -Overall 'WARNING') $script:In2 'SRV-POST-IPU-PostUpgrade.json'
+        $mixed = @((New-FakeFinding 'MANUAL' 'Manual item'), (New-FakeFinding 'OK' 'Clean item'), (New-FakeFinding 'INFO' 'Info item'))
+        Save-Result (New-FakeResult 'SRV-MIXED' -Overall 'MANUAL' -Results $mixed) $script:In2 'SRV-MIXED-IPU-Assessment.json'
+        function Invoke-Merge([string]$Mode = 'All', [string]$Delimiter = ';') {
+            $out = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $null = & $script:MergeScript -InputFolder $script:In2 -OutputFolder $out -Mode $Mode -Delimiter $Delimiter
+            return $out
+        }
+    }
+
+    It '-Mode <Mode> includes <Expected> servers' -TestCases @(
+        @{ Mode = 'Pre';  Expected = 6 }
+        @{ Mode = 'Post'; Expected = 1 }
+        @{ Mode = 'All';  Expected = 7 }
+    ) {
+        $out = Invoke-Merge -Mode $Mode
+        $rows = @(Import-Csv -LiteralPath (Join-Path $out 'IPU-Fleet-Servers.csv') -Delimiter ';')
+        $rows.Count | Should -Be $Expected
+        if ($Mode -eq 'Post') { $rows[0].ComputerName | Should -Be 'SRV-POST' }
+        if ($Mode -eq 'Pre') { @($rows | Where-Object { $_.Mode -ne 'Pre' }).Count | Should -Be 0 }
+    }
+    It 'sorts BLOCKER, ACTION, WARNING, MANUAL, OK' {
+        $out = Invoke-Merge -Mode Pre
+        $rows = @(Import-Csv -LiteralPath (Join-Path $out 'IPU-Fleet-Servers.csv') -Delimiter ';')
+        $statuses = @($rows | ForEach-Object Overall | Select-Object -Unique)
+        ($statuses -join ',') | Should -Be 'BLOCKER,ACTION,WARNING,MANUAL,OK'
+        $html = Get-Content -LiteralPath (Join-Path $out 'IPU-Fleet-Overview.html') -Raw
+        $html.IndexOf('SRV-A-BLOCKER') | Should -BeLessThan $html.IndexOf('SRV-B-ACTION')
+        $html.IndexOf('SRV-B-ACTION') | Should -BeLessThan $html.IndexOf('SRV-C-WARNING')
+        $html.IndexOf('SRV-D-MANUAL') | Should -BeLessThan $html.IndexOf('SRV-E-OK')
+    }
+    It 'writes both CSV files with ";" by default and honours -Delimiter ","' {
+        $semi = Invoke-Merge
+        foreach ($f in 'IPU-Fleet-Servers.csv', 'IPU-Fleet-Findings.csv') {
+            (Get-Content -LiteralPath (Join-Path $semi $f) -TotalCount 1) | Should -Match '^"ComputerName";"Mode";'
+        }
+        $comma = Invoke-Merge -Delimiter ','
+        foreach ($f in 'IPU-Fleet-Servers.csv', 'IPU-Fleet-Findings.csv') {
+            (Get-Content -LiteralPath (Join-Path $comma $f) -TotalCount 1) | Should -Match '^"ComputerName","Mode",'
+        }
+        @(Import-Csv -LiteralPath (Join-Path $comma 'IPU-Fleet-Servers.csv') -Delimiter ',').Count | Should -Be 7
+    }
+    It 'exports only BLOCKER, ACTION, WARNING and MANUAL findings' {
+        $out = Invoke-Merge
+        $rows = @(Import-Csv -LiteralPath (Join-Path $out 'IPU-Fleet-Findings.csv') -Delimiter ';')
+        @($rows | ForEach-Object Item) | Should -Contain 'Manual item'
+        @($rows | ForEach-Object Item) | Should -Not -Contain 'Clean item'
+        @($rows | ForEach-Object Item) | Should -Not -Contain 'Info item'
+        @($rows | Where-Object { $_.Status -notin @('BLOCKER', 'ACTION', 'WARNING', 'MANUAL') }).Count | Should -Be 0
+    }
+    It 'HTML-encodes < and & from the data' {
+        $dir = Join-Path $TestDrive 'amp'
+        New-Item -ItemType Directory -Path $dir | Out-Null
+        $r = New-FakeResult 'SRV-AMP' -Overall 'ACTION' -Results @(New-FakeFinding 'ACTION' 'R&D <share>')
+        Save-Result $r $dir 'SRV-AMP-IPU-Assessment.json'
+        $null = & $script:MergeScript -InputFolder $dir
+        $page = Get-Content -LiteralPath (Join-Path $dir 'IPU-Fleet-Overview.html') -Raw
+        $page | Should -Match 'R&amp;D &lt;share&gt;'
+        $page | Should -Not -Match 'R&D <share>'
+    }
+    It 'neutralises values that Excel would run as formulas' {
+        $dir = Join-Path $TestDrive 'formula'
+        New-Item -ItemType Directory -Path $dir | Out-Null
+        $findings = @((New-FakeFinding 'ACTION' '=HYPERLINK("http://example.test","x")'), (New-FakeFinding 'WARNING' '+1+1'), (New-FakeFinding 'MANUAL' '@SUM(A1)'), (New-FakeFinding 'WARNING' '-2+3'), (New-FakeFinding 'WARNING' 'Plain item'))
+        Save-Result (New-FakeResult 'SRV-CSV' -Overall 'ACTION' -Results $findings) $dir 'SRV-CSV-IPU-Assessment.json'
+        $null = & $script:MergeScript -InputFolder $dir
+        $items = @(Import-Csv -LiteralPath (Join-Path $dir 'IPU-Fleet-Findings.csv') -Delimiter ';' | ForEach-Object Item)
+        $items | Should -Contain "'=HYPERLINK(""http://example.test"",""x"")"
+        $items | Should -Contain "'+1+1"
+        $items | Should -Contain "'@SUM(A1)"
+        $items | Should -Contain "'-2+3"
+        $items | Should -Contain 'Plain item'
+        (Import-Csv -LiteralPath (Join-Path $dir 'IPU-Fleet-Servers.csv') -Delimiter ';')[0].Blocker | Should -Be '0'
+    }
+}
