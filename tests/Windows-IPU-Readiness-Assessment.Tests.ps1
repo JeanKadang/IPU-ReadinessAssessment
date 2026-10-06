@@ -1140,7 +1140,8 @@ Describe 'HTML report accessibility (#28)' {
         $tables = [regex]::Matches($script:A11yHtml, '<table>').Count
         $tables | Should -BeGreaterThan 3
         [regex]::Matches($script:A11yHtml, '<table><caption').Count | Should -Be $tables
-        [regex]::Matches($script:A11yHtml, '<th(?![^>]*scope="col")').Count | Should -Be 0
+        [regex]::Matches($script:A11yHtml, '<th[\s>]').Count | Should -BeGreaterThan 10
+        [regex]::Matches($script:A11yHtml, '<th(?=[\s>])(?![^>]*scope="col")').Count | Should -Be 0
     }
     It 'the checklist glyph is hidden from screen readers and has a text status' {
         $script:A11yHtml | Should -Match '<span aria-hidden="true">&#x2610;</span> <span class="cbt">open</span>'
