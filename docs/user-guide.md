@@ -115,6 +115,8 @@ controller (`-BlockDomainControllerIPU`), is reported as a `BLOCKER`.
 
 ## 4. Parameters
 
+Parameters are validated before anything runs: thresholds and timeouts must be within sensible ranges (for example 1 to 2048 GB for `MinimumCFreeGB`), paths must be absolute, and `TargetMediaLanguage` must look like a culture name such as `en-US`. An invalid value stops the script with an error and nothing is collected.
+
 Every setting has a default, so the script runs unchanged when no arguments can be passed (such as an SA
 ad-hoc job). Override only what you need.
 

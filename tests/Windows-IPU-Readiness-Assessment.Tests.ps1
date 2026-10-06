@@ -449,10 +449,10 @@ Describe 'Output folder access (#12)' {
         @{ State='Existing';            Readers=@('Users');   Expected='WARNING' }
         @{ State='Existing';            Readers=@();          Expected='INFO' }
     ) {
-        (Get-OutputFolderAccessDecision $State $Readers $true 'C:\Reports').Status | Should -Be $Expected
+        (Get-OutputFolderAccessDecision $State $Readers 'C:\Reports').Status | Should -Be $Expected
     }
     It 'gives the icacls command for an open existing folder, and never counts it as a finding' {
-        $d = Get-OutputFolderAccessDecision 'Existing' @('Authenticated Users','Users') $true 'C:\Reports'
+        $d = Get-OutputFolderAccessDecision 'Existing' @('Authenticated Users','Users') 'C:\Reports'
         $d.Kind | Should -Be 'Observation'
         $d.Text | Should -Match 'icacls "C:\\Reports" /inheritance:r'
         $d.Text | Should -Match 'Authenticated Users, Users'
@@ -487,8 +487,8 @@ Describe 'Output folder access (#12)' {
     }
 
     It 'ignores empty reader lists (no false warning on a clean folder)' {
-        (Get-OutputFolderAccessDecision 'Existing' @($null) $true 'C:\Reports').Status | Should -Be 'INFO'
-        (Get-OutputFolderAccessDecision 'Existing' @() $true 'C:\Reports').Status | Should -Be 'INFO'
+        (Get-OutputFolderAccessDecision 'Existing' @($null) 'C:\Reports').Status | Should -Be 'INFO'
+        (Get-OutputFolderAccessDecision 'Existing' @() 'C:\Reports').Status | Should -Be 'INFO'
     }
 
     It 'builds a protected ACL with only SYSTEM and Administrators (Windows)' -Skip:($env:OS -ne 'Windows_NT') {
@@ -504,5 +504,67 @@ Describe 'Output folder access (#12)' {
         $acl = Get-Acl -LiteralPath $p
         $acl.AreAccessRulesProtected | Should -BeTrue
         @(Get-BroadFolderReaders $p).Count | Should -Be 0
+    }
+}
+
+Describe 'Hygiene (#18)' {
+    Context 'ConvertTo-DateTimeValue' {
+        It 'passes a [datetime] through unchanged' {
+            $d = Get-Date -Year 2026 -Month 9 -Day 29 -Hour 1 -Minute 10 -Second 22
+            ConvertTo-DateTimeValue $d | Should -Be $d
+        }
+        It 'reads a yyyyMMdd install date' {
+            (ConvertTo-DateTimeValue '20260515').ToString('yyyy-MM-dd') | Should -Be '2026-05-15'
+        }
+        It 'reads an ISO date' {
+            (ConvertTo-DateTimeValue '2026-09-28').ToString('yyyy-MM-dd') | Should -Be '2026-09-28'
+        }
+        It 'reads a WMI DMTF date (Windows)' -Skip:($env:OS -ne 'Windows_NT') {
+            (ConvertTo-DateTimeValue '20260929011022.500000+120').ToString('yyyy-MM-dd') | Should -Be '2026-09-29'
+        }
+        It 'returns nothing for <Value>' -TestCases @(
+            @{ Value = $null }
+            @{ Value = '' }
+            @{ Value = 'not a date' }
+        ) {
+            ConvertTo-DateTimeValue $Value | Should -BeNullOrEmpty
+        }
+    }
+
+    Context 'CIM queries' {
+        It 'Get-CimSafe returns nothing, instead of throwing, when the query fails' {
+            Mock Get-CimRequired { throw 'Invalid class' }
+            @(Get-CimSafe 'Win32_DoesNotExist').Count | Should -Be 0
+        }
+        It 'Get-CimRequired lets the failure through so the check is reported as not completed' {
+            Mock Get-CimInstance { throw 'Invalid class' }
+            { Get-CimRequired 'Win32_DoesNotExist' } | Should -Throw
+        }
+    }
+
+    It 'renames Normalize-Thumbprint to an approved verb' {
+        Get-Command ConvertTo-NormalizedThumbprint -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+        Get-Command Normalize-Thumbprint -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+        ConvertTo-NormalizedThumbprint 'ab cd:EF' | Should -Be 'ABCDEF'
+    }
+
+    Context 'Parameter validation' {
+        BeforeAll { $script:ScriptPath = Join-Path $PSScriptRoot '..\src\Windows-IPU-Readiness-Assessment.ps1' }
+        It 'rejects <Name> = <Value>' -TestCases @(
+            @{ Name = 'MinimumCFreeGB';         Value = 0 }
+            @{ Name = 'MinimumCFreeGB';         Value = -5 }
+            @{ Name = 'SlowCheckBudgetMinutes'; Value = 0 }
+            @{ Name = 'DISMTimeoutMinutes';     Value = 100000 }
+            @{ Name = 'ReportDirectory';        Value = 'relative\folder' }
+            @{ Name = 'TargetMediaPath';        Value = 'media\iso' }
+            @{ Name = 'TargetMediaLanguage';    Value = 'english please' }
+        ) {
+            $splat = @{ $Name = $Value }
+            { & $script:ScriptPath @splat } | Should -Throw
+        }
+        It 'accepts valid values (library mode returns without collecting)' {
+            $splat = @{ MinimumCFreeGB = 40; ReportDirectory = [IO.Path]::GetTempPath(); TargetMediaPath = ''; TargetMediaLanguage = 'en-US' }
+            { & $script:ScriptPath @splat } | Should -Not -Throw
+        }
     }
 }

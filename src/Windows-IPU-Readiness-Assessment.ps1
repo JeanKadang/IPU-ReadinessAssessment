@@ -117,43 +117,43 @@ param(
     [ValidateSet('Pre','Post')][string]$AssessmentMode = 'Pre',
 
     # Language of the target ISO, e.g. 'en-US'. Blank = report tells you.
-    [string]$TargetMediaLanguage = '',
+    [ValidatePattern('^$|^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*$')][string]$TargetMediaLanguage = '',
 
     # Optional: target installation media for Setup's own compatibility scan.
     # A folder or drive containing setup.exe, a UNC share (the computer
     # account needs read access), or an .iso file on the server. Blank = skip.
-    [string]$TargetMediaPath = '',
+    [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$TargetMediaPath = '',
 
     # Company policy: domain controllers are replaced side-by-side.
     [bool]$BlockDomainControllerIPU = $true,
 
     # Operational thresholds (project values, not Microsoft minimums unless noted).
-    [int]$MinimumCFreeGB = 40,
-    [int]$ExtendBlockGB = 10,
-    [int]$MinimumMemoryGB = 8,
-    [int]$MaxPatchAgeDays = 60,
-    [int]$UptimeWarningDays = 60,
-    [int]$AVMaxAgeDays = 3,
-    [int]$CertificateWarningDays = 90,
-    [int]$SystemPartitionMinFreeMB = 50,
-    [int]$RecoveryPartitionMinFreeMB = 250,   # Microsoft's WinRE servicing guidance
+    [ValidateRange(1, 2048)][int]$MinimumCFreeGB = 40,
+    [ValidateRange(1, 1024)][int]$ExtendBlockGB = 10,
+    [ValidateRange(1, 4096)][int]$MinimumMemoryGB = 8,
+    [ValidateRange(1, 3650)][int]$MaxPatchAgeDays = 60,
+    [ValidateRange(1, 3650)][int]$UptimeWarningDays = 60,
+    [ValidateRange(1, 365)][int]$AVMaxAgeDays = 3,
+    [ValidateRange(1, 3650)][int]$CertificateWarningDays = 90,
+    [ValidateRange(1, 10240)][int]$SystemPartitionMinFreeMB = 50,
+    [ValidateRange(1, 10240)][int]$RecoveryPartitionMinFreeMB = 250,   # Microsoft's WinRE servicing guidance
 
     # Slow, read-only checks. Each is time-boxed; DISM and SFC share one budget.
     [bool]$RunDISMScanHealth = $true,
     [bool]$RunSFCVerifyOnly = $true,
-    [int]$DISMTimeoutMinutes = 30,
-    [int]$SFCTimeoutMinutes = 30,
-    [int]$SlowCheckBudgetMinutes = 50,
-    [int]$CompatScanTimeoutMinutes = 45,
+    [ValidateRange(1, 240)][int]$DISMTimeoutMinutes = 30,
+    [ValidateRange(1, 240)][int]$SFCTimeoutMinutes = 30,
+    [ValidateRange(1, 600)][int]$SlowCheckBudgetMinutes = 50,
+    [ValidateRange(1, 240)][int]$CompatScanTimeoutMinutes = 45,
 
     # RDP access/policy evidence. LGPO.exe is optional (backup only).
     [bool]$EnableRDPPolicyEvidence = $true,
-    [string]$LgpoExe = 'C:\Temp\Tools\LGPO.exe',
-    [string]$PolicyEvidenceRoot = 'C:\Temp\Tools\PolBackup',
+    [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$LgpoExe = 'C:\Temp\Tools\LGPO.exe',
+    [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$PolicyEvidenceRoot = 'C:\Temp\Tools\PolBackup',
     [bool]$CreatePolicyEvidenceZip = $true,
 
     # Output.
-    [string]$ReportDirectory = 'C:\Temp\IPU-Assessment',
+    [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$ReportDirectory = 'C:\Temp\IPU-Assessment',
     [bool]$WriteJson = $true,
     # Folders this run creates (report, policy evidence) get SYSTEM and
     # Administrators access only; reports describe the server in detail.
@@ -242,6 +242,7 @@ $script:Checks            = New-Object System.Collections.Generic.List[object]
 $script:Data              = @{}
 $script:CurrentCheckId    = 'core'
 $script:CurrentCheckOutcome = $null
+$script:LogWriteFailures  = 0
 $script:SlowSecondsLeft   = 0
 $script:CollectionStarted = Get-Date
 $script:ComputerName      = $env:COMPUTERNAME
@@ -326,7 +327,11 @@ function Write-AssessmentLog {
     try {
         $line = '{0};{1};{2};{3}{4}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),$Level,$Phase,(($Message -replace '[\r\n;]+',' | ')),[Environment]::NewLine
         [IO.File]::AppendAllText($script:LogPath,$line,(New-Object System.Text.UTF8Encoding($false)))
-    } catch { }
+    } catch {
+        # The log itself cannot record this; count it so the report can say
+        # the log is incomplete. Logging must never stop the assessment.
+        $script:LogWriteFailures++
+    }
 }
 
 function ConvertTo-CleanText {
@@ -349,9 +354,11 @@ function Write-Swallowed {
     param($ErrorRecord)
     try {
         $where = ''
-        try { $where = ' (line ' + $ErrorRecord.InvocationInfo.ScriptLineNumber + ')' } catch { }
+        if ($ErrorRecord -and $ErrorRecord.InvocationInfo) { $where = ' (line ' + $ErrorRecord.InvocationInfo.ScriptLineNumber + ')' }
         Write-AssessmentLog 'DEBUG' $script:CurrentCheckId ('Optional query failed' + $where + ': ' + $ErrorRecord.Exception.Message)
-    } catch { }
+    } catch {
+        $script:LogWriteFailures++
+    }
 }
 
 function Find-DetectionMatches {
@@ -458,11 +465,11 @@ function Invoke-Check {
         $outcome = 'Failed'
         $message = $_.Exception.GetType().Name + ': ' + $_.Exception.Message
         $position = ''
-        try { $position = 'Line ' + $_.InvocationInfo.ScriptLineNumber } catch { }
+        if ($_.InvocationInfo) { $position = 'Line ' + $_.InvocationInfo.ScriptLineNumber }
         Write-AssessmentLog 'ERROR' $Check.Id ($message + ' | ' + $position)
         try {
             Add-Result 'COLLECTOR' $Check.Name 'MANUAL' 'Check did not complete' @($message,$position) -Recommendation 'This area was only partially assessed. Absence of findings here is NOT evidence of readiness. Review it manually, or fix the cause and re-run.' -Kind 'Finding' -Source ('Check ' + $Check.Id)
-        } catch { }
+        } catch { Write-Swallowed $_ }
     }
     $sw.Stop()
     $script:CheckRuns.Add([pscustomobject]@{
@@ -538,17 +545,45 @@ function Get-RegistryValueSafe {
                 $result.Value = $item.$Name
             }
         }
-    } catch { }
+    } catch { Write-Swallowed $_ }
     return $result
 }
 
-function Get-WmiSafe {
-    # For optional queries only. Essential queries call Get-WmiObject directly
-    # so that a failure fails the check visibly.
+function Get-CimRequired {
+    # Essential CIM query: a failure throws, so the calling check is reported
+    # as "did not complete" instead of looking clean. CIM cmdlets exist from
+    # PowerShell 3.0; a local query needs no WinRM.
     param([string]$Class, [string]$Filter = '', [string]$Namespace = 'root\cimv2')
-    $p = @{ Class=$Class; Namespace=$Namespace; ErrorAction='Stop' }
+    $p = @{ ClassName=$Class; Namespace=$Namespace; ErrorAction='Stop' }
     if ($Filter) { $p.Filter = $Filter }
-    try { return @(Get-WmiObject @p) } catch { return @() }
+    return @(Get-CimInstance @p)
+}
+
+function Get-CimSafe {
+    # Optional CIM query: a failure returns nothing and is logged.
+    param([string]$Class, [string]$Filter = '', [string]$Namespace = 'root\cimv2')
+    try { return @(Get-CimRequired $Class $Filter $Namespace) } catch { Write-Swallowed $_; return @() }
+}
+
+function ConvertTo-DateTimeValue {
+    # Pure: CIM returns [datetime]; WMI-era data and some providers return
+    # DMTF strings (20260929011022.500000+120) or plain date text. Returns
+    # $null when the value cannot be read as a date.
+    param([object]$Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [datetime]) { return $Value }
+    $text = [string]$Value
+    if (-not $text) { return $null }
+    if ($text -match '^\d{14}\.\d{6}[+-]\d{3}$') {
+        try { return [Management.ManagementDateTimeConverter]::ToDateTime($text) } catch { Write-Swallowed $_ }
+    }
+    if ($text -match '^\d{8}$') {
+        $parsed = [datetime]::MinValue
+        if ([datetime]::TryParseExact($text, 'yyyyMMdd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$parsed)) { return $parsed }
+    }
+    $any = [datetime]::MinValue
+    if ([datetime]::TryParse($text, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$any)) { return $any }
+    return $null
 }
 
 function ConvertFrom-NativeBytes {
@@ -568,7 +603,7 @@ function ConvertFrom-NativeBytes {
     if ($isUnicode) { $text = [Text.Encoding]::Unicode.GetString($Bytes) }
     else {
         $encoding = $null
-        try { $encoding = [Text.Encoding]::GetEncoding([Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage) } catch { }
+        try { $encoding = [Text.Encoding]::GetEncoding([Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage) } catch { Write-Swallowed $_ }
         if ($null -eq $encoding) { $encoding = New-Object System.Text.UTF8Encoding($false) }
         $text = $encoding.GetString($Bytes)
     }
@@ -603,8 +638,8 @@ function Invoke-NativeCapture {
         $null = $process.Handle   # ensures ExitCode is populated on Windows PowerShell
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             $result.TimedOut = $true
-            try { $null = Invoke-NativeTreeKill $process.Id } catch { }
-            try { $null = $process.WaitForExit(15000) } catch { }
+            try { $null = Invoke-NativeTreeKill $process.Id } catch { Write-Swallowed $_ }
+            try { $null = $process.WaitForExit(15000) } catch { Write-Swallowed $_ }
         } else {
             $process.WaitForExit()
             $result.ExitCode = $process.ExitCode
@@ -655,7 +690,7 @@ function Get-FeatureState {
     return $false
 }
 
-function Normalize-Thumbprint {
+function ConvertTo-NormalizedThumbprint {
     param([object]$Value)
     if ($null -eq $Value) { return '' }
     if ($Value -is [byte[]]) { return (($Value | ForEach-Object { $_.ToString('X2') }) -join '') }
@@ -678,7 +713,7 @@ function Resolve-PolicyAccountName {
 function Get-LocalGroupMembersBySid {
     param([string]$Sid)
     $members = @()
-    $group = @(Get-WmiSafe 'Win32_Group' ("LocalAccount=True AND SID='" + $Sid + "'")) | Select-Object -First 1
+    $group = @(Get-CimSafe 'Win32_Group' ("LocalAccount=True AND SID='" + $Sid + "'")) | Select-Object -First 1
     if ($group) {
         try {
             $adsi = [ADSI]('WinNT://' + $script:ComputerName + '/' + $group.Name + ',group')
@@ -687,7 +722,7 @@ function Get-LocalGroupMembersBySid {
                 $path = $member.GetType().InvokeMember('ADsPath','GetProperty',$null,$member,$null)
                 $members += ($name + ' [' + $path + ']')
             }
-        } catch { }
+        } catch { Write-Swallowed $_ }
     }
     return ,$members
 }
@@ -703,7 +738,7 @@ function Read-FileTailLines {
         if ($stream.Length -gt $MaxBytes) { $null = $stream.Seek(-1 * $MaxBytes, [IO.SeekOrigin]::End) }
         $reader = New-Object IO.StreamReader($stream)
         $lines = @($reader.ReadToEnd() -split '\r?\n')
-    } catch { } finally {
+    } catch { Write-Swallowed $_ } finally {
         if ($reader) { $reader.Dispose() } elseif ($stream) { $stream.Dispose() }
     }
     return ,$lines
@@ -1041,7 +1076,7 @@ function Compare-IPUSnapshot {
 
 function Get-OutputFolderAccessDecision {
     # Pure: what the report says about the output folder's permissions.
-    param([string]$State, [string[]]$BroadReaders = @(), [bool]$RestrictEnabled = $true, [string]$Path = '')
+    param([string]$State, [string[]]$BroadReaders = @(), [string]$Path = '')
     $readers = @($BroadReaders | Where-Object { $_ })
     switch ($State) {
         'CreatedRestricted' {
@@ -1085,11 +1120,11 @@ function Register-AssessmentChecks {
 
 # ---------------------------------------------------------------------------
 Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
-    $script:Data.OS       = Get-WmiObject Win32_OperatingSystem
-    $script:Data.CS       = Get-WmiObject Win32_ComputerSystem
-    $script:Data.BIOS     = @(Get-WmiSafe 'Win32_BIOS') | Select-Object -First 1
-    $script:Data.CPU      = @(Get-WmiSafe 'Win32_Processor')
-    $script:Data.Services = @(Get-WmiObject Win32_Service)
+    $script:Data.OS       = @(Get-CimRequired 'Win32_OperatingSystem') | Select-Object -First 1
+    $script:Data.CS       = @(Get-CimRequired 'Win32_ComputerSystem') | Select-Object -First 1
+    $script:Data.BIOS     = @(Get-CimSafe 'Win32_BIOS') | Select-Object -First 1
+    $script:Data.CPU      = @(Get-CimSafe 'Win32_Processor')
+    $script:Data.Services = @(Get-CimRequired 'Win32_Service')
     $script:Data.Apps     = @(Get-InstalledApplications)
     $script:Data.CV       = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
     $script:Data.Features = $null
@@ -1101,7 +1136,7 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
     # Used to recognise AV/EDR/security products independently of their names.
     $flt = Invoke-NativeCapture (Join-Path $env:windir 'System32\fltMC.exe') @('filters') 60
     $script:Data.FilterDrivers = @($flt.Lines | Where-Object { $_ -match '^\s*([A-Za-z0-9_.-]+)\s+\d+\s+' } | ForEach-Object { ($_ -split '\s+' | Where-Object { $_ })[0] })
-    $script:Data.KernelDrivers = @(Get-WmiSafe 'Win32_SystemDriver' "State='Running'")
+    $script:Data.KernelDrivers = @(Get-CimSafe 'Win32_SystemDriver' "State='Running'")
     $script:Data.DriverNames = @(@($script:Data.FilterDrivers) + @($script:Data.KernelDrivers | ForEach-Object { [string]$_.Name }) | Sort-Object -Unique)
 
     $platform = Get-PlatformClassification $script:Data.CS.Manufacturer $script:Data.CS.Model
@@ -1128,7 +1163,7 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
     if (-not $folderState) { $folderState = 'Existing' }
     $readers = @()
     if ($folderState -eq 'Existing') { $readers = @(Get-BroadFolderReaders $ReportDirectory) }
-    $access = Get-OutputFolderAccessDecision $folderState $readers $RestrictOutputAcl $ReportDirectory
+    $access = Get-OutputFolderAccessDecision $folderState $readers $ReportDirectory
     Add-Result 'ASSESSMENT' 'OutputFolderAccess' $access.Status $ReportDirectory $access.Text -Kind $access.Kind -Source 'Get-Acl'
 }
 
@@ -1197,12 +1232,12 @@ Register-Check -Id 'licensing' -Name 'Windows activation' -Script {
     $products = @()
     $queryError = ''
     try {
-        $products = @(Get-WmiObject -Query "SELECT Name,Description,LicenseStatus,PartialProductKey,ProductKeyChannel,GracePeriodRemaining FROM SoftwareLicensingProduct WHERE ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f' AND PartialProductKey IS NOT NULL" -ErrorAction Stop |
+        $products = @(Get-CimInstance -Query "SELECT Name,Description,LicenseStatus,PartialProductKey,ProductKeyChannel,GracePeriodRemaining FROM SoftwareLicensingProduct WHERE ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f' AND PartialProductKey IS NOT NULL" -ErrorAction Stop |
             Where-Object { $_.Name -match '^Windows' })
     } catch {
         # Older builds do not expose ProductKeyChannel; retry with all columns.
         try {
-            $products = @(Get-WmiObject -Query "SELECT * FROM SoftwareLicensingProduct WHERE ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f'" -ErrorAction Stop |
+            $products = @(Get-CimInstance -Query "SELECT * FROM SoftwareLicensingProduct WHERE ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f'" -ErrorAction Stop |
                 Where-Object { $_.PartialProductKey -and $_.Name -match '^Windows' })
         } catch { $queryError = $_.Exception.Message }
     }
@@ -1260,7 +1295,7 @@ Register-Check -Id 'pendingreboot' -Name 'Pending reboot and uptime' -Script {
     }
     $renameShown = ConvertTo-PendingRenamePaths $renamePaths 5
     try {
-        $ccm = Invoke-WmiMethod -Namespace 'root\ccm\ClientSDK' -Class CCM_ClientUtilities -Name DetermineIfRebootPending -ErrorAction Stop
+        $ccm = Invoke-CimMethod -Namespace 'root\ccm\ClientSDK' -ClassName CCM_ClientUtilities -MethodName DetermineIfRebootPending -ErrorAction Stop
         if ($ccm -and ($ccm.RebootPending -or $ccm.IsHardRebootPending)) { $hard += 'ConfigMgr client reboot pending' }
     } catch { Write-Swallowed $_ }
 
@@ -1272,7 +1307,8 @@ Register-Check -Id 'pendingreboot' -Name 'Pending reboot and uptime' -Script {
         Add-Result 'WINDOWS_HEALTH' 'PendingReboot' 'OK' 'No pending-reboot indicators detected' -Source 'CBS, Windows Update, Session Manager, ComputerName, Netlogon'
     }
 
-    $boot = [Management.ManagementDateTimeConverter]::ToDateTime($script:Data.OS.LastBootUpTime)
+    $boot = ConvertTo-DateTimeValue $script:Data.OS.LastBootUpTime
+    if (-not $boot) { throw ('LastBootUpTime could not be read: ' + $script:Data.OS.LastBootUpTime) }
     $days = [math]::Floor(((Get-Date) - $boot).TotalDays)
     if ($days -ge $UptimeWarningDays) {
         Add-Result 'WINDOWS_HEALTH' 'Uptime' 'WARNING' ('UptimeDays=' + $days) ('LastBoot=' + $boot.ToString('yyyy-MM-dd HH:mm')) -Recommendation 'Do a controlled reboot before the change window and re-run the assessment. A long-unrebooted server can hide reboot-time problems that would otherwise surface mid-upgrade.' -Source 'Win32_OperatingSystem'
@@ -1316,7 +1352,8 @@ Register-Check -Id 'history' -Name 'Previous upgrade history' -Script {
     $upgradeHints = @()
     if (Test-Path 'C:\Windows.old') { $upgradeHints += 'C:\Windows.old exists' }
     $osInstall = ''
-    try { $osInstall = [Management.ManagementDateTimeConverter]::ToDateTime($script:Data.OS.InstallDate).ToString('yyyy-MM-dd') } catch { Write-Swallowed $_ }
+    $installDate = ConvertTo-DateTimeValue $script:Data.OS.InstallDate
+    if ($installDate) { $osInstall = $installDate.ToString('yyyy-MM-dd') }
     Add-Result 'UPGRADE_HISTORY' 'OSInstallDate' 'INFO' $osInstall 'Date of the current OS installation (or of the last in-place upgrade).' -Source 'Win32_OperatingSystem.InstallDate'
     if ($found -or $upgradeHints.Count -gt 0) {
         Add-Result 'UPGRADE_HISTORY' 'PreviousUpgradeEvidence' 'WARNING' ('PriorOSRecords=' + $found) $upgradeHints -Recommendation 'This server has been upgraded in place before. Stacked upgrades carry older settings and drivers along; pay extra attention to the Setup compatibility result and test thoroughly afterwards.' -Kind 'Observation' -Source 'HKLM\SYSTEM\Setup, C:\Windows.old'
@@ -1356,7 +1393,7 @@ Register-Check -Id 'domain' -Name 'Domain role and access' -Script {
         Add-Result 'ACCESS' 'DomainMembership' 'WARNING' ('Workgroup=' + $cs.Domain) -Recommendation 'Workgroup server: confirm it is onboarded in CyberArk/PAM and that local fallback credentials work before IPU.' -Source 'Win32_ComputerSystem'
     }
 
-    $rid500 = @(Get-WmiSafe 'Win32_UserAccount' 'LocalAccount=True') | Where-Object { $_.SID -match '-500$' } | Select-Object -First 1
+    $rid500 = @(Get-CimSafe 'Win32_UserAccount' 'LocalAccount=True') | Where-Object { $_.SID -match '-500$' } | Select-Object -First 1
     if ($rid500) {
         Add-Result 'ACCESS' 'BuiltInAdministrator' 'INFO' ('Name=' + $rid500.Name) @(('Disabled=' + $rid500.Disabled),('SID=' + $rid500.SID)) -Recommendation 'Record the (possibly renamed) built-in Administrator and confirm PAM/console fallback.' -Source 'Win32_UserAccount'
     }
@@ -1387,13 +1424,14 @@ Register-Check -Id 'platform' -Name 'Platform and hardware' -Script {
     }
     Add-Result 'PLATFORM' 'PhysicalOrVirtual' 'MANUAL' 'Physical' @(('Manufacturer=' + $cs.Manufacturer),('Model=' + $cs.Model)) -Recommendation ('Validate model, firmware, storage controller and NIC driver support for ' + (Get-ReleaseDisplayName $TargetServerVersion) + ' with the OEM, and confirm a bare-metal recovery path.') -Source 'Local inventory cannot prove OEM certification'
 
-    $product = @(Get-WmiSafe 'Win32_ComputerSystemProduct') | Select-Object -First 1
-    $board = @(Get-WmiSafe 'Win32_BaseBoard') | Select-Object -First 1
+    $product = @(Get-CimSafe 'Win32_ComputerSystemProduct') | Select-Object -First 1
+    $board = @(Get-CimSafe 'Win32_BaseBoard') | Select-Object -First 1
     Add-Result 'HARDWARE' 'SystemIdentification' 'INFO' ('Model=' + $cs.Model) @(('SerialOrServiceTag=' + $bios.SerialNumber),('SKU=' + $cs.SystemSKUNumber),('Product=' + $product.Name + ' ' + $product.Version)) -Source 'Win32_ComputerSystem, Win32_BIOS'
     if ($board) { Add-Result 'HARDWARE' 'BaseBoard' 'INFO' ('Manufacturer=' + $board.Manufacturer) @(('Product=' + $board.Product),('Version=' + $board.Version)) -Source 'Win32_BaseBoard' }
     if ($bios) {
         $biosDate = [string]$bios.ReleaseDate
-        try { $biosDate = [Management.ManagementDateTimeConverter]::ToDateTime($bios.ReleaseDate).ToString('yyyy-MM-dd') } catch { Write-Swallowed $_ }
+        $releaseDate = ConvertTo-DateTimeValue $bios.ReleaseDate
+        if ($releaseDate) { $biosDate = $releaseDate.ToString('yyyy-MM-dd') }
         Add-Result 'HARDWARE' 'BIOS' 'INFO' ('Version=' + $bios.SMBIOSBIOSVersion) @(('Manufacturer=' + $bios.Manufacturer),('ReleaseDate=' + $biosDate)) -Source 'Win32_BIOS'
     }
     $firmware = 'Legacy BIOS or undetermined'
@@ -1402,14 +1440,14 @@ Register-Check -Id 'platform' -Name 'Platform and hardware' -Script {
     $i = 0
     foreach ($cpu in $script:Data.CPU) { $i++; Add-Result 'HARDWARE' ('CPU-' + $i) 'INFO' $cpu.Name @(('Cores=' + $cpu.NumberOfCores),('Logical=' + $cpu.NumberOfLogicalProcessors)) -Source 'Win32_Processor' }
 
-    $netDrivers = @(Get-WmiSafe 'Win32_PnPSignedDriver' "DeviceClass='NET'")
-    foreach ($nic in @(Get-WmiSafe 'Win32_NetworkAdapter' | Where-Object { $_.PhysicalAdapter -eq $true })) {
+    $netDrivers = @(Get-CimSafe 'Win32_PnPSignedDriver' "DeviceClass='NET'")
+    foreach ($nic in @(Get-CimSafe 'Win32_NetworkAdapter' | Where-Object { $_.PhysicalAdapter -eq $true })) {
         $drv = @($netDrivers | Where-Object { $_.DeviceID -eq $nic.PNPDeviceID }) | Select-Object -First 1
         $drvText = 'Driver not correlated'
         if ($drv) { $drvText = 'Provider=' + $drv.DriverProviderName + ', Version=' + $drv.DriverVersion + ', Date=' + $drv.DriverDate }
         Add-Result 'HARDWARE' ('NIC: ' + $nic.Name) 'INFO' ('MAC=' + $nic.MACAddress) $drvText -Source 'Win32_NetworkAdapter, Win32_PnPSignedDriver'
     }
-    $storageDrivers = @(Get-WmiSafe 'Win32_PnPSignedDriver' "DeviceClass='SCSIAdapter'") + @(Get-WmiSafe 'Win32_PnPSignedDriver' "DeviceClass='HDC'")
+    $storageDrivers = @(Get-CimSafe 'Win32_PnPSignedDriver' "DeviceClass='SCSIAdapter'") + @(Get-CimSafe 'Win32_PnPSignedDriver' "DeviceClass='HDC'")
     foreach ($drv in @($storageDrivers | Sort-Object DeviceName,DriverVersion -Unique)) {
         Add-Result 'HARDWARE' ('Storage controller: ' + $drv.DeviceName) 'INFO' ('Provider=' + $drv.DriverProviderName) @(('Version=' + $drv.DriverVersion),('Date=' + $drv.DriverDate)) -Source 'Win32_PnPSignedDriver'
     }
@@ -1453,7 +1491,7 @@ Register-Check -Id 'cluster' -Name 'Failover clustering' -Script {
 
 # ---------------------------------------------------------------------------
 Register-Check -Id 'storage' -Name 'Storage' -Script {
-    $c = Get-WmiObject Win32_LogicalDisk -Filter "DeviceID='C:'"
+    $c = @(Get-CimRequired 'Win32_LogicalDisk' "DeviceID='C:'") | Select-Object -First 1
     $sizeGB = [math]::Round(([double]$c.Size / 1GB),2)
     $freeGB = [math]::Round(([double]$c.FreeSpace / 1GB),2)
     $script:Data.CSummary = 'Size ' + (Format-Number $sizeGB) + ' GB, free ' + (Format-Number $freeGB) + ' GB'
@@ -1465,7 +1503,7 @@ Register-Check -Id 'storage' -Name 'Storage' -Script {
     }
 
     if (-not (Get-Command Get-Disk -ErrorAction SilentlyContinue)) {
-        foreach ($d in @(Get-WmiSafe 'Win32_DiskDrive' | Sort-Object Index)) { Add-Result 'STORAGE' ('Disk' + $d.Index) 'INFO' ('SizeGB=' + (Format-Number ($d.Size/1GB))) ('Model=' + $d.Model) -Source 'Win32_DiskDrive' }
+        foreach ($d in @(Get-CimSafe 'Win32_DiskDrive' | Sort-Object Index)) { Add-Result 'STORAGE' ('Disk' + $d.Index) 'INFO' ('SizeGB=' + (Format-Number ($d.Size/1GB))) ('Model=' + $d.Model) -Source 'Win32_DiskDrive' }
         return
     }
     $cp = Get-Partition -DriveLetter C
@@ -1521,8 +1559,8 @@ Register-Check -Id 'storage' -Name 'Storage' -Script {
 
 # ---------------------------------------------------------------------------
 Register-Check -Id 'network' -Name 'Network, teaming, hosts and routes' -Script {
-    foreach ($n in @(Get-WmiObject Win32_NetworkAdapterConfiguration -Filter 'IPEnabled=True')) {
-        $a = @(Get-WmiSafe 'Win32_NetworkAdapter' ('Index=' + $n.Index)) | Select-Object -First 1
+    foreach ($n in @(Get-CimRequired 'Win32_NetworkAdapterConfiguration' 'IPEnabled=True')) {
+        $a = @(Get-CimSafe 'Win32_NetworkAdapter' ('Index=' + $n.Index)) | Select-Object -First 1
         $ipv4 = @($n.IPAddress | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' })
         $name = [string]$a.NetConnectionID; if (-not $name) { $name = [string]$n.Description }
         $script:Data.Snapshot.IPv4 += $ipv4
@@ -1721,11 +1759,11 @@ Register-Check -Id 'rds' -Name 'Remote Desktop Services roles' -Script {
     else { Add-Result 'RDS' 'RDSessionHost' 'OK' 'Not installed' -Source 'Get-WindowsFeature' }
     if ($rdlic -eq $true) { Add-Result 'RDS' 'RDLicensingServer' 'ACTION' 'Installed' -Recommendation 'This is an RD Licensing server. Upgrading it affects every RDS host that uses it; confirm installed CALs and the order of upgrades with the RDS owner.' -Source 'Get-WindowsFeature' }
     if ($rdsh -eq $true -or $rdlic -eq $true) {
-        $ts = @(Get-WmiSafe 'Win32_TerminalServiceSetting' '' 'root\cimv2\TerminalServices') | Select-Object -First 1
+        $ts = @(Get-CimSafe 'Win32_TerminalServiceSetting' '' 'root\cimv2\TerminalServices') | Select-Object -First 1
         if ($ts) {
             $mode = @{ 2='PerDevice'; 4='PerUser'; 5='NotConfigured' }[[int]$ts.LicensingType]
             $servers = @()
-            try { $servers = @($ts.GetSpecifiedLicenseServerList().SpecifiedLSList) } catch { Write-Swallowed $_ }
+            try { $servers = @((Invoke-CimMethod -InputObject $ts -MethodName GetSpecifiedLicenseServerList -ErrorAction Stop).SpecifiedLSList) } catch { Write-Swallowed $_ }
             Add-Result 'RDS' 'LicensingConfiguration' 'INFO' ('Mode=' + $mode) ('LicenseServers=' + ($servers -join ',')) -Source 'Win32_TerminalServiceSetting'
         }
     }
@@ -1754,7 +1792,7 @@ Register-Check -Id 'pki' -Name 'PKI, certificates and TLS bindings' -Script {
     $index = @{}
     foreach ($store in @('My','Remote Desktop','WebHosting')) {
         foreach ($cert in @(Get-ChildItem ('Cert:\LocalMachine\' + $store) -ErrorAction SilentlyContinue)) {
-            $thumb = Normalize-Thumbprint $cert.Thumbprint
+            $thumb = ConvertTo-NormalizedThumbprint $cert.Thumbprint
             if ($index.ContainsKey($thumb)) { continue }
             $index[$thumb] = [pscustomobject]@{ Cert=$cert; Store=$store }
             $days = [math]::Floor(($cert.NotAfter - (Get-Date)).TotalDays)
@@ -1771,7 +1809,7 @@ Register-Check -Id 'pki' -Name 'PKI, certificates and TLS bindings' -Script {
     if ((Get-FeatureState 'Web-Server') -eq $true -and (Get-Module -ListAvailable WebAdministration)) {
         Import-Module WebAdministration
         foreach ($b in @(Get-WebBinding -Protocol https -ErrorAction SilentlyContinue)) {
-            $thumb = Normalize-Thumbprint $b.certificateHash
+            $thumb = ConvertTo-NormalizedThumbprint $b.certificateHash
             $entry = $null
             if ($thumb -and $index.ContainsKey($thumb)) { $entry = $index[$thumb] }
             $item = 'IIS https ' + $b.bindingInformation
@@ -1790,9 +1828,9 @@ Register-Check -Id 'pki' -Name 'PKI, certificates and TLS bindings' -Script {
     }
 
     # RDP listener certificate.
-    $rdp = @(Get-WmiSafe 'Win32_TSGeneralSetting' "TerminalName='RDP-tcp'" 'root\cimv2\TerminalServices') | Select-Object -First 1
+    $rdp = @(Get-CimSafe 'Win32_TSGeneralSetting' "TerminalName='RDP-tcp'" 'root\cimv2\TerminalServices') | Select-Object -First 1
     if ($rdp) {
-        $thumb = Normalize-Thumbprint $rdp.SSLCertificateSHA1Hash
+        $thumb = ConvertTo-NormalizedThumbprint $rdp.SSLCertificateSHA1Hash
         if ($thumb -and $index.ContainsKey($thumb)) {
             $c = $index[$thumb].Cert
             $st = 'OK'; if ($c.NotAfter -lt (Get-Date)) { $st = 'WARNING' }
@@ -1807,7 +1845,7 @@ Register-Check -Id 'pki' -Name 'PKI, certificates and TLS bindings' -Script {
         $keys = @{}; foreach ($k in $listener.Keys) { if ($k -match '^(\w+)=(.*)$') { $keys[$matches[1]] = $matches[2] } }
         if ($keys['Transport'] -eq 'HTTPS') {
             $thumb = ''
-            try { $thumb = Normalize-Thumbprint (Get-Item (Join-Path $listener.PSPath 'CertificateThumbprint') -ErrorAction Stop).Value } catch { Write-Swallowed $_ }
+            try { $thumb = ConvertTo-NormalizedThumbprint (Get-Item (Join-Path $listener.PSPath 'CertificateThumbprint') -ErrorAction Stop).Value } catch { Write-Swallowed $_ }
             Add-Result 'CERTIFICATES' ('WinRM HTTPS ' + $keys['Address']) 'INFO' ('Thumbprint=' + $thumb) -Recommendation 'Confirm WinRM HTTPS still works after IPU if it is used for management.' -Source 'WSMan:\localhost\Listener'
         }
     }
@@ -1939,7 +1977,7 @@ Register-Check -Id 'backup' -Name 'Backup and VSS' -Script {
     if ($failed -gt 0) {
         Add-Result 'BACKUP' 'VSSWriters' 'ACTION' ('FailedWriters=' + $failed) -Recommendation 'Resolve VSS writer errors (often fixed by restarting the owning service) so the pre-change backup/snapshot is application-consistent.' -Source 'vssadmin list writers'
     }
-    foreach ($prov in @(Get-WmiSafe 'Win32_ShadowProvider')) {
+    foreach ($prov in @(Get-CimSafe 'Win32_ShadowProvider')) {
         $st = 'OK'; $rec = ''
         if ($prov.Name -notmatch '^Microsoft (Software|File Share) Shadow Copy provider') { $st = 'WARNING'; $rec = 'Third-party VSS provider: confirm it supports the target OS.' }
         Add-Result 'BACKUP' ('VSS provider: ' + $prov.Name) $st ('Version=' + $prov.Version) -Recommendation $rec -Kind 'Observation' -Source 'Win32_ShadowProvider'
@@ -1996,10 +2034,11 @@ Register-Check -Id 'vmware' -Name 'VMware guest readiness' -Script {
 # ---------------------------------------------------------------------------
 Register-Check -Id 'drivers' -Name 'Non-Microsoft drivers' -Script {
     $unsigned = @()
-    $pnp = @(Get-WmiSafe 'Win32_PnPSignedDriver' | Where-Object { $_.DeviceName -and $_.DriverProviderName -and $_.DriverProviderName -notmatch '^Microsoft' })
+    $pnp = @(Get-CimSafe 'Win32_PnPSignedDriver' | Where-Object { $_.DeviceName -and $_.DriverProviderName -and $_.DriverProviderName -notmatch '^Microsoft' })
     foreach ($d in @($pnp | Sort-Object DeviceName,DriverVersion -Unique)) {
         $date = [string]$d.DriverDate
-        try { $date = [Management.ManagementDateTimeConverter]::ToDateTime($d.DriverDate).ToString('yyyy-MM-dd') } catch { Write-Swallowed $_ }
+        $driverDate = ConvertTo-DateTimeValue $d.DriverDate
+        if ($driverDate) { $date = $driverDate.ToString('yyyy-MM-dd') }
         Add-Result 'DRIVERS' ('Device: ' + $d.DeviceName) 'INFO' ('Provider=' + $d.DriverProviderName) @(('Version=' + $d.DriverVersion),('Date=' + $date),('Class=' + $d.DeviceClass),('Signed=' + $d.IsSigned)) -Source 'Win32_PnPSignedDriver'
         if ($d.IsSigned -eq $false) { $unsigned += $d.DeviceName }
     }
@@ -2541,6 +2580,9 @@ th{background:#eef2f7;color:#30475f;font-size:11px;text-transform:uppercase;lett
     if ($Partial) {
         [void]$sb.AppendLine('<div class="partial">PARTIAL REPORT - the slow checks (DISM, SFC, Setup compatibility scan) had not finished when this was written. If this is the newest report, the SA job was stopped before they completed.</div>')
     }
+    if ($script:LogWriteFailures -gt 0) {
+        [void]$sb.AppendLine('<div class="partial">The collector log is incomplete: ' + $script:LogWriteFailures + ' line(s) could not be written to ' + (& $e $script:LogPath) + '.</div>')
+    }
     if ($problemRuns.Count -gt 0) {
         $names = @($problemRuns | ForEach-Object { $_.Name + ' (' + $_.Outcome + ')' }) -join ', '
         [void]$sb.AppendLine('<div class="partial">Not fully assessed: ' + (& $e $names) + '. See Collector coverage.</div>')
@@ -2717,7 +2759,7 @@ function Invoke-Assessment {
     try {
         $script:OutputFolderState = Initialize-OutputFolder $ReportDirectory
         [IO.File]::WriteAllText($script:LogPath,('Timestamp;Level;Phase;Message' + [Environment]::NewLine),(New-Object System.Text.UTF8Encoding($false)))
-    } catch { }
+    } catch { Write-Swallowed $_ }
     Write-AssessmentLog 'INFO' 'START' ('Collector={0} | Mode={1} | Target={2} | PowerShell={3}' -f $script:CollectorVersion,$AssessmentMode,$TargetServerVersion,$PSVersionTable.PSVersion)
 
     Register-AssessmentChecks
