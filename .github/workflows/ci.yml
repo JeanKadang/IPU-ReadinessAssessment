@@ -10,15 +10,28 @@ permissions:
 
 jobs:
   pester:
+    # Stable job names: "pester (Windows PowerShell 5.1)" and "pester (PowerShell 7)".
+    name: pester (${{ matrix.name }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows PowerShell 5.1
+            shell: powershell
+          - name: PowerShell 7
+            shell: pwsh
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     steps:
       - uses: actions/checkout@v7
-      - name: Run Pester
-        shell: pwsh
+      - name: Install Pester
         run: |
-          if (-not (Test-Path src/Windows-IPU-Readiness-Assessment.ps1)) {
-            Write-Host '::warning::src/Windows-IPU-Readiness-Assessment.ps1 not found; tests skipped'
-            exit 0
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          if ($PSVersionTable.PSVersion.Major -lt 6) {
+            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
           }
-          Install-Module Pester -MinimumVersion 5.0 -Scope CurrentUser -Force -SkipPublisherCheck
-          Invoke-Pester ./tests -CI -Output Detailed
+          Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+      - name: Run Pester
+        run: ./build/Invoke-CiTests.ps1
