@@ -1,7 +1,7 @@
 <#
 ===============================================================================
  SCRIPT NAME : Merge-IPUAssessments.ps1
- VERSION     : 1.0.1 (for Windows-IPU-Readiness-Assessment 4.0.1+)
+ VERSION     : 1.0.2 (for Windows-IPU-Readiness-Assessment 4.0.1+)
  PURPOSE     : Combine the JSON results of many servers into one overview.
  RUNS ON     : Any Windows machine with Windows PowerShell 5.1 or PowerShell 7
                (an admin workstation or jump host - NOT on the assessed servers).
@@ -39,6 +39,23 @@ if (-not (Test-Path -LiteralPath $OutputFolder)) { New-Item -ItemType Directory 
 
 $rank = @{ BLOCKER=1; ACTION=2; WARNING=3; MANUAL=4; OK=5 }
 function Encode([object]$v) { if ($null -eq $v) { return '' }; return [System.Net.WebUtility]::HtmlEncode([string]$v) }
+
+# CSV cells are opened in Excel. A value taken from a server (application
+# name, task, hostname) that starts with = + - @ or a tab/CR would be run as
+# a formula, so it is prefixed with an apostrophe (OWASP CSV injection).
+function ConvertTo-CsvSafeValue {
+    param([object]$Value)
+    if ($Value -is [string] -and $Value -match '^[=+\-@\t\r]') { return "'" + $Value }
+    return $Value
+}
+function ConvertTo-CsvSafeRow {
+    param([Parameter(ValueFromPipeline = $true)]$Row)
+    process {
+        $safe = [ordered]@{}
+        foreach ($p in $Row.PSObject.Properties) { $safe[$p.Name] = ConvertTo-CsvSafeValue $p.Value }
+        [pscustomobject]$safe
+    }
+}
 
 $files = @(Get-ChildItem -LiteralPath $InputFolder -Filter '*-IPU-*.json' -File | Where-Object { $_.Name -match '-IPU-(Assessment|PostUpgrade)\.json$' })
 if ($files.Count -eq 0) { throw ('No *-IPU-Assessment.json or *-IPU-PostUpgrade.json files found in ' + $InputFolder) }
@@ -99,8 +116,8 @@ $fleetFindings = @($findings | Where-Object { $keep.ContainsKey($_.SourceFile) }
 $serversCsv = Join-Path $OutputFolder 'IPU-Fleet-Servers.csv'
 $findingsCsv = Join-Path $OutputFolder 'IPU-Fleet-Findings.csv'
 $htmlPath = Join-Path $OutputFolder 'IPU-Fleet-Overview.html'
-$latest | Export-Csv -LiteralPath $serversCsv -Delimiter $Delimiter -NoTypeInformation -Encoding UTF8
-$fleetFindings | Export-Csv -LiteralPath $findingsCsv -Delimiter $Delimiter -NoTypeInformation -Encoding UTF8
+$latest | ConvertTo-CsvSafeRow | Export-Csv -LiteralPath $serversCsv -Delimiter $Delimiter -NoTypeInformation -Encoding UTF8
+$fleetFindings | ConvertTo-CsvSafeRow | Export-Csv -LiteralPath $findingsCsv -Delimiter $Delimiter -NoTypeInformation -Encoding UTF8
 
 # Most common blocking/action items across the fleet.
 $common = @($fleetFindings | Where-Object { $_.Status -in @('BLOCKER','ACTION') } | Group-Object Status,Item | Sort-Object @{Expression={ $rank[[string]$_.Group[0].Status] }},@{Expression='Count';Descending=$true} | Select-Object -First 15)
