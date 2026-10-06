@@ -902,3 +902,71 @@ Describe 'Invoke-PostUpgradeComparison (#34)' {
         $script:CurrentCheckId | Should -Be 'core'
     }
 }
+
+Describe 'Report and JSON writers (#36)' {
+    BeforeEach {
+        $script:Results.Clear(); $script:CheckRuns.Clear(); $script:Data = @{}
+        $script:CollectionStarted = (Get-Date).AddMinutes(-1)
+        $dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $dir | Out-Null
+        $script:ReportPath = Join-Path $dir 'SRV-IPU-Assessment.html'
+        $script:JsonPath = Join-Path $dir 'SRV-IPU-Assessment.json'
+        $script:LogPath = Join-Path $dir 'SRV-IPU-Assessment.log'
+        $script:WriteJson = $true
+        Add-Result 'STORAGE' 'CFreeSpace' 'ACTION' 'low'
+    }
+
+    It 'writes HTML and JSON and leaves no .writing file' {
+        $r = Write-AssessmentReport
+        $r.Overall | Should -Be 'ACTION'
+        $script:ReportPath | Should -Exist
+        $script:JsonPath | Should -Exist
+        @(Get-ChildItem -LiteralPath (Split-Path $script:ReportPath) -Filter '*.writing').Count | Should -Be 0
+        (Get-Content -LiteralPath $script:JsonPath -Raw | ConvertFrom-Json).Overall | Should -Be 'ACTION'
+    }
+    It 'replaces an existing report instead of appending' {
+        Set-Content -LiteralPath $script:ReportPath -Value 'OLD REPORT CONTENT'
+        Set-Content -LiteralPath $script:JsonPath -Value '{"Overall":"OLD"}'
+        $null = Write-AssessmentReport
+        $html = Get-Content -LiteralPath $script:ReportPath -Raw
+        $html | Should -Not -Match 'OLD REPORT CONTENT'
+        $html | Should -Match '(?is)^\s*<!doctype html'
+        (Get-Content -LiteralPath $script:JsonPath -Raw | ConvertFrom-Json).Overall | Should -Be 'ACTION'
+    }
+    It 'refuses a <Case> document and leaves the previous report untouched' -TestCases @(
+        @{ Case = 'short';             Html = '<!doctype html><html></html>' }
+        @{ Case = 'unterminated';      Html = '<!doctype html><html>' + ('x' * 3000) }
+        @{ Case = 'non-HTML';          Html = ('x' * 3000) + '</html>' }
+    ) {
+        Set-Content -LiteralPath $script:ReportPath -Value 'PREVIOUS GOOD REPORT'
+        $script:FakeHtml = $Html
+        Mock New-IPUReportHtml { $script:FakeHtml }
+        { Write-AssessmentReport } | Should -Throw -ExpectedMessage '*HTML validation failed*'
+        Get-Content -LiteralPath $script:ReportPath -Raw | Should -Match 'PREVIOUS GOOD REPORT'
+        @(Get-ChildItem -LiteralPath (Split-Path $script:ReportPath) -Filter '*.writing').Count | Should -Be 0
+    }
+    It 'writes UTF-8 without a byte-order mark' {
+        Add-Result 'STORAGE' 'Unicode' 'INFO' ('Caf' + [char]0xE9)
+        $null = Write-AssessmentReport
+        foreach ($p in $script:ReportPath, $script:JsonPath) {
+            $bytes = [IO.File]::ReadAllBytes($p)
+            ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) | Should -BeFalse
+        }
+        # The HTML encodes the character (&#233;); the JSON keeps it as UTF-8.
+        [IO.File]::ReadAllText($script:JsonPath, [Text.Encoding]::UTF8) | Should -Match ('Caf' + [char]0xE9)
+        [IO.File]::ReadAllText($script:ReportPath) | Should -Match 'Caf&#233;'
+    }
+    It 'logs a JSON failure as a warning and still writes the HTML' {
+        Mock Write-AssessmentJson { throw 'disk full' }
+        $r = Write-AssessmentReport
+        $script:ReportPath | Should -Exist
+        $r.Bytes | Should -BeGreaterThan 2048
+        Get-Content -LiteralPath $script:LogPath -Raw | Should -Match 'WARNING;JSON;JSON result could not be written: disk full'
+    }
+    It 'does not write JSON when WriteJson is off' {
+        $script:WriteJson = $false
+        $null = Write-AssessmentReport
+        $script:JsonPath | Should -Not -Exist
+        $script:WriteJson = $true
+    }
+}
