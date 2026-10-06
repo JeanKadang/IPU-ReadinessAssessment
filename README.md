@@ -94,6 +94,7 @@ flowchart TD
     R --> T[tests/<br/>Pester 5, 105 tests]
     R --> D[docs/<br/>user guide, review]
     R --> G[.github/<br/>CI, templates, Dependabot]
+    R --> C[.claude/ and AGENTS.md<br/>shared AI workflow]
 ```
 
 | Path | Contents |
@@ -103,6 +104,7 @@ flowchart TD
 | `docs/user-guide.md` | How to run and interpret the assessment |
 | `docs/review/` | Repository quality review |
 | `.github/` | CI workflow, issue forms, PR template, Dependabot, release notes config |
+| `.claude/`, `AGENTS.md`, `CLAUDE.md` | Shared GitHub workflow skills, plugin settings and assistant guidance (see [CONTRIBUTING](CONTRIBUTING.md#working-with-claude-code)) |
 
 ## Development
 

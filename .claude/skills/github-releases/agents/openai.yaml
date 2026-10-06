@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub Releases"
+  short_description: "Manage GitHub milestones, branch protection, and releases"
+  default_prompt: "Use $github-releases to guide this GitHub release, tagging, ruleset, or milestone workflow."
