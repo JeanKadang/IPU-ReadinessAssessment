@@ -371,6 +371,15 @@ Describe 'Check registry' {
         $script:AllChecks.Count | Should -Be 31
         @($script:AllChecks | Group-Object Id | Where-Object { $_.Count -gt 1 }).Count | Should -Be 0
     }
+    It 'docs/checks.md describes every registered check' {
+        $doc = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\docs\checks.md'))
+        foreach ($c in $script:AllChecks) { $doc | Should -Match ('`' + $c.Id + '`') -Because ('check ' + $c.Id + ' needs an entry in docs/checks.md') }
+    }
+    It 'the sample result matches docs/result-schema.json' -Skip:($PSVersionTable.PSVersion.Major -lt 7) {
+        $json = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\docs\samples\sample-result.json'))
+        $schema = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\docs\result-schema.json'))
+        Microsoft.PowerShell.Utility\Test-Json -Json $json -Schema $schema | Should -BeTrue
+    }
     It 'every registered check has a test in this file' {
         $text = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Checks.Tests.ps1'))
         foreach ($c in $script:AllChecks) { $text | Should -Match ("Invoke-TestCheck '" + $c.Id + "'") -Because ('check ' + $c.Id + ' needs a test') }
