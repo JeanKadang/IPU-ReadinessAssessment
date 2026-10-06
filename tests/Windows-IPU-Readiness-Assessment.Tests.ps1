@@ -172,16 +172,16 @@ Describe 'VSS writer parsing' {
     }
 }
 
-Describe 'ConvertFrom-NativeBytes' {
+Describe 'ConvertFrom-NativeByteArray' {
     It 'decodes UTF-16LE without BOM (sfc.exe style)' {
         $bytes = [Text.Encoding]::Unicode.GetBytes('Windows Resource Protection')
-        ConvertFrom-NativeBytes $bytes | Should -Be 'Windows Resource Protection'
+        ConvertFrom-NativeByteArray $bytes | Should -Be 'Windows Resource Protection'
     }
     It 'decodes single-byte output (dism.exe style)' {
-        ConvertFrom-NativeBytes ([Text.Encoding]::ASCII.GetBytes('No component store corruption detected.')) | Should -Be 'No component store corruption detected.'
+        ConvertFrom-NativeByteArray ([Text.Encoding]::ASCII.GetBytes('No component store corruption detected.')) | Should -Be 'No component store corruption detected.'
     }
     It 'strips control characters' {
-        ConvertFrom-NativeBytes ([byte[]](0x41,0x08,0x42)) | Should -Be 'AB'
+        ConvertFrom-NativeByteArray ([byte[]](0x41,0x08,0x42)) | Should -Be 'AB'
     }
 }
 
@@ -294,31 +294,31 @@ Describe 'Detection patterns - replay of AEVNWOSTST009 (first live run)' {
         $script:liveDrivers = @('bindflt','SysmonDrv','TmKmSnsr','tmeyes','vsepflt','storqosflt','wcifs','CldFlt','FileCrypt','luafv','UnionFS','npsvctrig','Wof')
     }
     It 'recognises TrendAI Deep Security (was missed by 4.0.0)' {
-        $m = Find-DetectionMatches $script:DetectionPatterns.EndpointProtection $script:liveApps $script:liveServices $script:liveDrivers
+        $m = Find-DetectionMatch $script:DetectionPatterns.EndpointProtection $script:liveApps $script:liveServices $script:liveDrivers
         @($m | ForEach-Object Label) | Should -Contain 'Trend Micro / TrendAI Deep Security, Apex One, Vision One'
     }
     It 'recognises the Defender for Endpoint sensor' {
-        $m = Find-DetectionMatches $script:DetectionPatterns.EndpointProtection $script:liveApps $script:liveServices $script:liveDrivers
+        $m = Find-DetectionMatch $script:DetectionPatterns.EndpointProtection $script:liveApps $script:liveServices $script:liveDrivers
         @($m | ForEach-Object Label) | Should -Contain 'Microsoft Defender for Endpoint (EDR sensor)'
     }
     It 'finds the application entries of all three OpenText agents' {
-        $m = Find-DetectionMatches $script:DetectionPatterns.Agents $script:liveApps $script:liveServices
+        $m = Find-DetectionMatch $script:DetectionPatterns.Agents $script:liveApps $script:liveServices
         $m.Count | Should -Be 3
         foreach ($x in $m) { @($x.Apps).Count | Should -Be 1 }
     }
     It 'flags Nessus, NXLog and Sysmon (Sysmon via its driver)' {
-        $m = Find-DetectionMatches $script:DetectionPatterns.SecurityTools $script:liveApps $script:liveServices $script:liveDrivers
+        $m = Find-DetectionMatch $script:DetectionPatterns.SecurityTools $script:liveApps $script:liveServices $script:liveDrivers
         $labels = @($m | ForEach-Object Label)
         $labels | Should -Contain 'Tenable Nessus agent'
         $labels | Should -Contain 'NXLog'
         $labels | Should -Contain 'Sysmon'
     }
     It 'reports no workloads and no backup product for this server' {
-        (Find-DetectionMatches $script:DetectionPatterns.Workloads $script:liveApps $script:liveServices).Count | Should -Be 0
-        (Find-DetectionMatches $script:DetectionPatterns.Backup $script:liveApps $script:liveServices).Count | Should -Be 0
+        (Find-DetectionMatch $script:DetectionPatterns.Workloads $script:liveApps $script:liveServices).Count | Should -Be 0
+        (Find-DetectionMatch $script:DetectionPatterns.Backup $script:liveApps $script:liveServices).Count | Should -Be 0
     }
     It 'detects a product by driver alone (renamed/hidden install entry)' {
-        $m = Find-DetectionMatches $script:DetectionPatterns.EndpointProtection @() @() @('CSAgent')
+        $m = Find-DetectionMatch $script:DetectionPatterns.EndpointProtection @() @() @('CSAgent')
         $m[0].Label | Should -Be 'CrowdStrike Falcon'
     }
 }
@@ -336,18 +336,18 @@ Describe 'Get-VMwareToolsDecision' {
     }
 }
 
-Describe 'Get-FeatureLifecycleFindings' {
+Describe 'Get-FeatureLifecycleFinding' {
     It 'removed feature on a 2025 target is an ACTION finding' {
-        $f = Get-FeatureLifecycleFindings @('SMTP-Server','FileAndStorage-Services') '2025'
+        $f = Get-FeatureLifecycleFinding @('SMTP-Server','FileAndStorage-Services') '2025'
         $f.Count | Should -Be 1
         $f[0].Status | Should -Be 'ACTION'
         $f[0].Kind | Should -Be 'Finding'
     }
     It 'the same feature is not flagged for a 2022 target' {
-        (Get-FeatureLifecycleFindings @('SMTP-Server') '2022').Count | Should -Be 0
+        (Get-FeatureLifecycleFinding @('SMTP-Server') '2022').Count | Should -Be 0
     }
     It 'deprecated features are observations' {
-        $f = Get-FeatureLifecycleFindings @('NLB') '2022'
+        $f = Get-FeatureLifecycleFinding @('NLB') '2022'
         $f[0].Kind | Should -Be 'Observation'
     }
 }
@@ -368,14 +368,14 @@ Describe 'Get-CompatScanDecision (setup.exe /compat scanonly)' {
     It 'handles a missing exit code' { (Get-CompatScanDecision $null).Status | Should -Be 'MANUAL' }
 }
 
-Describe 'ConvertTo-PendingRenamePaths' {
+Describe 'ConvertTo-PendingRenamePath' {
     It 'strips the \??\ prefix, skips empty destinations and de-duplicates' {
-        $p = ConvertTo-PendingRenamePaths @('\??\C:\Program Files\Trend\x.dll','','\??\C:\Program Files\Trend\x.dll','') 5
+        $p = ConvertTo-PendingRenamePath @('\??\C:\Program Files\Trend\x.dll','','\??\C:\Program Files\Trend\x.dll','') 5
         $p.Count | Should -Be 1
         $p[0] | Should -Be 'C:\Program Files\Trend\x.dll'
     }
     It 'limits the list and says how many more' {
-        $p = ConvertTo-PendingRenamePaths @('a','b','c','d') 2
+        $p = ConvertTo-PendingRenamePath @('a','b','c','d') 2
         $p.Count | Should -Be 3
         $p[2] | Should -Be '... and 2 more'
     }
@@ -503,7 +503,7 @@ Describe 'Output folder access (#12)' {
         Set-RestrictedFolderAcl $p
         $acl = Get-Acl -LiteralPath $p
         $acl.AreAccessRulesProtected | Should -BeTrue
-        @(Get-BroadFolderReaders $p).Count | Should -Be 0
+        @(Get-BroadFolderReader $p).Count | Should -Be 0
     }
 }
 
