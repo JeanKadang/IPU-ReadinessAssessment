@@ -16,8 +16,10 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $script:Failures = New-Object System.Collections.Generic.List[string]
+$script:Passed = 0
+$script:Facts = New-Object System.Collections.Generic.List[string]
 function Assert-That([bool]$Condition, [string]$Message) {
-    if ($Condition) { Write-Host ('[pass] ' + $Message) }
+    if ($Condition) { $script:Passed++; Write-Host ('[pass] ' + $Message) }
     else { Write-Host ('::error title=Smoke test::' + $Message); $script:Failures.Add($Message) }
 }
 
@@ -87,7 +89,7 @@ try {
     if ($pre.Exit -ne 0 -or $pre.Fields.Count -lt 2) { $pre.Output | Select-Object -Last 40 | ForEach-Object { Write-Host ('  > ' + $_) } }
     Test-Report (Join-Path $reports ($computer + '-IPU-Assessment.html')) @('Windows Server IPU Readiness Assessment', 'IPU decision - must be resolved', 'Upgrade Path, Licensing and Windows Health', 'Assessment and Collector', 'Collector coverage')
     $preJson = Test-ResultJson (Join-Path $reports ($computer + '-IPU-Assessment.json')) 'Pre'
-    if ($preJson) { Write-Host ('Pre result: Overall ' + $preJson.Overall + ', ' + @($preJson.Results).Count + ' records') }
+    if ($preJson) { $script:Facts.Add(('Pre: overall {0}, {1} records, {2} checks completed' -f $preJson.Overall, @($preJson.Results).Count, @($preJson.CheckRuns | Where-Object { $_.Outcome -eq 'Completed' }).Count)) }
 
     $post = Invoke-Assessment 'Post'
     Assert-That ($post.Exit -eq 0) 'Post run exits with 0'
@@ -98,7 +100,7 @@ try {
     if ($postJson) {
         $baselineRow = @($postJson.Results | Where-Object { $_.Area -eq 'POST_UPGRADE' -and $_.Item -eq 'Baseline' }) | Select-Object -First 1
         Assert-That ($baselineRow -and $baselineRow.Status -eq 'INFO') 'Post run read the Pre result as its baseline'
-        Write-Host ('Post result: Overall ' + $postJson.Overall)
+        $script:Facts.Add(('Post: overall {0}, {1} checks completed' -f $postJson.Overall, @($postJson.CheckRuns | Where-Object { $_.Outcome -eq 'Completed' }).Count))
     }
 } finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
@@ -107,5 +109,5 @@ try {
 $summary = @('### Smoke test on PowerShell ' + $PSVersionTable.PSVersion, '', ('Failures: {0}' -f $script:Failures.Count))
 foreach ($f in $script:Failures) { $summary += ('- ' + $f) }
 if ($env:GITHUB_STEP_SUMMARY) { $summary -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8 }
-Write-Host ('::notice title=Smoke test (PowerShell ' + $PSVersionTable.PSVersion + ')::Failures ' + $script:Failures.Count)
+Write-Host ('::notice title=Smoke test (PowerShell ' + $PSVersionTable.PSVersion + ')::Assertions passed ' + $script:Passed + ', failed ' + $script:Failures.Count + '. ' + ($script:Facts -join '. '))
 if ($script:Failures.Count -gt 0) { exit 1 }
