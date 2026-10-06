@@ -647,3 +647,85 @@ Describe 'Slow-check time budget (#39)' {
         $script:CurrentCheckId | Should -Be 'core'
     }
 }
+
+Describe 'Compare-IPUSnapshot - every category (#35)' {
+    BeforeAll {
+        function New-Snapshot {
+            param([hashtable]$Override = @{})
+            $snap = [ordered]@{
+                Services = @([pscustomobject]@{ Name = 'AppSvc'; State = 'Running'; StartMode = 'Auto' })
+                Ports    = @('TCP:443')
+                Routes   = @('10.50.0.0/16 via 10.20.30.1')
+                IPv4     = @('10.20.30.42', '10.20.30.43')
+                Dns      = @('10.20.1.10', '10.20.1.11')
+                Hosts    = @('10.1.1.5 legacy-app.example.test')
+                Apps     = @([pscustomobject]@{ Name = 'App A'; Version = '1.0' }, [pscustomobject]@{ Name = 'Agent B'; Version = '7.2' })
+                Features = @('FS-FileServer', 'SNMP-Service')
+                Tasks    = @('\Example\Nightly export', '\Example\Cleanup')
+            }
+            foreach ($k in $Override.Keys) { $snap[$k] = $Override[$k] }
+            return [pscustomobject]$snap
+        }
+        function Get-Diff {
+            param([string]$Item, $After)
+            $all = Compare-IPUSnapshot (New-Snapshot) $After
+            return ,@($all | Where-Object { $_.Item -eq $Item })
+        }
+    }
+
+    It 'a lost IPv4 address is an ACTION' {
+        $d = Get-Diff 'IPv4 addresses missing after upgrade' (New-Snapshot @{ IPv4 = @('10.20.30.42') })
+        $d.Count | Should -Be 1
+        $d[0].Status | Should -Be 'ACTION'
+        $d[0].Details | Should -Be '10.20.30.43'
+        $d[0].Recommendation | Should -Match 'Restore the IP configuration'
+    }
+    It 'a changed IPv4 address is reported as the old one missing' {
+        $d = Get-Diff 'IPv4 addresses missing after upgrade' (New-Snapshot @{ IPv4 = @('10.20.30.42', '10.20.30.99') })
+        $d[0].Details | Should -Be '10.20.30.43'
+    }
+    It 'a DNS change is a WARNING naming the lost server' {
+        $d = Get-Diff 'DNS servers missing after upgrade' (New-Snapshot @{ Dns = @('10.20.1.10', '8.8.8.8') })
+        $d[0].Status | Should -Be 'WARNING'
+        $d[0].Details | Should -Be '10.20.1.11'
+        $d[0].Recommendation | Should -Match 'DNS server configuration'
+    }
+    It 'a lost hosts entry is reported' {
+        $d = Get-Diff 'Hosts file entries missing after upgrade' (New-Snapshot @{ Hosts = @() })
+        $d[0].Status | Should -Be 'WARNING'
+        $d[0].Value | Should -Be 'Count=1'
+    }
+    It 'a removed application is reported' {
+        $d = Get-Diff 'Applications missing after upgrade' (New-Snapshot @{ Apps = @([pscustomobject]@{ Name = 'App A'; Version = '1.0' }) })
+        $d[0].Details | Should -Be 'Agent B'
+    }
+    It 'an application whose version changed is NOT reported' {
+        $after = New-Snapshot @{ Apps = @([pscustomobject]@{ Name = 'App A'; Version = '2.0' }, [pscustomobject]@{ Name = 'Agent B'; Version = '8.0' }) }
+        (Get-Diff 'Applications missing after upgrade' $after).Count | Should -Be 0
+    }
+    It 'a lost Windows feature is reported' {
+        $d = Get-Diff 'Windows features missing after upgrade' (New-Snapshot @{ Features = @('FS-FileServer') })
+        $d[0].Details | Should -Be 'SNMP-Service'
+    }
+    It 'a lost scheduled task is reported' {
+        $d = Get-Diff 'Scheduled tasks missing after upgrade' (New-Snapshot @{ Tasks = @('\Example\Cleanup') })
+        $d[0].Details | Should -Be '\Example\Nightly export'
+        $d[0].Recommendation | Should -Match 'run-as credentials'
+    }
+    It 'new items after the upgrade are not reported' {
+        $after = New-Snapshot @{ Ports = @('TCP:443', 'TCP:5985'); Features = @('FS-FileServer', 'SNMP-Service', 'Windows-Defender') }
+        (Compare-IPUSnapshot (New-Snapshot) $after).Count | Should -Be 0
+    }
+    It 'empty or $null sections do not throw' {
+        $empty = [pscustomobject]@{ Services = $null; Ports = @(); Routes = $null; IPv4 = @(); Dns = $null; Hosts = @(); Apps = $null; Features = @(); Tasks = $null }
+        { Compare-IPUSnapshot $empty $empty } | Should -Not -Throw
+        { Compare-IPUSnapshot (New-Snapshot) $empty } | Should -Not -Throw
+        { Compare-IPUSnapshot $empty (New-Snapshot) } | Should -Not -Throw
+        (Compare-IPUSnapshot $empty (New-Snapshot)).Count | Should -Be 0
+    }
+    It 'a snapshot missing whole properties does not throw' {
+        { Compare-IPUSnapshot ([pscustomobject]@{}) ([pscustomobject]@{}) } | Should -Not -Throw
+        $d = Compare-IPUSnapshot (New-Snapshot) ([pscustomobject]@{})
+        @($d | ForEach-Object Item) | Should -Contain 'Static routes missing after upgrade'
+    }
+}
