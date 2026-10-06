@@ -440,3 +440,69 @@ Describe 'Add-Result requires a named Recommendation' {
         { Add-Result 'STORAGE' 'a' 'OK' 'v' 'd' 'positional recommendation' } | Should -Throw
     }
 }
+
+Describe 'Output folder access (#12)' {
+    It 'state <State> with readers <Readers> is <Expected>' -TestCases @(
+        @{ State='CreatedRestricted';   Readers=@();          Expected='OK' }
+        @{ State='CreatedUnrestricted'; Readers=@();          Expected='WARNING' }
+        @{ State='Created';             Readers=@();          Expected='INFO' }
+        @{ State='Existing';            Readers=@('Users');   Expected='WARNING' }
+        @{ State='Existing';            Readers=@();          Expected='INFO' }
+    ) {
+        (Get-OutputFolderAccessDecision $State $Readers $true 'C:\Reports').Status | Should -Be $Expected
+    }
+    It 'gives the icacls command for an open existing folder, and never counts it as a finding' {
+        $d = Get-OutputFolderAccessDecision 'Existing' @('Authenticated Users','Users') $true 'C:\Reports'
+        $d.Kind | Should -Be 'Observation'
+        $d.Text | Should -Match 'icacls "C:\\Reports" /inheritance:r'
+        $d.Text | Should -Match 'Authenticated Users, Users'
+    }
+
+    Context 'Initialize-OutputFolder' {
+        BeforeEach { Mock Set-RestrictedFolderAcl { } }
+
+        It 'restricts a folder it creates' {
+            $p = Join-Path $TestDrive 'new-restricted'
+            Initialize-OutputFolder $p $true | Should -Be 'CreatedRestricted'
+            $p | Should -Exist
+            Should -Invoke Set-RestrictedFolderAcl -Times 1 -Exactly
+        }
+        It 'never touches an existing folder' {
+            $p = Join-Path $TestDrive 'existing'
+            New-Item -ItemType Directory -Path $p | Out-Null
+            Initialize-OutputFolder $p $true | Should -Be 'Existing'
+            Should -Invoke Set-RestrictedFolderAcl -Times 0 -Exactly
+        }
+        It 'keeps inherited permissions when RestrictOutputAcl is off' {
+            $p = Join-Path $TestDrive 'opt-out'
+            Initialize-OutputFolder $p $false | Should -Be 'Created'
+            Should -Invoke Set-RestrictedFolderAcl -Times 0 -Exactly
+        }
+        It 'reports, rather than fails, when the ACL cannot be set' {
+            Mock Set-RestrictedFolderAcl { throw 'access denied' }
+            $p = Join-Path $TestDrive 'acl-fails'
+            Initialize-OutputFolder $p $true | Should -Be 'CreatedUnrestricted'
+            $p | Should -Exist
+        }
+    }
+
+    It 'ignores empty reader lists (no false warning on a clean folder)' {
+        (Get-OutputFolderAccessDecision 'Existing' @($null) $true 'C:\Reports').Status | Should -Be 'INFO'
+        (Get-OutputFolderAccessDecision 'Existing' @() $true 'C:\Reports').Status | Should -Be 'INFO'
+    }
+
+    It 'builds a protected ACL with only SYSTEM and Administrators (Windows)' -Skip:($env:OS -ne 'Windows_NT') {
+        $sec = New-RestrictedDirectorySecurity
+        $sec.AreAccessRulesProtected | Should -BeTrue
+        $sids = @($sec.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { [string]$_.IdentityReference } | Sort-Object)
+        ($sids -join ',') | Should -Be 'S-1-5-18,S-1-5-32-544'
+    }
+    It 'applies the ACL to a real folder (Windows)' -Skip:($env:OS -ne 'Windows_NT') {
+        $p = Join-Path $TestDrive 'real-acl'
+        New-Item -ItemType Directory -Path $p | Out-Null
+        Set-RestrictedFolderAcl $p
+        $acl = Get-Acl -LiteralPath $p
+        $acl.AreAccessRulesProtected | Should -BeTrue
+        @(Get-BroadFolderReaders $p).Count | Should -Be 0
+    }
+}
