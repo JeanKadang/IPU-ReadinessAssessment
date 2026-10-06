@@ -819,3 +819,86 @@ Describe 'Edge cases for thin decision functions (#40)' {
         }
     }
 }
+
+Describe 'Invoke-PostUpgradeComparison (#34)' {
+    BeforeAll {
+        function Set-PostScenario {
+            param([string]$NowRelease = '2025', [string]$BaselinePath = '', [hashtable]$Now = @{})
+            $script:Results.Clear(); $script:CheckRuns.Clear()
+            $script:TargetServerVersion = '2025'
+            $script:Data = @{ SourceRelease = $NowRelease }
+            $snap = @{ Services = @(); Ports = @('TCP:443'); Routes = @(); IPv4 = @('10.0.0.5'); Dns = @(); Hosts = @(); Apps = @(); Features = @(); Tasks = @() }
+            foreach ($k in $Now.Keys) { $snap[$k] = $Now[$k] }
+            $script:Data.Snapshot = $snap
+            $script:BaselinePath = $BaselinePath
+        }
+        function Save-Baseline {
+            param([string]$Path, [bool]$Partial = $false, [hashtable]$Snapshot = @{})
+            $snap = @{ Services = @(); Ports = @('TCP:443'); Routes = @(); IPv4 = @('10.0.0.5'); Dns = @(); Hosts = @(); Apps = @(); Features = @(); Tasks = @() }
+            foreach ($k in $Snapshot.Keys) { $snap[$k] = $Snapshot[$k] }
+            [pscustomobject]@{ Schema = 'IPU-Assessment/1'; CollectorVersion = '4.0.1'; Completed = '2026-10-01 10:00:00'; Overall = 'WARNING'; Partial = $Partial
+                Facts = [pscustomobject]@{ CurrentOS = 'Windows Server 2022 Standard' }; Snapshot = [pscustomobject]$snap } |
+                ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $Path -Encoding UTF8
+        }
+        function Get-Row([string]$Item) { @($script:Results | Where-Object { $_.Item -eq $Item }) }
+    }
+    AfterAll { $script:TargetServerVersion = '2025'; $script:Data = @{} }
+
+    It 'target not reached gives an ACTION naming the Setup logs' {
+        Set-PostScenario -NowRelease '2022' -BaselinePath (Join-Path $TestDrive 'none.json')
+        Invoke-PostUpgradeComparison
+        $r = Get-Row 'UpgradeReachedTarget'
+        $r[0].Status | Should -Be 'ACTION'
+        $r[0].Recommendation | Should -Match 'setuperr\.log'
+        $r[0].Recommendation | Should -Match '\$WINDOWS\.~BT'
+    }
+    It 'missing baseline gives a MANUAL finding naming the expected path' {
+        $path = Join-Path $TestDrive 'SRV-IPU-Assessment.json'
+        Set-PostScenario -BaselinePath $path
+        Invoke-PostUpgradeComparison
+        $r = Get-Row 'Baseline'
+        $r[0].Status | Should -Be 'MANUAL'
+        $r[0].Kind | Should -Be 'Finding'
+        $r[0].Details | Should -Be $path
+        $script:CheckRuns[-1].Outcome | Should -Be 'Completed'
+    }
+    It 'a Partial baseline gives a WARNING Observation, not a Finding' {
+        $path = Join-Path $TestDrive 'partial.json'
+        Save-Baseline -Path $path -Partial $true
+        Set-PostScenario -BaselinePath $path
+        Invoke-PostUpgradeComparison
+        $r = Get-Row 'BaselineComplete'
+        $r[0].Status | Should -Be 'WARNING'
+        $r[0].Kind | Should -Be 'Observation'
+    }
+    It 'no differences gives an OK comparison' {
+        $path = Join-Path $TestDrive 'same.json'
+        Save-Baseline -Path $path
+        Set-PostScenario -BaselinePath $path
+        Invoke-PostUpgradeComparison
+        (Get-Row 'UpgradeReachedTarget')[0].Status | Should -Be 'OK'
+        (Get-Row 'Comparison')[0].Status | Should -Be 'OK'
+        @($script:Results | Where-Object { $_.Kind -eq 'Finding' -and $_.Status -ne 'OK' }).Count | Should -Be 0
+    }
+    It 'differences become findings in the comparison area' {
+        $path = Join-Path $TestDrive 'diff.json'
+        Save-Baseline -Path $path -Snapshot @{ Ports = @('TCP:443', 'TCP:1433'); Routes = @('10.50.0.0/16 via 10.0.0.1') }
+        Set-PostScenario -BaselinePath $path
+        Invoke-PostUpgradeComparison
+        (Get-Row 'Static routes missing after upgrade')[0].Status | Should -Be 'ACTION'
+        (Get-Row 'Listening ports missing after upgrade')[0].Details | Should -Be 'TCP:1433'
+        (Get-Row 'Comparison').Count | Should -Be 0
+    }
+    It 'an error becomes a MANUAL finding and a Failed check run' {
+        $path = Join-Path $TestDrive 'broken.json'
+        Set-Content -LiteralPath $path -Value '{ this is not json'
+        Set-PostScenario -BaselinePath $path
+        Invoke-PostUpgradeComparison
+        $r = Get-Row 'Post-upgrade comparison'
+        $r[0].Status | Should -Be 'MANUAL'
+        $r[0].Area | Should -Be 'COLLECTOR'
+        $script:CheckRuns[-1].Id | Should -Be 'postcompare'
+        $script:CheckRuns[-1].Outcome | Should -Be 'Failed'
+        $script:CurrentCheckId | Should -Be 'core'
+    }
+}
