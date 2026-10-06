@@ -4,15 +4,16 @@
     GitHub annotation, so failures are readable from the checks API without
     downloading the full log.
 #>
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '', Justification = 'GitHub workflow commands must be written to the host stream.')]
 [CmdletBinding()]
-param([string]$Path = './tests')
+param([string]$Path = './tests', [switch]$Coverage)
 
 $ErrorActionPreference = 'Stop'
 if (-not (Test-Path -LiteralPath 'src/Windows-IPU-Readiness-Assessment.ps1')) {
     Write-Host '::error title=Missing script::src/Windows-IPU-Readiness-Assessment.ps1 not found'
     exit 1
 }
-Import-Module Pester -MinimumVersion 5.5.0
+Import-Module Pester -MinimumVersion 5.5.0 -Force
 
 function Write-Annotation([string]$Level, [string]$Title, [string]$Message) {
     $t = ($Title -replace '[\r\n]+', ' ' -replace ':', '%3A' -replace ',', '%2C')
@@ -24,6 +25,11 @@ $config = New-PesterConfiguration
 $config.Run.Path = $Path
 $config.Run.PassThru = $true
 $config.Output.Verbosity = 'Detailed'
+if ($Coverage) {
+    $config.CodeCoverage.Enabled = $true
+    $config.CodeCoverage.Path = @('src/*.ps1')
+    $config.CodeCoverage.OutputPath = 'coverage.xml'
+}
 $result = Invoke-Pester -Configuration $config
 
 foreach ($t in @($result.Failed)) {
@@ -39,4 +45,11 @@ foreach ($c in @($result.FailedContainers)) {
     Write-Annotation 'error' ('Container ' + $c.Item) $msg
 }
 Write-Annotation 'notice' ('Pester on PowerShell ' + $PSVersionTable.PSVersion) ('Passed {0}, Failed {1}, Skipped {2}, NotRun {3}' -f $result.PassedCount, $result.FailedCount, $result.SkippedCount, $result.NotRunCount)
+$lines = @('### Pester on PowerShell ' + $PSVersionTable.PSVersion, '', ('Passed {0}, failed {1}, skipped {2}.' -f $result.PassedCount, $result.FailedCount, $result.SkippedCount))
+if ($Coverage -and $result.CodeCoverage) {
+    $pct = [math]::Round($result.CodeCoverage.CoveragePercent, 1)
+    $lines += ('Code coverage of src/*.ps1: **{0}%** ({1} of {2} commands).' -f $pct, $result.CodeCoverage.CommandsExecutedCount, $result.CodeCoverage.CommandsAnalyzedCount)
+    Write-Annotation 'notice' 'Code coverage' ('{0}% of src/*.ps1 commands executed' -f $pct)
+}
+if ($env:GITHUB_STEP_SUMMARY) { $lines -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8 }
 if ($result.Result -ne 'Passed') { exit 1 }
