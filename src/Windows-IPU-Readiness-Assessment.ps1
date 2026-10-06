@@ -496,10 +496,10 @@ function Initialize-OutputFolder {
     # Creates a folder for the script's own output. Only a folder created by
     # this run is restricted; an existing folder keeps its permissions (it may
     # be shared, e.g. C:\Temp) and the report says whether it is too open.
-    param([string]$Path)
+    param([string]$Path, [bool]$Restrict = $RestrictOutputAcl)
     if (Test-Path -LiteralPath $Path -PathType Container) { return 'Existing' }
     New-Item -ItemType Directory -Path $Path -Force -ErrorAction Stop | Out-Null
-    if (-not $RestrictOutputAcl) { return 'Created' }
+    if (-not $Restrict) { return 'Created' }
     try {
         Set-RestrictedFolderAcl $Path
         return 'CreatedRestricted'
@@ -524,7 +524,7 @@ function Get-BroadFolderReaders {
             }
         }
     } catch { Write-Swallowed $_ }
-    return ,$found
+    return $found
 }
 
 function Get-RegistryValueSafe {
@@ -1042,6 +1042,7 @@ function Compare-IPUSnapshot {
 function Get-OutputFolderAccessDecision {
     # Pure: what the report says about the output folder's permissions.
     param([string]$State, [string[]]$BroadReaders = @(), [bool]$RestrictEnabled = $true, [string]$Path = '')
+    $readers = @($BroadReaders | Where-Object { $_ })
     switch ($State) {
         'CreatedRestricted' {
             return [pscustomobject]@{ Status='OK'; Kind='Evidence'; Text='Created by this run; access limited to SYSTEM and Administrators.' }
@@ -1053,9 +1054,9 @@ function Get-OutputFolderAccessDecision {
             return [pscustomobject]@{ Status='INFO'; Kind='Evidence'; Text='Created by this run with inherited permissions (RestrictOutputAcl is off).' }
         }
     }
-    if (@($BroadReaders).Count -gt 0) {
+    if ($readers.Count -gt 0) {
         return [pscustomobject]@{ Status='WARNING'; Kind='Observation'
-            Text=('Existing folder readable by ' + (@($BroadReaders) -join ', ') + '. The reports describe the server in detail. Restrict it: icacls "' + $Path + '" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F - or delete the folder so the next run recreates it restricted.') }
+            Text=('Existing folder readable by ' + ($readers -join ', ') + '. The reports describe the server in detail. Restrict it: icacls "' + $Path + '" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F - or delete the folder so the next run recreates it restricted.') }
     }
     return [pscustomobject]@{ Status='INFO'; Kind='Evidence'; Text='Existing folder; its permissions were left unchanged and do not grant read access to Everyone, Authenticated Users or Users.' }
 }
@@ -1126,7 +1127,7 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
     $folderState = $script:OutputFolderState
     if (-not $folderState) { $folderState = 'Existing' }
     $readers = @()
-    if ($folderState -eq 'Existing') { $readers = Get-BroadFolderReaders $ReportDirectory }
+    if ($folderState -eq 'Existing') { $readers = @(Get-BroadFolderReaders $ReportDirectory) }
     $access = Get-OutputFolderAccessDecision $folderState $readers $RestrictOutputAcl $ReportDirectory
     Add-Result 'ASSESSMENT' 'OutputFolderAccess' $access.Status $ReportDirectory $access.Text -Kind $access.Kind -Source 'Get-Acl'
 }

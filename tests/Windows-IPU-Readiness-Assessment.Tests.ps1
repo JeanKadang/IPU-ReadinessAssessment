@@ -459,42 +459,36 @@ Describe 'Output folder access (#12)' {
     }
 
     Context 'Initialize-OutputFolder' {
-        BeforeAll {
-            $script:aclCalls = New-Object System.Collections.Generic.List[string]
-            $script:origSetAcl = ${function:Set-RestrictedFolderAcl}
-            function script:Set-RestrictedFolderAcl { param([string]$Path) $script:aclCalls.Add($Path) }
-        }
-        AfterAll {
-            Set-Item -Path function:script:Set-RestrictedFolderAcl -Value $script:origSetAcl
-        }
-        BeforeEach { $script:aclCalls.Clear(); $script:RestrictOutputAcl = $true }
-        AfterEach { $script:RestrictOutputAcl = $true }
+        BeforeEach { Mock Set-RestrictedFolderAcl { } }
 
         It 'restricts a folder it creates' {
             $p = Join-Path $TestDrive 'new-restricted'
-            Initialize-OutputFolder $p | Should -Be 'CreatedRestricted'
+            Initialize-OutputFolder $p $true | Should -Be 'CreatedRestricted'
             $p | Should -Exist
-            $script:aclCalls.Count | Should -Be 1
+            Should -Invoke Set-RestrictedFolderAcl -Times 1 -Exactly
         }
         It 'never touches an existing folder' {
             $p = Join-Path $TestDrive 'existing'
             New-Item -ItemType Directory -Path $p | Out-Null
-            Initialize-OutputFolder $p | Should -Be 'Existing'
-            $script:aclCalls.Count | Should -Be 0
+            Initialize-OutputFolder $p $true | Should -Be 'Existing'
+            Should -Invoke Set-RestrictedFolderAcl -Times 0 -Exactly
         }
         It 'keeps inherited permissions when RestrictOutputAcl is off' {
-            $script:RestrictOutputAcl = $false
             $p = Join-Path $TestDrive 'opt-out'
-            Initialize-OutputFolder $p | Should -Be 'Created'
-            $script:aclCalls.Count | Should -Be 0
+            Initialize-OutputFolder $p $false | Should -Be 'Created'
+            Should -Invoke Set-RestrictedFolderAcl -Times 0 -Exactly
         }
         It 'reports, rather than fails, when the ACL cannot be set' {
-            function script:Set-RestrictedFolderAcl { param([string]$Path) throw 'access denied' }
+            Mock Set-RestrictedFolderAcl { throw 'access denied' }
             $p = Join-Path $TestDrive 'acl-fails'
-            Initialize-OutputFolder $p | Should -Be 'CreatedUnrestricted'
+            Initialize-OutputFolder $p $true | Should -Be 'CreatedUnrestricted'
             $p | Should -Exist
-            function script:Set-RestrictedFolderAcl { param([string]$Path) $script:aclCalls.Add($Path) }
         }
+    }
+
+    It 'ignores empty reader lists (no false warning on a clean folder)' {
+        (Get-OutputFolderAccessDecision 'Existing' @($null) $true 'C:\Reports').Status | Should -Be 'INFO'
+        (Get-OutputFolderAccessDecision 'Existing' @() $true 'C:\Reports').Status | Should -Be 'INFO'
     }
 
     It 'builds a protected ACL with only SYSTEM and Administrators (Windows)' -Skip:($env:OS -ne 'Windows_NT') {
