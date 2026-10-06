@@ -964,9 +964,9 @@ Describe 'Report and JSON writers (#36)' {
         Get-Content -LiteralPath $script:LogPath -Raw | Should -Match 'WARNING;JSON;JSON result could not be written: disk full'
     }
     It 'does not write JSON when WriteJson is off' {
-        $script:WriteJson = $false
+        # A local variable shadows the script parameter for calls made from here.
+        $WriteJson = $false
         $null = Write-AssessmentReport
         $script:JsonPath | Should -Not -Exist
-        $script:WriteJson = $true
     }
 }
