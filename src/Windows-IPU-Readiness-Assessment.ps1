@@ -155,6 +155,10 @@ param(
     # Output.
     [string]$ReportDirectory = 'C:\Temp\IPU-Assessment',
     [bool]$WriteJson = $true,
+    # Folders this run creates (report, policy evidence) get SYSTEM and
+    # Administrators access only; reports describe the server in detail.
+    # Existing folders are never changed. $false keeps inherited permissions.
+    [bool]$RestrictOutputAcl = $true,
     [string]$NumberCultureName = 'da-DK'
 )
 
@@ -467,6 +471,60 @@ function Invoke-Check {
     })
     Write-AssessmentLog 'INFO' $Check.Id ('Finished. Outcome={0} | Duration={1}' -f $outcome,(Format-Duration $sw.Elapsed))
     $script:CurrentCheckId = 'core'
+}
+
+function New-RestrictedDirectorySecurity {
+    # SYSTEM and Administrators full control, inheritance from the parent
+    # removed. Built from SIDs so it works on every OS language.
+    $security = New-Object System.Security.AccessControl.DirectorySecurity
+    $security.SetAccessRuleProtection($true, $false)
+    $inherit = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    foreach ($sid in @('S-1-5-18', 'S-1-5-32-544')) {
+        $identity = New-Object System.Security.Principal.SecurityIdentifier($sid)
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity, [System.Security.AccessControl.FileSystemRights]::FullControl, $inherit, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)
+        $security.AddAccessRule($rule)
+    }
+    return $security
+}
+
+function Set-RestrictedFolderAcl {
+    param([string]$Path)
+    Set-Acl -LiteralPath $Path -AclObject (New-RestrictedDirectorySecurity) -ErrorAction Stop
+}
+
+function Initialize-OutputFolder {
+    # Creates a folder for the script's own output. Only a folder created by
+    # this run is restricted; an existing folder keeps its permissions (it may
+    # be shared, e.g. C:\Temp) and the report says whether it is too open.
+    param([string]$Path)
+    if (Test-Path -LiteralPath $Path -PathType Container) { return 'Existing' }
+    New-Item -ItemType Directory -Path $Path -Force -ErrorAction Stop | Out-Null
+    if (-not $RestrictOutputAcl) { return 'Created' }
+    try {
+        Set-RestrictedFolderAcl $Path
+        return 'CreatedRestricted'
+    } catch {
+        Write-AssessmentLog 'WARNING' 'ACL' ('Could not restrict ' + $Path + ': ' + $_.Exception.Message)
+        return 'CreatedUnrestricted'
+    }
+}
+
+function Get-BroadFolderReaders {
+    # Returns the broad groups (Everyone, Authenticated Users, Users) that are
+    # allowed to read the folder. Empty when the ACL cannot be read.
+    param([string]$Path)
+    $broad = @{ 'S-1-1-0' = 'Everyone'; 'S-1-5-11' = 'Authenticated Users'; 'S-1-5-32-545' = 'Users' }
+    $found = @()
+    try {
+        $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+        foreach ($rule in @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))) {
+            $sid = [string]$rule.IdentityReference
+            if ($broad.ContainsKey($sid) -and [string]$rule.AccessControlType -eq 'Allow' -and ([int]$rule.FileSystemRights -band [int][System.Security.AccessControl.FileSystemRights]::ReadData)) {
+                if ($found -notcontains $broad[$sid]) { $found += $broad[$sid] }
+            }
+        }
+    } catch { Write-Swallowed $_ }
+    return ,$found
 }
 
 function Get-RegistryValueSafe {
@@ -981,6 +1039,27 @@ function Compare-IPUSnapshot {
     return ,$diff
 }
 
+function Get-OutputFolderAccessDecision {
+    # Pure: what the report says about the output folder's permissions.
+    param([string]$State, [string[]]$BroadReaders = @(), [bool]$RestrictEnabled = $true, [string]$Path = '')
+    switch ($State) {
+        'CreatedRestricted' {
+            return [pscustomobject]@{ Status='OK'; Kind='Evidence'; Text='Created by this run; access limited to SYSTEM and Administrators.' }
+        }
+        'CreatedUnrestricted' {
+            return [pscustomobject]@{ Status='WARNING'; Kind='Observation'; Text='Created by this run, but its permissions could not be restricted (see the log). Restrict access manually; the reports describe the server in detail.' }
+        }
+        'Created' {
+            return [pscustomobject]@{ Status='INFO'; Kind='Evidence'; Text='Created by this run with inherited permissions (RestrictOutputAcl is off).' }
+        }
+    }
+    if (@($BroadReaders).Count -gt 0) {
+        return [pscustomobject]@{ Status='WARNING'; Kind='Observation'
+            Text=('Existing folder readable by ' + (@($BroadReaders) -join ', ') + '. The reports describe the server in detail. Restrict it: icacls "' + $Path + '" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F - or delete the folder so the next run recreates it restricted.') }
+    }
+    return [pscustomobject]@{ Status='INFO'; Kind='Evidence'; Text='Existing folder; its permissions were left unchanged and do not grant read access to Everyone, Authenticated Users or Users.' }
+}
+
 function Get-OverallStatus {
     param([object[]]$Results)
     $findings = @($Results | Where-Object { $_.Kind -eq 'Finding' })
@@ -1044,6 +1123,12 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
         Add-Result 'COLLECTOR' '32-bit PowerShell host' 'ACTION' 'Running in 32-bit PowerShell on 64-bit Windows and could not relaunch as 64-bit' -Recommendation 'Registry and System32 reads are redirected, so application, SQL and tool results are unreliable. Run the script as a file under 64-bit PowerShell and re-assess.' -Source 'Environment.Is64BitProcess'
     }
     Add-Result 'ASSESSMENT' 'ReportDestination' 'INFO' $ReportDirectory ('Policy evidence: ' + $(if ($EnableRDPPolicyEvidence) { $PolicyEvidenceRoot } else { 'disabled' })) -Source 'SETTINGS'
+    $folderState = $script:OutputFolderState
+    if (-not $folderState) { $folderState = 'Existing' }
+    $readers = @()
+    if ($folderState -eq 'Existing') { $readers = Get-BroadFolderReaders $ReportDirectory }
+    $access = Get-OutputFolderAccessDecision $folderState $readers $RestrictOutputAcl $ReportDirectory
+    Add-Result 'ASSESSMENT' 'OutputFolderAccess' $access.Status $ReportDirectory $access.Text -Kind $access.Kind -Source 'Get-Acl'
 }
 
 # ---------------------------------------------------------------------------
@@ -2120,7 +2205,7 @@ Register-Check -Id 'compatscan' -Name 'Setup compatibility scan' -Phase 'Slow' -
         $panther = 'C:\$WINDOWS.~BT\Sources\Panther'
         $xmlFiles = @(Get-ChildItem -LiteralPath $panther -Filter 'CompatData*.xml' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge (Get-Date).AddSeconds(-1 * ($sw.Elapsed.TotalSeconds + 60)) })
         if ($xmlFiles.Count -gt 0) {
-            New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+            $null = Initialize-OutputFolder $evidence
             foreach ($x in $xmlFiles) {
                 Copy-Item -LiteralPath $x.FullName -Destination $evidence -Force
                 try {
@@ -2165,7 +2250,11 @@ function Invoke-RdpPolicyAssessment {
     $zip = $root + '.zip'
     $script:Data.PolicyEvidence = $root
     $folderOk = $true
-    try { New-Item -ItemType Directory -Path $lgpoRoot -Force | Out-Null }
+    try {
+        $null = Initialize-OutputFolder $PolicyEvidenceRoot
+        $null = Initialize-OutputFolder $root
+        New-Item -ItemType Directory -Path $lgpoRoot -Force | Out-Null
+    }
     catch { $folderOk = $false; $review.Add('Evidence folder could not be created'); Add-Result 'POLICY_EVIDENCE' 'EvidenceFolder' 'MANUAL' $root $_.Exception.Message -Recommendation 'Make the evidence folder writable and re-run.' -Kind 'Observation' }
 
     if ($folderOk) {
@@ -2625,7 +2714,7 @@ function Invoke-PostUpgradeComparison {
 function Invoke-Assessment {
     $header = 'ComputerName;RunStatus;AssessmentStatus;ReportPath;LogPath;ReportSizeKB;Records;Started;Completed;Duration;CollectorVersion;Message'
     try {
-        if (-not (Test-Path -LiteralPath $ReportDirectory -PathType Container)) { New-Item -ItemType Directory -Path $ReportDirectory -Force -ErrorAction Stop | Out-Null }
+        $script:OutputFolderState = Initialize-OutputFolder $ReportDirectory
         [IO.File]::WriteAllText($script:LogPath,('Timestamp;Level;Phase;Message' + [Environment]::NewLine),(New-Object System.Text.UTF8Encoding($false)))
     } catch { }
     Write-AssessmentLog 'INFO' 'START' ('Collector={0} | Mode={1} | Target={2} | PowerShell={3}' -f $script:CollectorVersion,$AssessmentMode,$TargetServerVersion,$PSVersionTable.PSVersion)

@@ -172,6 +172,7 @@ When the budget runs out, remaining slow checks are reported as `MANUAL` (skippe
 |---|---|---|
 | `ReportDirectory` | `C:\Temp\IPU-Assessment` | Where HTML, JSON and log are written |
 | `WriteJson` | `$true` | Write the JSON result (also the post-upgrade baseline) |
+| `RestrictOutputAcl` | `$true` | Folders the script creates (report folder, policy evidence) get access for SYSTEM and Administrators only. Existing folders are never changed; the report warns, with the `icacls` command to fix it, if an existing folder is readable by Everyone, Authenticated Users or Users. `$false` keeps inherited permissions |
 | `NumberCultureName` | `da-DK` | Culture used to format numbers in the SA result line. Invalid values fall back to invariant |
 
 ## 5. Outputs

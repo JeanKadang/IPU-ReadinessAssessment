@@ -113,7 +113,7 @@ The assessment is **non-remediating**. It never installs, removes or reconfigure
 - Side effects, by design: report, log, JSON and evidence files are written. Only when `-TargetMediaPath` is set is an ISO mounted and dismounted, and Setup's compatibility scan creates `C:\$WINDOWS.~BT`.
 - A crashed check is reported as `MANUAL`: absence of findings in that area is not evidence of readiness.
 
-> Reports describe a server in detail (ports, tasks, certificates, agents). Treat them as sensitive and restrict access to the output folder.
+> Reports describe a server in detail (ports, tasks, certificates, agents). Treat them as sensitive. Folders the script creates are limited to SYSTEM and Administrators; an existing folder keeps its permissions, and the report warns if it is readable by ordinary users. Opt out with `-RestrictOutputAcl $false`.
 
 ## Repository layout
 
