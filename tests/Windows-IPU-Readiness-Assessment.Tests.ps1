@@ -970,3 +970,52 @@ Describe 'Report and JSON writers (#36)' {
         $script:JsonPath | Should -Not -Exist
     }
 }
+
+Describe 'Invoke-NativeCapture (#37)' -Tag 'Integration' {
+    BeforeAll {
+        # -Skip is evaluated during discovery, before this block runs, so the
+        # tests test $env:OS directly. Paths are only built on Windows.
+        if ($env:OS -eq 'Windows_NT') { $script:Cmd = Join-Path $env:windir 'System32\cmd.exe' }
+        function Get-CaptureTempFile { @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Filter 'IPU-*' -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^IPU-[0-9a-f]{32}\.(out|err)$' }) }
+    }
+
+    It 'returns exit code 0' -Skip:($env:OS -ne 'Windows_NT') {
+        $r = Invoke-NativeCapture $script:Cmd @('/c', 'exit 0') 30
+        $r.ExitCode | Should -Be 0
+        $r.TimedOut | Should -BeFalse
+        $r.Error | Should -Be ''
+    }
+    It 'returns a non-zero exit code' -Skip:($env:OS -ne 'Windows_NT') {
+        (Invoke-NativeCapture $script:Cmd @('/c', 'exit 3') 30).ExitCode | Should -Be 3
+    }
+    It 'captures stdout and stderr' -Skip:($env:OS -ne 'Windows_NT') {
+        $r = Invoke-NativeCapture $script:Cmd @('/c', 'echo to-stdout& echo to-stderr 1>&2') 30
+        $r.Lines | Should -Contain 'to-stdout'
+        $r.Lines | Should -Contain 'to-stderr'
+    }
+    It 'stops a command that exceeds the timeout' -Skip:($env:OS -ne 'Windows_NT') {
+        $started = Get-Date
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        $r = Invoke-NativeCapture (Join-Path $env:windir 'System32\PING.EXE') @('-n', '60', '127.0.0.1') 2
+        $sw.Stop()
+        $r.TimedOut | Should -BeTrue
+        $r.ExitCode | Should -BeNullOrEmpty
+        $sw.Elapsed.TotalSeconds | Should -BeLessThan 30
+        Start-Sleep -Milliseconds 500
+        @(Get-Process -Name PING -ErrorAction SilentlyContinue | Where-Object { $_.StartTime -ge $started }).Count | Should -Be 0
+    }
+    It 'returns an Error, not an exception, for a missing executable' -Skip:($env:OS -ne 'Windows_NT') {
+        { $script:missing = Invoke-NativeCapture 'C:\does-not-exist\nothing.exe' @() 10 } | Should -Not -Throw
+        $script:missing.Error | Should -Not -BeNullOrEmpty
+        $script:missing.ExitCode | Should -BeNullOrEmpty
+    }
+    It 'removes its temp files in every case' -Skip:($env:OS -ne 'Windows_NT') {
+        $before = @(Get-CaptureTempFile | ForEach-Object FullName)
+        $null = Invoke-NativeCapture $script:Cmd @('/c', 'echo x') 30
+        $null = Invoke-NativeCapture $script:Cmd @('/c', 'exit 5') 30
+        $null = Invoke-NativeCapture (Join-Path $env:windir 'System32\PING.EXE') @('-n', '60', '127.0.0.1') 1
+        $null = Invoke-NativeCapture 'C:\does-not-exist\nothing.exe' @() 10
+        $after = @(Get-CaptureTempFile | ForEach-Object FullName | Where-Object { $before -notcontains $_ })
+        $after.Count | Should -Be 0
+    }
+}

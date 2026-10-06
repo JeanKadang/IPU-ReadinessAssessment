@@ -12,6 +12,8 @@ A read-only Windows Server in-place upgrade (IPU) readiness assessment: one Powe
 ```powershell
 # Tests (Pester 5). Tests dot-source the script in library mode; nothing is collected.
 Invoke-Pester .\tests -Output Detailed
+# Skip the tests that start real processes (tagged Integration):
+Invoke-Pester .\tests -Output Detailed -ExcludeTagFilter Integration
 ```
 
 If the machine enforces signed scripts, start the session with `pwsh -ExecutionPolicy Bypass`
