@@ -722,7 +722,7 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
     Context 'exchange' {
         It 'no Exchange gives no rows' {
             (Invoke-TestCheck 'exchange').Outcome | Should -Be 'Completed'
-            @($script:Results).Count | Should -Be 0
+            $script:Results.Count | Should -Be 0
         }
         It 'Exchange services are a BLOCKER' {
             $script:Fake.Cim['Win32_Service'] = @($script:Fake.Cim['Win32_Service']) + @(New-FakeService 'MSExchangeIS')
@@ -740,7 +740,7 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
     Context 'sql' {
         It 'no SQL Server gives no rows' {
             (Invoke-TestCheck 'sql').Outcome | Should -Be 'Completed'
-            @($script:Results).Count | Should -Be 0
+            $script:Results.Count | Should -Be 0
         }
         It 'SQL Server 2017 is a BLOCKER for a 2025 target' {
             $root = 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server'

@@ -378,7 +378,8 @@ Describe 'Detection patterns - one fixture per vendor row (#17)' {
             if ($f.App) { $apps = @([pscustomobject]@{ Name = $f.App; Version = '1.0' }) }
             if ($f.Service) { $svcs = @([pscustomobject]@{ Name = $f.Service; DisplayName = $f.Service; State = 'Running' }) }
             if ($f.Driver) { $drv = @($f.Driver) }
-            $labels = @(Find-DetectionMatch $script:DetectionPatterns[$r.Table] $apps $svcs $drv | ForEach-Object Label)
+            $found = Find-DetectionMatch $script:DetectionPatterns[$r.Table] $apps $svcs $drv
+            $labels = @($found | ForEach-Object Label)
             $labels | Should -Contain $r.Row.Label -Because ("fixture for '" + $r.Row.Label + "'")
             @($script:AllRows | Where-Object { $_.Row.Label -eq $r.Row.Label }).Count | Should -Be 1
         }
