@@ -14,7 +14,7 @@ commits show the wrong author.
    ```powershell
    Invoke-Pester .\tests -Output Detailed
    ```
-5. Open a pull request using the template. Reference the issue with `Refs #N`. Label the PR; release notes are built from PR labels.
+5. Open a pull request using the template. Reference the issue with `Refs #N`. Release notes are built from PR labels: a workflow adds them automatically (`feat/` branch → `enhancement`, `fix/` → `bug`, changed paths → `documentation`, `testing`, `tooling`; see `.github/labeler.yml`). Check them and add or remove labels by hand when they don't fit; the workflow never removes a label.
 6. Merge with a merge commit once CI is green and the other maintainer has reviewed.
 
 ## What CI runs
@@ -24,6 +24,7 @@ commits show the wrong author.
 | `pester (Windows PowerShell 5.1)`, `pester (PowerShell 7)` | windows-2025 | All Pester tests; coverage on PowerShell 7 |
 | `smoke (<shell>, windows-2025)`, `smoke (<shell>, windows-2022)` | each Windows Server image GitHub offers | The real script end to end (Pre, Post, redacted, site data files), JSON checked against the schema |
 | `lint (PSScriptAnalyzer)` | windows-2025 | Fails on any warning |
+| `label` (workflow *Label pull requests*) | ubuntu-latest | Adds labels to each pull request |
 | `notify (scheduled run failed)` | ubuntu-latest | Only for the weekly run on `main` (Mondays): opens or updates the issue "Scheduled CI run failed" |
 
 Job names are stable, so a ruleset can require them. When GitHub retires or adds a Windows Server image, change
