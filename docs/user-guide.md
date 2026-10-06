@@ -3,7 +3,7 @@
 How to run the Windows IPU readiness assessment, read its results, and troubleshoot it.
 
 **Scripts:** `src/Windows-IPU-Readiness-Assessment.ps1` (collector version 4.0.1, runs on each server) and
-`src/Merge-IPUAssessments.ps1` (version 1.0.2, combines many servers' results, runs on an admin workstation)
+`src/Merge-IPUAssessments.ps1` (version 1.0.3, combines many servers' results, runs on an admin workstation)
 **Audience:** server and change engineers preparing or verifying a Windows Server in-place upgrade.
 
 ## Contents
@@ -176,6 +176,7 @@ When the budget runs out, remaining slow checks are reported as `MANUAL` (skippe
 | `WriteJson` | `$true` | Write the JSON result (also the post-upgrade baseline) |
 | `RestrictOutputAcl` | `$true` | Folders the script creates (report folder, policy evidence) get access for SYSTEM and Administrators only. Existing folders are never changed; the report warns, with the `icacls` command to fix it, if an existing folder is readable by Everyone, Authenticated Users or Users. `$false` keeps inherited permissions |
 | `NumberCultureName` | `da-DK` | Culture used to format numbers in the SA result line. Invalid values fall back to invariant |
+| `RedactReport` | `$false` | Replace names, addresses, accounts, SIDs and certificate details with placeholders in the HTML and JSON, for sharing outside the team. See [Sharing a report: redaction](#sharing-a-report-redaction) |
 
 ## 5. Outputs
 
@@ -205,6 +206,40 @@ ComputerName;RunStatus;AssessmentStatus;ReportPath;LogPath;ReportSizeKB;Records;
 
 Process exit code: `0` when the report was written, `1` when the collector failed. A `BLOCKER` assessment still
 exits `0`; read `AssessmentStatus`.
+
+### Sharing a report: redaction
+
+Reports describe a server in detail. To share one outside the team (a vendor, a ticket, a public bug report),
+run with `-RedactReport $true`. In the HTML and JSON, these are replaced with placeholders that stay the same
+within one run (the same address is always `IP-3`):
+
+| Replaced | Placeholder | Example |
+|---|---|---|
+| Computer name, FQDNs in the server's domain, KMS and other hosts in that domain | `HOST-n` | `srv01.corp.example.test` |
+| Domain name and NetBIOS domain | `DOMAIN-n` | `corp.example.test`, `CORP` |
+| IPv4 and IPv6 addresses (not masks, `127.0.0.1`, `0.0.0.0`, `::1`) | `IP-n` | `10.20.30.40`, `fe80::1c2d:...` |
+| MAC addresses | `MAC-n` | `00:50:56:AB:CD:EF` |
+| Accounts: `DOMAIN\user`, `user@domain`, local group members | `ACCOUNT-n` | `CORP\svc_batch` |
+| Domain SIDs (well-known SIDs such as `S-1-5-32-544` are kept) | `SID-n` | `S-1-5-21-...-500` |
+| Certificate thumbprints and subject/issuer names | `CERT-n`, `NAME-n` | `CN=srv01.corp...` |
+
+Kept: well-known accounts (`BUILTIN\...`, `NT AUTHORITY\...`), versions, file and registry paths, product
+names, ports.
+
+> **Redaction is best effort.** It recognises the patterns above and the names it knows (this server and its
+> domain). A host name from another domain, a name inside free text, or an unusual format can stay visible.
+> **Read a redacted report before you share it.**
+
+What changes with redaction:
+
+- The HTML and JSON are named `REDACTED-<yyyyMMdd-HHmmss>-IPU-Assessment.*` (or `-IPU-PostUpgrade.*`), so the
+  file name does not reveal the server. The SA result line keeps the real computer name, and the log is **not**
+  redacted (it stays on the server).
+- The JSON has `"Redacted": true`. A redacted result **cannot** be the post-upgrade baseline: placeholders cannot
+  be compared with the real server, and the post-upgrade run says so. Keep a normal (unredacted) pre-upgrade run
+  for the comparison and redact a second run, or only the copies you share.
+- The placeholder mapping is never written to any file.
+- The fleet overview shows each redacted file as its own row, marked `redacted`.
 
 ### JSON shape
 
@@ -363,7 +398,7 @@ HTML. The checklist and Setup compatibility scan are skipped in Post mode.
 
 ## 9. Combining many servers: fleet overview
 
-`src/Merge-IPUAssessments.ps1` (version 1.0.2, for assessment 4.0.1 and later) reads the JSON result of every
+`src/Merge-IPUAssessments.ps1` (version 1.0.3, for assessment 4.0.1 and later) reads the JSON result of every
 server in a folder and writes **one overview** for the whole estate. It is read-only for the input files.
 
 ```mermaid

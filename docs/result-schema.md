@@ -28,6 +28,7 @@ real script on Windows PowerShell 5.1 and PowerShell 7 and validates both files 
 | `TargetServerVersion` | `2025` or `2022` | Planned target |
 | `Started`, `Completed` | `yyyy-MM-dd HH:mm:ss` | Local time on the server |
 | `Partial` | boolean | `true` for the checkpoint written before the slow checks finished. If this is the newest file, the run was stopped early |
+| `Redacted` | boolean, optional | `true` when the run used `-RedactReport` (see the [user guide](user-guide.md#sharing-a-report-redaction)). A redacted file cannot be the post-upgrade baseline, and the fleet overview treats each redacted file as its own server |
 | `Overall` | `BLOCKER`, `ACTION`, `WARNING`, `MANUAL`, `OK` | Worst status among rows of kind `Finding` |
 | `Counts` | object | Number of `Finding` rows per status: `BLOCKER`, `ACTION`, `WARNING`, `MANUAL` |
 | `Facts` | object | The summary at the top of the report (below) |

@@ -1,7 +1,7 @@
 <#
 ===============================================================================
  SCRIPT NAME : Merge-IPUAssessments.ps1
- VERSION     : 1.0.2 (for Windows-IPU-Readiness-Assessment 4.0.1+)
+ VERSION     : 1.0.3 (for Windows-IPU-Readiness-Assessment 4.0.1+)
  PURPOSE     : Combine the JSON results of many servers into one overview.
  RUNS ON     : Any Windows machine with Windows PowerShell 5.1 or PowerShell 7
                (an admin workstation or jump host - NOT on the assessed servers).
@@ -93,6 +93,7 @@ foreach ($f in $files) {
         TopIssues        = ($top -join ' | ')
         NotAssessed      = ($notCompleted -join ' | ')
         Partial          = [bool]$r.Partial
+        Redacted         = [bool]$r.Redacted
         Completed        = $r.Completed
         CollectorVersion = $r.CollectorVersion
         SourceFile       = $f.Name
@@ -106,7 +107,9 @@ foreach ($f in $files) {
 }
 
 # If a server has several results for the same mode, keep the newest.
-$latest = @($servers | Group-Object ComputerName,Mode | ForEach-Object { $_.Group | Sort-Object Completed -Descending | Select-Object -First 1 })
+# Redacted results all carry placeholder names (HOST-1), so each redacted
+# file is kept as its own row instead of being merged with others.
+$latest = @($servers | Group-Object { if ($_.Redacted) { 'redacted|' + $_.SourceFile } else { $_.ComputerName + '|' + $_.Mode } } | ForEach-Object { $_.Group | Sort-Object Completed -Descending | Select-Object -First 1 })
 $latest = @($latest | Sort-Object @{Expression={ $rank[[string]$_.Overall] }},ComputerName)
 # Findings come only from the result each server/mode row was taken from,
 # never from an older, superseded result for the same server.
@@ -148,6 +151,7 @@ if ($unreadable.Count -gt 0) { [void]$sb.AppendLine('<section><h2>Files not read
 foreach ($s in $latest) {
     $badge = '<span class="badge s-' + ([string]$s.Overall).ToLowerInvariant() + '">' + (Encode $s.Overall) + '</span>'
     if ($s.Partial) { $badge += ' <span class="muted">partial</span>' }
+    if ($s.Redacted) { $badge += ' <span class="muted">redacted</span>' }
     [void]$sb.AppendLine('<tr><td class="nw"><b>' + (Encode $s.ComputerName) + '</b></td><td>' + (Encode $s.Mode) + '</td><td class="nw">' + $badge + '</td><td class="nw">' + $s.Blocker + '/' + $s.Action + '/' + $s.Warning + '/' + $s.Manual + '</td><td>' + (Encode $s.CurrentOS) + '</td><td class="nw">' + (Encode $s.Target) + '</td><td>' + (Encode $s.InstallationMedia) + '</td><td>' + (Encode $s.Platform) + '</td><td>' + (Encode $s.SqlServer) + '</td><td>' + (Encode $s.TopIssues) + '</td><td>' + (Encode $s.NotAssessed) + '</td><td class="nw muted">' + (Encode $s.Completed) + '</td></tr>')
 }
 [void]$sb.AppendLine('</tbody></table></div></section>')

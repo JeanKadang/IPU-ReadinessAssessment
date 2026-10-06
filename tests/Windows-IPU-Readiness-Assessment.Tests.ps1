@@ -1171,3 +1171,108 @@ Describe 'HTML report accessibility (#28)' {
         }
     }
 }
+
+Describe 'Report redaction (#30)' {
+    BeforeEach { $script:RedCtx = New-RedactionContext 'SRV01' 'corp.example.test' }
+
+    It 'replaces <Kind> values, also inside free text' -TestCases @(
+        @{ Kind = 'IPv4';        In = 'Gateway=10.20.30.1 | DNS=10.20.1.10,10.20.1.11'; Out = 'Gateway=IP-1 | DNS=IP-2,IP-3' }
+        @{ Kind = 'IPv6';        In = 'Address fe80::1c2d:3e4f:5a6b:7c8d and 2001:db8:0:1:2:3:4:5 seen'; Out = 'Address IP-1 and IP-2 seen' }
+        @{ Kind = 'MAC';         In = 'MAC=00:50:56:AB:CD:EF'; Out = 'MAC=MAC-1' }
+        @{ Kind = 'computer';    In = 'Policy at C:\Temp\SRV01-IPU-Policy.zip on srv01'; Out = 'Policy at C:\Temp\HOST-1-IPU-Policy.zip on HOST-1' }
+        @{ Kind = 'FQDN';        In = 'KMS=kms.corp.example.test:1688 Domain=corp.example.test'; Out = 'KMS=HOST-1:1688 Domain=DOMAIN-1' }
+        @{ Kind = 'account';     In = 'RunAs=CORP\svc_batch, mail jane.doe@example.test'; Out = 'RunAs=ACCOUNT-1, mail ACCOUNT-2' }
+        @{ Kind = 'group member'; In = 'jdoe [WinNT://CORP/jdoe]'; Out = 'ACCOUNT-1 [WinNT://DOMAIN-1/ACCOUNT-1]' }
+        @{ Kind = 'local member'; In = 'Administrator [WinNT://SRV01/Administrator]'; Out = 'ACCOUNT-1 [WinNT://HOST-1/ACCOUNT-1]' }
+        @{ Kind = 'SID';         In = 'Owner S-1-5-21-1111111111-2222222222-3333333333-500.'; Out = 'Owner SID-1.' }
+        @{ Kind = 'thumbprint';  In = 'Thumbprint=AA11BB22CC33DD44EE55FF6677889900AABBCCDD'; Out = 'Thumbprint=CERT-1' }
+        @{ Kind = 'subject';     In = 'Subject=CN=www.example.test, O=Example Corp | Issuer=CN=Example CA'; Out = 'Subject=CN=NAME-1, O=NAME-2 | Issuer=CN=NAME-3' }
+    ) {
+        Protect-ReportText $In $script:RedCtx | Should -BeExactly $Out
+    }
+    It 'keeps <What>' -TestCases @(
+        @{ What = 'well-known accounts and SIDs'; In = 'NT AUTHORITY\SYSTEM | BUILTIN\Administrators [S-1-5-32-544] | S-1-5-18' }
+        @{ What = 'masks, loopback and any-address'; In = '255.255.255.0 127.0.0.1 0.0.0.0:443 ::1 ::/0' }
+        @{ What = 'versions'; In = 'Version=1.0.0.7 | Image Version: 10.0.20348.5631 | Collector 4.0.1' }
+        @{ What = 'file and registry paths'; In = 'C:\Program Files\Example\agent.dll | HKLM\SYSTEM\Setup | \Microsoft\Windows\Defrag | C:\WINDOWS\system32' }
+        @{ What = 'times'; In = 'Started 2026-10-06 09:44:41 | Duration=00:07:21' }
+        @{ What = 'empty text'; In = '' }
+    ) {
+        Protect-ReportText $In $script:RedCtx | Should -BeExactly $In
+    }
+    It 'gives the same value the same placeholder and different values different ones' {
+        $a = Protect-ReportText 'first 10.0.0.1 then 10.0.0.2' $script:RedCtx
+        $b = Protect-ReportText 'again 10.0.0.2 and 10.0.0.1' $script:RedCtx
+        $a | Should -BeExactly 'first IP-1 then IP-2'
+        $b | Should -BeExactly 'again IP-2 and IP-1'
+    }
+    It 'redacts nested objects and keeps numbers and booleans' {
+        $obj = [pscustomobject]@{ ComputerName = 'SRV01'; Partial = $true; Counts = [pscustomobject]@{ ACTION = 2 }; Results = @([pscustomobject]@{ Value = 'IPv4=10.1.2.3' }); Snapshot = [pscustomobject]@{ IPv4 = @('10.1.2.3'); Tasks = @() } }
+        $r = Protect-ReportObject $obj $script:RedCtx
+        $r.ComputerName | Should -Be 'HOST-1'
+        $r.Partial | Should -BeTrue
+        $r.Counts.ACTION | Should -Be 2
+        $r.Results[0].Value | Should -Be 'IPv4=IP-1'
+        @($r.Snapshot.IPv4).Count | Should -Be 1
+        $r.Snapshot.IPv4[0] | Should -Be 'IP-1'
+        @($r.Snapshot.Tasks).Count | Should -Be 0
+        $obj.ComputerName | Should -Be 'SRV01' -Because 'the original is not changed'
+    }
+
+    Context 'writers' {
+        BeforeEach {
+            $script:Results.Clear(); $script:CheckRuns.Clear()
+            $script:RedactionContext = $null
+            $script:Data = @{ CS = [pscustomobject]@{ PartOfDomain = $true; Domain = 'corp.example.test' }; Snapshot = @{ IPv4 = @('10.20.30.40') } }
+            $script:SavedComputer = $script:ComputerName
+            $script:ComputerName = 'SRV01'
+            $dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $dir | Out-Null
+            $script:ReportPath = Join-Path $dir 'REDACTED-20261006-094441-IPU-Assessment.html'
+            $script:JsonPath = Join-Path $dir 'REDACTED-20261006-094441-IPU-Assessment.json'
+            $script:LogPath = Join-Path $dir 'SRV01-IPU-Assessment.log'
+            Add-Result 'NETWORK' 'Ethernet0' 'INFO' 'IPv4=10.20.30.40 / 255.255.255.0' 'DNS=10.20.1.10'
+            Add-Result 'ACCESS' 'DomainMembership' 'INFO' 'Domain=corp.example.test'
+            Add-Result 'TASKS' '\Example\Nightly' 'INFO' 'RunAs=CORP\svc_batch'
+        }
+        AfterEach { $script:ComputerName = $script:SavedComputer; $script:RedactionContext = $null }
+
+        It 'writes a redacted HTML and JSON with the same placeholders' {
+            $RedactReport = $true
+            $WriteJson = $true
+            $null = Write-AssessmentReport
+            $html = [IO.File]::ReadAllText($script:ReportPath)
+            $json = [IO.File]::ReadAllText($script:JsonPath)
+            foreach ($secret in 'SRV01', '10.20.30.40', '10.20.1.10', 'corp.example.test', 'svc_batch') {
+                $html | Should -Not -Match ([regex]::Escape($secret))
+                $json | Should -Not -Match ([regex]::Escape($secret))
+            }
+            $html | Should -Match 'IPv4=IP-1 / 255\.255\.255\.0'
+            $obj = $json | ConvertFrom-Json
+            $obj.Redacted | Should -BeTrue
+            $obj.ComputerName | Should -Be 'HOST-1'
+            $obj.Snapshot.IPv4[0] | Should -Be 'IP-1'
+        }
+        It 'writes Redacted = false without redaction' {
+            $RedactReport = $false
+            $WriteJson = $true
+            $null = Write-AssessmentReport
+            ([IO.File]::ReadAllText($script:JsonPath) | ConvertFrom-Json).Redacted | Should -BeFalse
+            [IO.File]::ReadAllText($script:ReportPath) | Should -Match '10\.20\.30\.40'
+        }
+    }
+
+    It 'a redacted baseline is refused by the post-upgrade comparison' {
+        $script:Results.Clear(); $script:CheckRuns.Clear()
+        $TargetServerVersion = '2025'
+        $script:Data = @{ SourceRelease = '2025'; Snapshot = @{} }
+        $path = Join-Path $TestDrive 'redacted-baseline.json'
+        [pscustomobject]@{ Schema = 'IPU-Assessment/1'; Redacted = $true; Completed = '2026-10-01 10:00:00'; CollectorVersion = '4.0.1'; Snapshot = [pscustomobject]@{} } | ConvertTo-Json | Set-Content -LiteralPath $path
+        $script:BaselinePath = $path
+        Invoke-PostUpgradeComparison
+        $row = @($script:Results | Where-Object { $_.Item -eq 'Baseline' })[0]
+        $row.Status | Should -Be 'MANUAL'
+        $row.Value | Should -Be 'The pre-upgrade result is redacted'
+        @($script:Results | Where-Object { $_.Item -eq 'Comparison' }).Count | Should -Be 0
+    }
+}

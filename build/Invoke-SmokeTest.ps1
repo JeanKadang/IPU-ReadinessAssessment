@@ -33,9 +33,9 @@ $engine = Join-Path $PSHOME 'powershell.exe'
 if ($PSVersionTable.PSVersion.Major -ge 6) { $engine = Join-Path $PSHOME 'pwsh.exe' }
 $computer = ($env:COMPUTERNAME -replace '[^A-Za-z0-9_.-]', '_')
 
-function Invoke-Assessment([string]$Mode) {
+function Invoke-Assessment([string]$Mode, [string]$Folder = $reports, [string]$Extra = '') {
     # -Command (not -File) so that [bool] parameters receive real booleans.
-    $command = "& '" + $scriptPath + "' -AssessmentMode " + $Mode + " -ReportDirectory '" + $reports + "' -PolicyEvidenceRoot '" + $evidence + "' -RunDISMScanHealth `$false -RunSFCVerifyOnly `$false; exit `$LASTEXITCODE"
+    $command = "& '" + $scriptPath + "' -AssessmentMode " + $Mode + " -ReportDirectory '" + $Folder + "' -PolicyEvidenceRoot '" + $evidence + "' -RunDISMScanHealth `$false -RunSFCVerifyOnly `$false " + $Extra + "; exit `$LASTEXITCODE"
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $output = @(& $engine -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded 2>&1 | ForEach-Object { [string]$_ })
@@ -101,6 +101,25 @@ try {
         $baselineRow = @($postJson.Results | Where-Object { $_.Area -eq 'POST_UPGRADE' -and $_.Item -eq 'Baseline' }) | Select-Object -First 1
         Assert-That ($baselineRow -and $baselineRow.Status -eq 'INFO') 'Post run read the Pre result as its baseline'
         $script:Facts.Add(('Post: overall {0}, {1} checks completed' -f $postJson.Overall, @($postJson.CheckRuns | Where-Object { $_.Outcome -eq 'Completed' }).Count))
+    }
+
+    # Redacted run: neutral file names, no computer name or IPv4 address of
+    # the runner in the HTML or JSON, Redacted = true, still schema-valid.
+    $redactedFolder = Join-Path $work 'redacted'
+    $red = Invoke-Assessment 'Pre' $redactedFolder '-RedactReport $true'
+    Assert-That ($red.Exit -eq 0 -and $red.Fields.Count -ge 12 -and $red.Fields[1] -eq 'SUCCEEDED') 'Redacted run succeeds'
+    $redHtml = @(Get-ChildItem -LiteralPath $redactedFolder -Filter 'REDACTED-*-IPU-Assessment.html' -ErrorAction SilentlyContinue)
+    $redJson = @(Get-ChildItem -LiteralPath $redactedFolder -Filter 'REDACTED-*-IPU-Assessment.json' -ErrorAction SilentlyContinue)
+    Assert-That ($redHtml.Count -eq 1 -and $redJson.Count -eq 1) 'Redacted run writes REDACTED-* files'
+    Assert-That (@(Get-ChildItem -LiteralPath $redactedFolder -Filter ($computer + '-IPU-Assessment.*') -ErrorAction SilentlyContinue | Where-Object { $_.Extension -ne '.log' }).Count -eq 0) 'Redacted run writes no report named after the computer'
+    if ($redHtml.Count -eq 1 -and $redJson.Count -eq 1) {
+        $secrets = @($env:COMPUTERNAME) + @(Get-CimInstance Win32_NetworkAdapterConfiguration -Filter 'IPEnabled=True' | ForEach-Object { $_.IPAddress } | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' -and $_ -notmatch '^127\.' })
+        $texts = @([IO.File]::ReadAllText($redHtml[0].FullName), [IO.File]::ReadAllText($redJson[0].FullName))
+        foreach ($secret in $secrets) {
+            Assert-That (@($texts | Where-Object { $_ -match ('(?<![\w.])' + [regex]::Escape($secret) + '(?![\w.])') }).Count -eq 0) ('Redacted output does not contain the runner''s ' + $(if ($secret -eq $env:COMPUTERNAME) { 'computer name' } else { 'IPv4 address' }))
+        }
+        $redObj = Test-ResultJson $redJson[0].FullName 'Pre'
+        if ($redObj) { Assert-That ([bool]$redObj.Redacted) 'Redacted JSON has Redacted = true' }
     }
 } finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
