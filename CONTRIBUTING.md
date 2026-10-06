@@ -25,6 +25,7 @@ commits show the wrong author.
 | `smoke (<shell>, windows-2025)`, `smoke (<shell>, windows-2022)` | each Windows Server image GitHub offers | The real script end to end (Pre, Post, redacted, site data files), JSON checked against the schema |
 | `lint (PSScriptAnalyzer)` | windows-2025 | Fails on any warning |
 | `label` (workflow *Label pull requests*) | ubuntu-latest | Adds labels to each pull request |
+| `release` (workflow *Release*) | ubuntu-latest | Publishes a release: **Actions → Release → Run workflow** on `main` with the version (for example `4.1.0`), or push a tag `v4.1.0`. The version must match the script header and CHANGELOG |
 | `notify (scheduled run failed)` | ubuntu-latest | Only for the weekly run on `main` (Mondays): opens or updates the issue "Scheduled CI run failed" |
 
 Job names are stable, so a ruleset can require them. When GitHub retires or adds a Windows Server image, change
