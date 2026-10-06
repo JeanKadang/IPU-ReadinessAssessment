@@ -2,7 +2,8 @@
 
 How to run the Windows IPU readiness assessment, read its results, and troubleshoot it.
 
-**Script:** `src/Windows-IPU-Readiness-Assessment.ps1` (collector version 4.0.1)
+**Scripts:** `src/Windows-IPU-Readiness-Assessment.ps1` (collector version 4.0.1, runs on each server) and
+`src/Merge-IPUAssessments.ps1` (version 1.0.0, combines many servers' results, runs on an admin workstation)
 **Audience:** server and change engineers preparing or verifying a Windows Server in-place upgrade.
 
 ## Contents
@@ -15,10 +16,11 @@ How to run the Windows IPU readiness assessment, read its results, and troublesh
 6. [Reading the report](#6-reading-the-report)
 7. [What is checked](#7-what-is-checked)
 8. [Post-upgrade verification](#8-post-upgrade-verification)
-9. [Running from OpenText Server Automation](#9-running-from-opentext-server-automation)
-10. [Safety and side effects](#10-safety-and-side-effects)
-11. [Troubleshooting](#11-troubleshooting)
-12. [Running the tests](#12-running-the-tests)
+9. [Combining many servers: fleet overview](#9-combining-many-servers-fleet-overview)
+10. [Running from OpenText Server Automation](#10-running-from-opentext-server-automation)
+11. [Safety and side effects](#11-safety-and-side-effects)
+12. [Troubleshooting](#12-troubleshooting)
+13. [Running the tests](#13-running-the-tests)
 
 ---
 
@@ -206,7 +208,8 @@ exits `0`; read `AssessmentStatus`.
 Schema id `IPU-Assessment/1`. Top-level keys: `CollectorVersion`, `ComputerName`, `Mode`, `TargetServerVersion`,
 `Started`, `Completed`, `Partial`, `Overall`, `Counts`, `Facts`, `Results`, `CheckRuns`, `Snapshot`.
 `Results[]` has `CheckId, Area, Item, Status, Kind, Value, Details, Recommendation, Source`.
-`Snapshot` is what the post-upgrade run compares against.
+`Snapshot` is what the post-upgrade run compares against. The fleet overview script (section 9) reads the same
+files and accepts only `Schema` = `IPU-Assessment/1`.
 
 ## 6. Reading the report
 
@@ -351,7 +354,72 @@ HTML. The checklist and Setup compatibility scan are skipped in Post mode.
 
 > Keep the pre-upgrade `.json`. It is the baseline.
 
-## 9. Running from OpenText Server Automation
+## 9. Combining many servers: fleet overview
+
+`src/Merge-IPUAssessments.ps1` (version 1.0.0, for assessment 4.0.1 and later) reads the JSON result of every
+server in a folder and writes **one overview** for the whole estate. It is read-only for the input files.
+
+```mermaid
+flowchart LR
+    S1[Server A<br/>assessment] --> J1[A-IPU-Assessment.json]
+    S2[Server B<br/>assessment] --> J2[B-IPU-Assessment.json]
+    S3[Server C<br/>post-upgrade] --> J3[C-IPU-PostUpgrade.json]
+    J1 --> F[One folder on an<br/>admin workstation]
+    J2 --> F
+    J3 --> F
+    F --> M[Merge-IPUAssessments.ps1]
+    M --> H[IPU-Fleet-Overview.html]
+    M --> C1[IPU-Fleet-Servers.csv]
+    M --> C2[IPU-Fleet-Findings.csv]
+```
+
+**Where it runs:** an admin workstation or jump host with Windows PowerShell 5.1 or PowerShell 7. **Not** on the
+assessed servers. Collect the JSON files from the servers into one folder first (with the approved SA file-retrieval
+process).
+
+### Running it
+
+```powershell
+# Read every result in D:\IPU\Results; write the overview next to them
+.\Merge-IPUAssessments.ps1 -InputFolder 'D:\IPU\Results'
+
+# Separate output folder, pre-upgrade results only
+.\Merge-IPUAssessments.ps1 -InputFolder 'D:\IPU\Results' -OutputFolder 'D:\IPU\Overview' -Mode Pre
+
+# Comma-separated CSVs instead of semicolon
+.\Merge-IPUAssessments.ps1 -InputFolder 'D:\IPU\Results' -Delimiter ','
+```
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `InputFolder` | required | Folder with the `*-IPU-Assessment.json` and `*-IPU-PostUpgrade.json` files |
+| `OutputFolder` | the input folder | Where the three output files are written (created if missing) |
+| `Mode` | `All` | `Pre`, `Post` or `All`: which kind of result to include |
+| `Delimiter` | `;` | CSV separator. `;` opens in columns in Excel with Danish regional settings |
+
+The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`) and the paths written.
+
+### What it produces
+
+| File | Contents |
+|---|---|
+| `IPU-Fleet-Overview.html` | Cards with overall counts, a **Servers (worst first)** table, the **most common BLOCKER/ACTION items** across the fleet with which servers have them, and a list of any files it could not read |
+| `IPU-Fleet-Servers.csv` | One row per server and mode: `ComputerName`, `Mode`, `Overall`, `Blocker`, `Action`, `Warning`, `Manual`, `Target`, `CurrentOS`, `UpgradePath`, `InstallationMedia`, `Platform`, `DomainRole`, `SqlServer`, `CompatScan`, `CDrive`, `Activation`, `TopIssues`, `NotAssessed`, `Partial`, `Completed`, `CollectorVersion`, `SourceFile` |
+| `IPU-Fleet-Findings.csv` | One row per BLOCKER, ACTION, WARNING or MANUAL finding: `ComputerName`, `Mode`, `Status`, `Area`, `Item`, `Value`, `Details`, `Recommendation`. Filter and pivot it in Excel |
+
+### How it decides
+
+- **Newest wins.** If a server has several results for the same mode, only the newest (by `Completed`) is used. A server can still appear twice, once for Pre and once for Post, when `Mode` is `All`.
+- **Worst first.** Servers are sorted `BLOCKER`, `ACTION`, `WARNING`, `MANUAL`, `OK`, then by name.
+- **`TopIssues`** lists the BLOCKER and ACTION findings for that server. **`NotAssessed`** lists checks that did not complete (skipped checks are not counted).
+- **Partial results** are shown with a `partial` marker: the slow checks had not finished on that server.
+- **Unreadable files** (not valid JSON, or a `Schema` other than `IPU-Assessment/1`) are listed in the report and skipped. They do not stop the run.
+- If no matching files exist, the script stops with `No *-IPU-Assessment.json or *-IPU-PostUpgrade.json files found`.
+
+> The overview and CSVs describe every server in detail. Treat them as sensitive and keep them out of shared
+> locations.
+
+## 10. Running from OpenText Server Automation
 
 The script is designed for SA Ad-Hoc Scripting, normally as the SA Agent (LocalSystem).
 
@@ -374,7 +442,7 @@ flowchart LR
     S -->|ACTION / BLOCKER| X[Do not proceed]
 ```
 
-## 10. Safety and side effects
+## 11. Safety and side effects
 
 | Does | Does not |
 |---|---|
@@ -387,12 +455,15 @@ flowchart LR
 Reports contain a detailed inventory (ports, tasks, certificates, agents). Treat them as sensitive and restrict
 access to the output folder.
 
-## 11. Troubleshooting
+## 12. Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | `... is not digitally signed` | Machine enforces signed scripts | Sign the script, or `powershell -ExecutionPolicy Bypass -File` for that process only |
-| Report says `PARTIAL REPORT` | Slow checks had not finished (job stopped or timed out) | Raise the SA job timeout above the budget (section 9) and re-run |
+| Fleet overview: `No ... files found` | Wrong `InputFolder`, or the files were renamed | Files must end in `-IPU-Assessment.json` or `-IPU-PostUpgrade.json` |
+| Fleet overview lists a file under "Files not read" | Corrupt JSON, or not an `IPU-Assessment/1` result | Re-collect the file from the server; check the collector version is 4.0.1 or later |
+| Fleet CSV opens as one column in Excel | Regional list separator differs from `;` | Re-run with `-Delimiter ','` |
+| Report says `PARTIAL REPORT` | Slow checks had not finished (job stopped or timed out) | Raise the SA job timeout above the budget (section 10) and re-run |
 | `Not fully assessed: <check> (Failed)` | A check hit an unexpected error | See `.log` for the message and line number; review that area manually |
 | `Skipped - slow-check time budget used up` | DISM and SFC consumed the shared budget | Run manually, or raise `SlowCheckBudgetMinutes` and the job timeout |
 | Application or SQL results look wrong | 32-bit PowerShell host without relaunch | Run from 64-bit PowerShell; the report flags this |
@@ -403,7 +474,7 @@ access to the output folder.
 
 Log lines are `Timestamp;Level;Phase;Message`. Each check logs `Started` and `Finished` with outcome and duration.
 
-## 12. Running the tests
+## 13. Running the tests
 
 ```powershell
 Invoke-Pester .\tests -Output Detailed

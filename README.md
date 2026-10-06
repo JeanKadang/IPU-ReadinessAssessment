@@ -20,6 +20,14 @@ its own pre-upgrade snapshot.
 
 Default output folder: `C:\Temp\IPU-Assessment`.
 
+For many servers, `Merge-IPUAssessments.ps1` turns all the JSON results into a fleet overview:
+
+| Output | For | File |
+|---|---|---|
+| Fleet overview | Whole estate at a glance, worst server first | `IPU-Fleet-Overview.html` |
+| Servers sheet | One row per server, for Excel | `IPU-Fleet-Servers.csv` |
+| Findings sheet | Every finding, one row each, for filtering | `IPU-Fleet-Findings.csv` |
+
 ## How it works
 
 ```mermaid
@@ -59,6 +67,27 @@ Run in an elevated session on the server (Windows PowerShell 4.0+):
 
 Then open `C:\Temp\IPU-Assessment\<Computer>-IPU-Assessment.html`.
 
+### Many servers: fleet overview
+
+Collect each server's `.json` result into one folder, then run on an admin workstation (not on the servers):
+
+```powershell
+.\src\Merge-IPUAssessments.ps1 -InputFolder 'D:\IPU\Results'
+```
+
+```mermaid
+flowchart LR
+    A[Server A<br/>.json] --> F[One folder]
+    B[Server B<br/>.json] --> F
+    C[Server C<br/>.json] --> F
+    F --> M[Merge-IPUAssessments.ps1]
+    M --> H[Fleet overview HTML]
+    M --> S[Servers CSV]
+    M --> X[Findings CSV]
+```
+
+Options (`-OutputFolder`, `-Mode Pre|Post|All`, `-Delimiter`) are in the [user guide](docs/user-guide.md#9-combining-many-servers-fleet-overview).
+
 Full parameter reference, status meanings, SA usage and troubleshooting: **[User guide](docs/user-guide.md)**.
 
 ## Reading the result
@@ -90,7 +119,7 @@ The assessment is **non-remediating**. It never installs, removes or reconfigure
 
 ```mermaid
 flowchart TD
-    R[IPU-ReadinessAssessment] --> S[src/<br/>assessment script]
+    R[IPU-ReadinessAssessment] --> S[src/<br/>assessment + fleet merge scripts]
     R --> T[tests/<br/>Pester 5, 105 tests]
     R --> D[docs/<br/>user guide, review]
     R --> G[.github/<br/>CI, templates, Dependabot]
@@ -99,7 +128,7 @@ flowchart TD
 
 | Path | Contents |
 |---|---|
-| `src/` | `Windows-IPU-Readiness-Assessment.ps1` |
+| `src/` | `Windows-IPU-Readiness-Assessment.ps1` (runs on each server), `Merge-IPUAssessments.ps1` (fleet overview, runs on a workstation) |
 | `tests/` | Pester tests for the decision rules and reporting |
 | `docs/user-guide.md` | How to run and interpret the assessment |
 | `docs/review/` | Repository quality review |
