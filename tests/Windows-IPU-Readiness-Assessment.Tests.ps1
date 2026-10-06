@@ -3,6 +3,9 @@
 #   Invoke-Pester .\tests -Output Detailed
 # The script is loaded in library mode: functions only, nothing is collected.
 
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '', Justification = 'Tests set script settings as local variables, which shadow them for the code under test.')]
+param()
+
 BeforeAll {
     $env:IPU_ASSESSMENT_LIBRARY_ONLY = '1'
     . (Join-Path $PSScriptRoot '..\src\Windows-IPU-Readiness-Assessment.ps1')
@@ -127,7 +130,7 @@ Describe 'Get-SfcVerdict' {
     It 'localized output falls back to clean CBS.log' {
         $cbs = @('2026-10-06 09:00:01, Info                  CSI    00000005 [SR] Verifying 100 components',
                  '2026-10-06 09:05:01, Info                  CSI    00000099 [SR] Verify complete')
-        $v = Get-SfcVerdict 'Windows-ressourcebeskyttelse fandt ingen integritetskrænkelser.' $cbs
+        $v = Get-SfcVerdict 'Windows-ressourcebeskyttelse fandt ingen integritetskraenkelser.' $cbs
         $v.Status | Should -Be 'OK'; $v.Basis | Should -Be 'CBS.log'
     }
     It 'localized output with corruption in CBS.log' {
@@ -277,12 +280,15 @@ Describe 'HTML report' {
 # ---------------------------------------------------------------------------
 # 4.0.1 additions
 # ---------------------------------------------------------------------------
-Describe 'Detection patterns - replay of AEVNWOSTST009 (first live run)' {
+Describe 'Detection patterns - synthetic server with renamed security products' {
     BeforeAll {
-        $script:liveApps = @('FlexNet Inventory Agent','Microsoft Visual C++ v14 Redistributable (x64) - 14.50.35719','Nessus Agent (x64)','NXLog','Operations-agent','SA Agent','TrendAI™ Deep Security Agent','Universal Discovery Agent (x86)','VMware Tools') |
+        # Synthetic inventory modelled on a typical managed VM: the EDR is
+        # registered under the TrendAI brand rather than "Trend Micro", and
+        # Defender for Endpoint shows only as a service.
+        $script:synApps = @('Inventory Agent','Microsoft Visual C++ v14 Redistributable (x64)','Nessus Agent (x64)','NXLog','Operations-agent','SA Agent','TrendAI Deep Security Agent','Universal Discovery Agent (x86)','VMware Tools') |
             ForEach-Object { [pscustomobject]@{ Name=$_; Version='1.0'; Publisher='' } }
-        $script:liveServices = @(
-            [pscustomobject]@{ Name='ds_agent';      DisplayName='TrendAI™ Deep Security Agent'; State='Running' },
+        $script:synServices = @(
+            [pscustomobject]@{ Name='ds_agent';      DisplayName='TrendAI Deep Security Agent'; State='Running' },
             [pscustomobject]@{ Name='Sense';         DisplayName='Windows Defender Advanced Threat Protection Service'; State='Running' },
             [pscustomobject]@{ Name='OpswareAgent';  DisplayName='Opsware Agent'; State='Running' },
             [pscustomobject]@{ Name='UDAgent';       DisplayName='Universal Discovery Agent'; State='Running' },
@@ -291,35 +297,102 @@ Describe 'Detection patterns - replay of AEVNWOSTST009 (first live run)' {
             [pscustomobject]@{ Name='nxlog';         DisplayName='nxlog'; State='Running' },
             [pscustomobject]@{ Name='VMTools';       DisplayName='VMware Tools'; State='Running' }
         )
-        $script:liveDrivers = @('bindflt','SysmonDrv','TmKmSnsr','tmeyes','vsepflt','storqosflt','wcifs','CldFlt','FileCrypt','luafv','UnionFS','npsvctrig','Wof')
+        $script:synDrivers = @('bindflt','SysmonDrv','TmKmSnsr','tmeyes','vsepflt','storqosflt','wcifs','CldFlt','FileCrypt','luafv','UnionFS','npsvctrig','Wof')
     }
-    It 'recognises TrendAI Deep Security (was missed by 4.0.0)' {
-        $m = Find-DetectionMatch $script:DetectionPatterns.EndpointProtection $script:liveApps $script:liveServices $script:liveDrivers
+    It 'recognises a renamed Trend product (TrendAI)' {
+        $m = Find-DetectionMatch $script:DetectionPatterns.EndpointProtection $script:synApps $script:synServices $script:synDrivers
         @($m | ForEach-Object Label) | Should -Contain 'Trend Micro / TrendAI Deep Security, Apex One, Vision One'
     }
     It 'recognises the Defender for Endpoint sensor' {
-        $m = Find-DetectionMatch $script:DetectionPatterns.EndpointProtection $script:liveApps $script:liveServices $script:liveDrivers
+        $m = Find-DetectionMatch $script:DetectionPatterns.EndpointProtection $script:synApps $script:synServices $script:synDrivers
         @($m | ForEach-Object Label) | Should -Contain 'Microsoft Defender for Endpoint (EDR sensor)'
     }
     It 'finds the application entries of all three OpenText agents' {
-        $m = Find-DetectionMatch $script:DetectionPatterns.Agents $script:liveApps $script:liveServices
+        $m = Find-DetectionMatch $script:DetectionPatterns.Agents $script:synApps $script:synServices
         $m.Count | Should -Be 3
         foreach ($x in $m) { @($x.Apps).Count | Should -Be 1 }
     }
     It 'flags Nessus, NXLog and Sysmon (Sysmon via its driver)' {
-        $m = Find-DetectionMatch $script:DetectionPatterns.SecurityTools $script:liveApps $script:liveServices $script:liveDrivers
+        $m = Find-DetectionMatch $script:DetectionPatterns.SecurityTools $script:synApps $script:synServices $script:synDrivers
         $labels = @($m | ForEach-Object Label)
         $labels | Should -Contain 'Tenable Nessus agent'
         $labels | Should -Contain 'NXLog'
         $labels | Should -Contain 'Sysmon'
     }
     It 'reports no workloads and no backup product for this server' {
-        (Find-DetectionMatch $script:DetectionPatterns.Workloads $script:liveApps $script:liveServices).Count | Should -Be 0
-        (Find-DetectionMatch $script:DetectionPatterns.Backup $script:liveApps $script:liveServices).Count | Should -Be 0
+        (Find-DetectionMatch $script:DetectionPatterns.Workloads $script:synApps $script:synServices).Count | Should -Be 0
+        (Find-DetectionMatch $script:DetectionPatterns.Backup $script:synApps $script:synServices).Count | Should -Be 0
     }
     It 'detects a product by driver alone (renamed/hidden install entry)' {
         $m = Find-DetectionMatch $script:DetectionPatterns.EndpointProtection @() @() @('CSAgent')
         $m[0].Label | Should -Be 'CrowdStrike Falcon'
+    }
+}
+
+Describe 'Detection patterns - one fixture per vendor row (#17)' {
+    BeforeAll {
+        # One realistic product name or service per row of $script:DetectionPatterns.
+        # A new row without a fixture here fails the coverage test below.
+        $script:VendorFixtures = @{
+            'OpenText Server Automation Agent'   = @{ App = 'SA Agent' }
+            'OpenText Universal Discovery Agent' = @{ App = 'Universal Discovery Agent (x86)' }
+            'OpenText Operations Agent'          = @{ App = 'Operations-agent' }
+            'Trend Micro / TrendAI Deep Security, Apex One, Vision One' = @{ App = 'Trend Micro Apex One Security Agent' }
+            'Microsoft Defender for Endpoint (EDR sensor)' = @{ Service = 'Sense' }
+            'CrowdStrike Falcon'                 = @{ App = 'CrowdStrike Windows Sensor' }
+            'SentinelOne'                        = @{ App = 'Sentinel Agent' }
+            'Cisco Secure Endpoint (AMP)'        = @{ App = 'Cisco Secure Endpoint' }
+            'Trellix / McAfee'                   = @{ App = 'Trellix Endpoint Security Platform' }
+            'Sophos'                             = @{ App = 'Sophos Endpoint Agent' }
+            'Symantec / Broadcom Endpoint Protection' = @{ App = 'Symantec Endpoint Protection' }
+            'ESET'                               = @{ App = 'ESET Server Security' }
+            'Kaspersky'                          = @{ App = 'Kaspersky Security for Windows Server' }
+            'VMware Carbon Black'                = @{ App = 'VMware Carbon Black Cloud Sensor 64-bit'; Expect = 'Carbon Black' }
+            'Tenable Nessus agent'               = @{ App = 'Nessus Agent (x64)' }
+            'NXLog'                              = @{ App = 'NXLog-CE' }
+            'Sysmon'                             = @{ Driver = 'SysmonDrv' }
+            'Secure Root'                        = @{ App = 'Secure Root Agent' }
+            'Commvault'                          = @{ App = 'Commvault ContentStore' }
+            'IBM Spectrum Protect (TSM)'         = @{ App = 'IBM Spectrum Protect Client' }
+            'Veeam'                              = @{ App = 'Veeam Agent for Microsoft Windows' }
+            'SharePoint'                         = @{ App = 'Microsoft SharePoint Server 2019' }
+            'Oracle Database'                    = @{ Service = 'OracleServiceORCL' }
+            'SAP'                                = @{ App = 'SAP Host Agent' }
+            'Citrix'                             = @{ App = 'Citrix Virtual Delivery Agent 2203' }
+            'Boomi'                              = @{ Service = 'Boomi_Atom' }
+            'Java runtime'                       = @{ App = 'Eclipse Temurin JRE with Hotspot 17.0.12' }
+            'Apache Tomcat'                      = @{ App = 'Apache Tomcat 9.0 Tomcat9' }
+            'MySQL'                              = @{ App = 'MySQL Server 8.0' }
+            'PostgreSQL'                         = @{ App = 'PostgreSQL 15' }
+            'IBM Db2'                            = @{ App = 'IBM Db2 Server Edition' }
+        }
+        $script:AllRows = @()
+        foreach ($table in 'Agents', 'EndpointProtection', 'SecurityTools', 'Backup', 'Workloads') {
+            foreach ($row in $script:DetectionPatterns[$table]) { $script:AllRows += [pscustomobject]@{ Table = $table; Row = $row } }
+        }
+    }
+    It 'every pattern row has a fixture' {
+        foreach ($r in $script:AllRows) { $script:VendorFixtures.ContainsKey($r.Row.Label) | Should -BeTrue -Because ("pattern row '" + $r.Row.Label + "' needs a fixture") }
+    }
+    It 'each fixture is detected by its own row and the label is unique' {
+        foreach ($r in $script:AllRows) {
+            $f = $script:VendorFixtures[$r.Row.Label]
+            $apps = @(); $svcs = @(); $drv = @()
+            if ($f.App) { $apps = @([pscustomobject]@{ Name = $f.App; Version = '1.0' }) }
+            if ($f.Service) { $svcs = @([pscustomobject]@{ Name = $f.Service; DisplayName = $f.Service; State = 'Running' }) }
+            if ($f.Driver) { $drv = @($f.Driver) }
+            $found = Find-DetectionMatch $script:DetectionPatterns[$r.Table] $apps $svcs $drv
+            $labels = @($found | ForEach-Object Label)
+            $labels | Should -Contain $r.Row.Label -Because ("fixture for '" + $r.Row.Label + "'")
+            @($script:AllRows | Where-Object { $_.Row.Label -eq $r.Row.Label }).Count | Should -Be 1
+        }
+    }
+    It 'common Windows components match no vendor row' {
+        $apps = @('Microsoft Visual C++ 2015-2022 Redistributable (x64)', 'Microsoft Edge', 'VMware Tools', 'Windows Admin Center') | ForEach-Object { [pscustomobject]@{ Name = $_; Version = '1' } }
+        $svcs = @('WinRM', 'LanmanServer', 'Spooler', 'W32Time', 'VMTools') | ForEach-Object { [pscustomobject]@{ Name = $_; DisplayName = $_; State = 'Running' } }
+        foreach ($table in 'Agents', 'EndpointProtection', 'SecurityTools', 'Backup', 'Workloads') {
+            (Find-DetectionMatch $script:DetectionPatterns[$table] $apps $svcs @('WdFilter', 'storqosflt')).Count | Should -Be 0 -Because $table
+        }
     }
 }
 
@@ -615,13 +688,13 @@ Describe 'Slow-check time budget (#39)' {
         $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '..\src\Windows-IPU-Readiness-Assessment.ps1'), [ref]$null, [ref]$null)
         $p = $ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'SlowCheckBudgetMinutes' }
         $p.DefaultValue.Value | Should -Be 50
-        Get-SlowBudgetMinutes 50 45 '' 'Pre' | Should -Be 50
+        Get-SlowCheckBudget 50 45 '' 'Pre' | Should -Be 50
     }
     It 'adds the compat-scan timeout when media is set in Pre mode' {
-        Get-SlowBudgetMinutes 50 45 'D:\' 'Pre' | Should -Be 95
+        Get-SlowCheckBudget 50 45 'D:\' 'Pre' | Should -Be 95
     }
     It 'does not add it in Post mode' {
-        Get-SlowBudgetMinutes 50 45 'D:\' 'Post' | Should -Be 50
+        Get-SlowCheckBudget 50 45 'D:\' 'Post' | Should -Be 50
     }
     It 'computes the seconds left' {
         Get-SlowSecondsLeft 50 0 | Should -Be 3000
@@ -1017,5 +1090,16 @@ Describe 'Invoke-NativeCapture (#37)' -Tag 'Integration' {
         $null = Invoke-NativeCapture 'C:\does-not-exist\nothing.exe' @() 10
         $after = @(Get-CaptureTempFile | ForEach-Object FullName | Where-Object { $before -notcontains $_ })
         $after.Count | Should -Be 0
+    }
+}
+
+Describe 'Test-HttpSysBindingBlock' {
+    It 'rejects the netsh header block' {
+        Test-HttpSysBindingBlock @('SSL Certificate bindings:', '-------------------------') | Should -BeFalse
+    }
+    It 'accepts IP, hostname and central-store bindings' {
+        Test-HttpSysBindingBlock @('IP:port                      : 0.0.0.0:443', 'Certificate Hash : aa') | Should -BeTrue
+        Test-HttpSysBindingBlock @('Hostname:port                : www.example.test:443') | Should -BeTrue
+        Test-HttpSysBindingBlock @('Central Certificate Store    : 443') | Should -BeTrue
     }
 }

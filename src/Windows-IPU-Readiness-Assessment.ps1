@@ -535,6 +535,13 @@ function Get-BroadFolderReader {
     return $found
 }
 
+function Test-CommandAvailable {
+    # True when a cmdlet or function exists on this server. One place, so
+    # tests can simulate servers with and without optional modules.
+    param([string]$Name)
+    return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
 function Get-RegistryValueSafe {
     param([string]$Path, [string]$Name)
     $result = New-Object PSObject -Property @{ Exists=$false; Value=$null }
@@ -1122,7 +1129,7 @@ function ConvertTo-RelaunchArgumentText {
     return $text
 }
 
-function Get-SlowBudgetMinutes {
+function Get-SlowCheckBudget {
     # Pure: DISM and SFC share SlowCheckBudgetMinutes; the optional Setup
     # compatibility scan adds its own timeout, but only when media is set and
     # the run is a pre-upgrade run (the scan does not run after the upgrade).
@@ -1151,6 +1158,14 @@ function Add-SkippedSlowCheck {
     Add-Result 'WINDOWS_HEALTH' $Check.Name 'MANUAL' 'Skipped - slow-check time budget used up' ('Budget=' + $BudgetMinutes + ' min') -Recommendation 'Run this check manually, or raise SlowCheckBudgetMinutes (and the SA job timeout).'
     $script:CheckRuns.Add([pscustomobject]@{ Id=$Check.Id; Name=$Check.Name; Phase='Slow'; Outcome='Skipped'; Duration='00:00:00'; Seconds=0; Message='Time budget used up' })
     $script:CurrentCheckId = 'core'
+}
+
+function Test-HttpSysBindingBlock {
+    # Pure: true for a netsh "http show sslcert" block that describes a
+    # binding. The header block ("SSL Certificate bindings:" and its dashes)
+    # is not a binding. Labels stay English on localized Windows.
+    param([string[]]$Lines)
+    return (@($Lines | Where-Object { $_ -match '^\s*(IP:port|Hostname:port|Central Certificate Store)\s*:' }).Count -gt 0)
 }
 
 function Get-OverallStatus {
@@ -1185,7 +1200,7 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
     $script:Data.Apps     = @(Get-InstalledApplication)
     $script:Data.CV       = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
     $script:Data.Features = $null
-    if (Get-Command Get-WindowsFeature -ErrorAction SilentlyContinue) {
+    if (Test-CommandAvailable 'Get-WindowsFeature') {
         $script:Data.Features = @{}
         foreach ($f in @(Get-WindowsFeature -ErrorAction Stop)) { $script:Data.Features[$f.Name] = [bool]$f.Installed }
     }
@@ -1256,7 +1271,7 @@ Register-Check -Id 'upgradepath' -Name 'Upgrade path, edition and media' -Script
     if (-not $installLang) { $installLang = ConvertFrom-LanguageId ([string]$os.OSLanguage) 10 }
     $uiLang = ConvertFrom-LanguageId (Get-RegistryValueSafe 'HKLM:\SYSTEM\CurrentControlSet\Control\Nls\Language' 'Default').Value 16
     $systemLocale = ''
-    try { if (Get-Command Get-WinSystemLocale -ErrorAction SilentlyContinue) { $systemLocale = (Get-WinSystemLocale).Name } } catch { Write-Swallowed $_ }
+    try { if (Test-CommandAvailable 'Get-WinSystemLocale') { $systemLocale = (Get-WinSystemLocale).Name } } catch { Write-Swallowed $_ }
     $script:Data.InstallLanguage = $installLang
     $langDetails = @(('DefaultUILanguage=' + $uiLang),('SystemLocale=' + $systemLocale + ' (not relevant for media)'))
     if (-not $installLang) {
@@ -1272,7 +1287,7 @@ Register-Check -Id 'upgradepath' -Name 'Upgrade path, edition and media' -Script
     Add-Result 'UPGRADE_PATH' 'RecommendedInstallationImage' 'INFO' $mediaLine 'Select exactly this image in Setup.' -Source 'Derived from edition, installation type and install language'
 
     # Boot from VHD
-    if (Get-Command Get-Partition -ErrorAction SilentlyContinue) {
+    if (Test-CommandAvailable 'Get-Partition') {
         try {
             $cp = Get-Partition -DriveLetter C -ErrorAction Stop
             $disk = Get-Disk -Number $cp.DiskNumber -ErrorAction Stop
@@ -1441,7 +1456,7 @@ Register-Check -Id 'domain' -Name 'Domain role and access' -Script {
         Add-Result 'ACCESS' 'DomainMembership' 'INFO' ('Domain=' + $cs.Domain) ('Role=' + $roleNames[$role]) -Source 'Win32_ComputerSystem'
         if ($role -lt 4) {
             $secure = $null
-            if (Get-Command Test-ComputerSecureChannel -ErrorAction SilentlyContinue) { try { $secure = Test-ComputerSecureChannel -ErrorAction Stop } catch { Write-Swallowed $_ } }
+            if (Test-CommandAvailable 'Test-ComputerSecureChannel') { try { $secure = Test-ComputerSecureChannel -ErrorAction Stop } catch { Write-Swallowed $_ } }
             if ($secure -eq $true) { Add-Result 'ACCESS' 'DomainSecureChannel' 'OK' 'Secure channel verified' -Source 'Test-ComputerSecureChannel' }
             elseif ($secure -eq $false) { Add-Result 'ACCESS' 'DomainSecureChannel' 'ACTION' 'Secure channel test failed' -Recommendation 'Repair the domain trust before IPU; a broken trust can leave you without domain logon after the upgrade.' -Source 'Test-ComputerSecureChannel' }
             else { Add-Result 'ACCESS' 'DomainSecureChannel' 'MANUAL' 'Secure channel could not be tested' -Recommendation 'Verify domain logon manually before the change.' -Source 'Test-ComputerSecureChannel' }
@@ -1526,7 +1541,7 @@ Register-Check -Id 'performance' -Name 'CPU and memory' -Script {
 Register-Check -Id 'cluster' -Name 'Failover clustering' -Script {
     $feature = Get-FeatureState 'Failover-Clustering'
     if ($feature -ne $true) { Add-Result 'CLUSTER' 'FailoverClustering' 'OK' 'Feature not installed' -Source 'Get-WindowsFeature'; return }
-    if (-not (Get-Command Get-Cluster -ErrorAction SilentlyContinue)) {
+    if (-not (Test-CommandAvailable 'Get-Cluster')) {
         Add-Result 'CLUSTER' 'FailoverClustering' 'ACTION' 'Feature installed; cluster cmdlets unavailable' -Recommendation 'Confirm cluster membership before planning an IPU.' -Source 'Get-WindowsFeature'
         return
     }
@@ -1559,7 +1574,7 @@ Register-Check -Id 'storage' -Name 'Storage' -Script {
         Add-Result 'STORAGE' 'CFreeSpace' 'OK' $script:Data.CSummary -Source 'Win32_LogicalDisk'
     }
 
-    if (-not (Get-Command Get-Disk -ErrorAction SilentlyContinue)) {
+    if (-not (Test-CommandAvailable 'Get-Disk')) {
         foreach ($d in @(Get-CimSafe 'Win32_DiskDrive' | Sort-Object Index)) { Add-Result 'STORAGE' ('Disk' + $d.Index) 'INFO' ('SizeGB=' + (Format-Number ($d.Size/1GB))) ('Model=' + $d.Model) -Source 'Win32_DiskDrive' }
         return
     }
@@ -1629,7 +1644,7 @@ Register-Check -Id 'network' -Name 'Network, teaming, hosts and routes' -Script 
     # after. An LBFO team bound to a Hyper-V vSwitch is not supported on
     # Windows Server 2022/2025 Hyper-V - convert to Switch Embedded Teaming.
     $vSwitchDescriptions = @()
-    if (Get-Command Get-VMSwitch -ErrorAction SilentlyContinue) {
+    if (Test-CommandAvailable 'Get-VMSwitch') {
         try { $vSwitchDescriptions = @(Get-VMSwitch -ErrorAction Stop | Where-Object { $_.NetAdapterInterfaceDescription } | ForEach-Object { [string]$_.NetAdapterInterfaceDescription }) } catch { Write-Swallowed $_ }
         try {
             foreach ($set in @(Get-VMSwitchTeam -ErrorAction Stop)) {
@@ -1638,7 +1653,7 @@ Register-Check -Id 'network' -Name 'Network, teaming, hosts and routes' -Script 
         } catch { Write-Swallowed $_ }
     }
     $teams = @()
-    if (Get-Command Get-NetLbfoTeam -ErrorAction SilentlyContinue) { $teams = @(Get-NetLbfoTeam -ErrorAction SilentlyContinue) }
+    if (Test-CommandAvailable 'Get-NetLbfoTeam') { $teams = @(Get-NetLbfoTeam -ErrorAction SilentlyContinue) }
     foreach ($t in $teams) {
         $teamNic = Get-NetAdapter -Name $t.Name -ErrorAction SilentlyContinue
         $boundToVSwitch = ($teamNic -and $vSwitchDescriptions -contains [string]$teamNic.InterfaceDescription)
@@ -1672,7 +1687,7 @@ Register-Check -Id 'network' -Name 'Network, teaming, hosts and routes' -Script 
     }
 
     # Static routes - persistent and active manual (NetMgmt), excluding defaults.
-    if (-not (Get-Command Get-NetRoute -ErrorAction SilentlyContinue)) {
+    if (-not (Test-CommandAvailable 'Get-NetRoute')) {
         Add-Result 'NETWORK_DEPENDENCY' 'StaticRoutes' 'MANUAL' 'Get-NetRoute unavailable' -Recommendation 'Run "route print" and document persistent routes manually.' -Source 'NetTCPIP'
         return
     }
@@ -1912,7 +1927,10 @@ Register-Check -Id 'pki' -Name 'PKI, certificates and TLS bindings' -Script {
     $block = @(); $n = 0
     foreach ($line in @($netsh.Output -split '\r?\n') + @('')) {
         if ($line.Trim()) { $block += $line.Trim() }
-        elseif ($block.Count -gt 1) { $n++; Add-Result 'CERTIFICATES' ('HTTP.sys binding ' + $n) 'INFO' ($block -join ' | ') -Source 'netsh http show sslcert'; $block = @() }
+        elseif ($block.Count -gt 0) {
+            if (Test-HttpSysBindingBlock $block) { $n++; Add-Result 'CERTIFICATES' ('HTTP.sys binding ' + $n) 'INFO' ($block -join ' | ') -Source 'netsh http show sslcert' }
+            $block = @()
+        }
         else { $block = @() }
     }
 }
@@ -1944,7 +1962,7 @@ Register-Check -Id 'antivirus' -Name 'Antivirus, EDR and security tools' -Script
     $defenderService = @($script:Data.Services | Where-Object { $_.Name -eq 'WinDefend' }) | Select-Object -First 1
     if (-not $defenderService) {
         Add-Result 'ANTIVIRUS' 'Microsoft Defender Antivirus' 'INFO' 'Not installed (WinDefend service absent)' -Source 'Win32_Service'
-    } elseif (-not (Get-Command Get-MpComputerStatus -ErrorAction SilentlyContinue)) {
+    } elseif (-not (Test-CommandAvailable 'Get-MpComputerStatus')) {
         Add-Result 'ANTIVIRUS' 'Microsoft Defender Antivirus' 'INFO' ('Service ' + $defenderService.State + '; status cmdlet not available on this OS') -Source 'Win32_Service'
     } else {
         try {
@@ -1983,7 +2001,7 @@ Register-Check -Id 'antivirus' -Name 'Antivirus, EDR and security tools' -Script
         Add-Result 'SECURITY' $m.Label 'WARNING' ('Applications=' + @($m.Apps).Count + ', Services=' + @($m.Services).Count + ', Drivers=' + @($m.Drivers).Count) (Get-DetectionEvidence $m) -Recommendation ('Confirm ' + $target + ' support and that it will not block Setup.') -Source 'Uninstall registry, Win32_Service, drivers'
     }
 
-    if (Get-Command Get-AppLockerPolicy -ErrorAction SilentlyContinue) {
+    if (Test-CommandAvailable 'Get-AppLockerPolicy') {
         try {
             $policy = Get-AppLockerPolicy -Effective -ErrorAction Stop
             $count = 0; foreach ($c in $policy.RuleCollections) { $count += [int]$c.Count }
@@ -1991,18 +2009,18 @@ Register-Check -Id 'antivirus' -Name 'Antivirus, EDR and security tools' -Script
             else { Add-Result 'SECURITY' 'AppLocker' 'INFO' 'No effective rules' -Source 'Get-AppLockerPolicy' }
         } catch { Write-Swallowed $_ }
     }
-    if (Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue) {
+    if (Test-CommandAvailable 'Get-BitLockerVolume') {
         try {
             $bl = Get-BitLockerVolume -MountPoint 'C:' -ErrorAction Stop
             if ([string]$bl.ProtectionStatus -eq 'On') { Add-Result 'SECURITY' 'BitLocker C:' 'WARNING' ('Protection=On, Method=' + $bl.EncryptionMethod) '' -Recommendation 'Confirm the recovery key is escrowed and retrievable before IPU.' -Source 'Get-BitLockerVolume' }
             else { Add-Result 'SECURITY' 'BitLocker C:' 'INFO' ('Protection=' + $bl.ProtectionStatus) -Source 'Get-BitLockerVolume' }
         } catch { Write-Swallowed $_ }
     }
-    if (Get-Command Confirm-SecureBootUEFI -ErrorAction SilentlyContinue) {
+    if (Test-CommandAvailable 'Confirm-SecureBootUEFI') {
         try { Add-Result 'SECURITY' 'SecureBoot' 'INFO' ('Enabled=' + (Confirm-SecureBootUEFI -ErrorAction Stop)) -Source 'Confirm-SecureBootUEFI' }
         catch { Add-Result 'SECURITY' 'SecureBoot' 'INFO' 'Not available (legacy BIOS or not supported)' -Source 'Confirm-SecureBootUEFI' }
     }
-    if (Get-Command Get-Tpm -ErrorAction SilentlyContinue) {
+    if (Test-CommandAvailable 'Get-Tpm') {
         try { $tpm = Get-Tpm -ErrorAction Stop; Add-Result 'SECURITY' 'TPM' 'INFO' ('Present=' + $tpm.TpmPresent) ('Ready=' + $tpm.TpmReady) -Source 'Get-Tpm' } catch { Write-Swallowed $_ }
     }
     if (@($script:Data.FilterDrivers).Count -gt 0) {
@@ -2118,7 +2136,7 @@ Register-Check -Id 'drivers' -Name 'Non-Microsoft drivers' -Script {
 
 # ---------------------------------------------------------------------------
 Register-Check -Id 'ports' -Name 'Listening ports' -Script {
-    if (-not (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue)) {
+    if (-not (Test-CommandAvailable 'Get-NetTCPConnection')) {
         Add-Result 'PORTS' 'ListeningPorts' 'INFO' 'Get-NetTCPConnection unavailable' -Source 'NetTCPIP'
         return
     }
@@ -2135,7 +2153,7 @@ Register-Check -Id 'ports' -Name 'Listening ports' -Script {
     $owners = @{}
     $endpoints = @()
     foreach ($c in @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue)) { $endpoints += [pscustomobject]@{ Key=('TCP:' + $c.LocalPort); Port=[int]$c.LocalPort; ProcessId=[int]$c.OwningProcess } }
-    if (Get-Command Get-NetUDPEndpoint -ErrorAction SilentlyContinue) {
+    if (Test-CommandAvailable 'Get-NetUDPEndpoint') {
         foreach ($u in @(Get-NetUDPEndpoint -ErrorAction SilentlyContinue)) { $endpoints += [pscustomobject]@{ Key=('UDP:' + $u.LocalPort); Port=[int]$u.LocalPort; ProcessId=[int]$u.OwningProcess } }
     }
     # Ports from the Windows dynamic range (49152+) change between boots and
@@ -2156,7 +2174,7 @@ Register-Check -Id 'ports' -Name 'Listening ports' -Script {
 
 # ---------------------------------------------------------------------------
 Register-Check -Id 'tasks' -Name 'Scheduled tasks' -Script {
-    if (-not (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue)) {
+    if (-not (Test-CommandAvailable 'Get-ScheduledTask')) {
         Add-Result 'TASKS' 'ScheduledTasks' 'INFO' 'Get-ScheduledTask unavailable' -Source 'ScheduledTasks module'
         return
     }
@@ -2409,13 +2427,13 @@ function Invoke-RdpPolicyAssessment {
     elseif ($svc.State -ne 'Running') { $review.Add('TermService is not running') }
 
     $listening = $false
-    if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
+    if (Test-CommandAvailable 'Get-NetTCPConnection') {
         try { $listening = @(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction Stop).Count -gt 0 } catch { Write-Swallowed $_ }
     }
     if (-not $listening) { $hard.Add('Nothing listening on TCP/' + $port) }
 
     # Firewall: only relevant when at least one profile is enabled.
-    if (Get-Command Get-NetFirewallRule -ErrorAction SilentlyContinue) {
+    if (Test-CommandAvailable 'Get-NetFirewallRule') {
         try {
             $enabledProfiles = @(Get-NetFirewallProfile -PolicyStore ActiveStore -ErrorAction Stop | Where-Object { [string]$_.Enabled -eq 'True' })
             if ($enabledProfiles.Count -eq 0) {
@@ -2827,7 +2845,7 @@ function Invoke-Assessment {
 
     try { $null = Write-AssessmentReport -Partial } catch { Write-AssessmentLog 'WARNING' 'REPORT' ('Checkpoint report failed: ' + $_.Exception.Message) }
 
-    $budgetMinutes = Get-SlowBudgetMinutes $SlowCheckBudgetMinutes $CompatScanTimeoutMinutes $TargetMediaPath $AssessmentMode
+    $budgetMinutes = Get-SlowCheckBudget $SlowCheckBudgetMinutes $CompatScanTimeoutMinutes $TargetMediaPath $AssessmentMode
     $slowWatch = [Diagnostics.Stopwatch]::StartNew()
     foreach ($check in @($script:Checks | Where-Object { $_.Phase -eq 'Slow' -and $skip -notcontains $_.Id })) {
         $script:SlowSecondsLeft = Get-SlowSecondsLeft $budgetMinutes $slowWatch.Elapsed.TotalSeconds
