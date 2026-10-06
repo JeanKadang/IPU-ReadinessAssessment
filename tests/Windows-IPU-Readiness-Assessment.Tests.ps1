@@ -1458,3 +1458,22 @@ Describe 'Site data files (#32)' {
         }
     }
 }
+
+Describe 'Version (#19)' {
+    BeforeAll {
+        $script:Root = Join-Path $PSScriptRoot '..'
+        $script:Header = [IO.File]::ReadAllText((Join-Path $script:Root 'src\Windows-IPU-Readiness-Assessment.ps1'))
+        $script:Changelog = [IO.File]::ReadAllText((Join-Path $script:Root 'CHANGELOG.md'))
+    }
+    It 'the header VERSION equals $script:CollectorVersion' {
+        $m = [regex]::Match($script:Header, '(?m)^\s*VERSION\s*:\s*(\d+\.\d+\.\d+)\s*$')
+        $m.Success | Should -BeTrue
+        $m.Groups[1].Value | Should -Be $script:CollectorVersion
+    }
+    It 'the version history in the header starts with this version' {
+        [regex]::Match($script:Header, '(?ms)^\.VERSION HISTORY\s*\r?\n\s*(\d+\.\d+\.\d+) - ').Groups[1].Value | Should -Be $script:CollectorVersion
+    }
+    It 'CHANGELOG.md has a section for this version' {
+        $script:Changelog | Should -Match ('(?m)^## \[' + [regex]::Escape($script:CollectorVersion) + '\]')
+    }
+}

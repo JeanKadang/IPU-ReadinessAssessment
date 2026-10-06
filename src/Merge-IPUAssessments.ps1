@@ -1,7 +1,7 @@
 <#
 ===============================================================================
  SCRIPT NAME : Merge-IPUAssessments.ps1
- VERSION     : 1.0.3 (for Windows-IPU-Readiness-Assessment 4.0.1+)
+ VERSION     : 1.0.3 (for Windows-IPU-Readiness-Assessment 4.0.1+, released with 4.1.0)
  PURPOSE     : Combine the JSON results of many servers into one overview.
  RUNS ON     : Any Windows machine with Windows PowerShell 5.1 or PowerShell 7
                (an admin workstation or jump host - NOT on the assessed servers).

@@ -1,7 +1,7 @@
 <#
 ===============================================================================
  SCRIPT NAME : Windows-IPU-Readiness-Assessment.ps1
- VERSION     : 4.0.1
+ VERSION     : 4.1.0
  RELEASE DATE: 2026-10-06
  PURPOSE     : Windows Server in-place upgrade (IPU) readiness assessment and
                post-upgrade verification, with a self-contained HTML report
@@ -82,6 +82,14 @@
     load, nothing is collected. The Pester tests use this.
 
 .VERSION HISTORY
+    4.1.0 - First tagged release. Opt-in report redaction (-RedactReport);
+            optional site data files (-PatternFile, -ProfileFile); output
+            folders limited to SYSTEM and Administrators; CIM instead of WMI;
+            validated parameters; no silent catch blocks; accessible report
+            with dark mode; external tools keep their exit code on Windows
+            PowerShell 5.1; HTTP.sys header and pending-rename fixes. Tested
+            in CI on Windows PowerShell 5.1 and PowerShell 7 (Server 2022 and
+            2025 images). See CHANGELOG.md for the full list.
     4.0.1 - Fixes from the first live run and the 4.0.0 review:
             AV/EDR detection by product name, service and filter driver
             (TrendAI/Deep Security, Defender for Endpoint, CrowdStrike,
@@ -256,7 +264,7 @@ $script:FeatureLifecycle = @(
 # 3. CORE
 # =============================================================================
 $ProgressPreference = 'SilentlyContinue'
-$script:CollectorVersion  = '4.0.1'
+$script:CollectorVersion  = '4.1.0'
 # Settings a profile file (-ProfileFile) may set. Mode, target, media path,
 # report folder and redaction describe one run, so they stay arguments only.
 $script:ProfileSettingNames = @(
