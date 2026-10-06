@@ -50,6 +50,14 @@ if ($Coverage -and $result.CodeCoverage) {
     $pct = [math]::Round($result.CodeCoverage.CoveragePercent, 1)
     $lines += ('Code coverage of src/*.ps1: **{0}%** ({1} of {2} commands).' -f $pct, $result.CodeCoverage.CommandsExecutedCount, $result.CodeCoverage.CommandsAnalyzedCount)
     Write-Annotation 'notice' 'Code coverage' ('{0}% of src/*.ps1 commands executed' -f $pct)
+    # Functions of which not a single command ran (#33): the list should stay
+    # empty. Code outside functions (the main block) is not counted.
+    $ran = @($result.CodeCoverage.CommandsExecuted | Where-Object { $_.Function } | ForEach-Object { (Split-Path $_.File -Leaf) + ': ' + $_.Function } | Sort-Object -Unique)
+    $untested = @($result.CodeCoverage.CommandsMissed | Where-Object { $_.Function } | ForEach-Object { (Split-Path $_.File -Leaf) + ': ' + $_.Function } | Sort-Object -Unique | Where-Object { $ran -notcontains $_ })
+    $untestedText = 'none'
+    if ($untested.Count -gt 0) { $untestedText = $untested -join ', ' }
+    Write-Annotation 'notice' 'Functions without any executed command' ('{0} of {1} functions: {2}' -f $untested.Count, ($ran.Count + $untested.Count), $untestedText)
+    $lines += ('Functions without any executed command: {0} of {1} ({2}).' -f $untested.Count, ($ran.Count + $untested.Count), $untestedText)
 }
 if ($env:GITHUB_STEP_SUMMARY) { $lines -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8 }
 if ($result.Result -ne 'Passed') { exit 1 }
