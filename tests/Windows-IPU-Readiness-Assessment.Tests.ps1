@@ -729,3 +729,93 @@ Describe 'Compare-IPUSnapshot - every category (#35)' {
         @($d | ForEach-Object Item) | Should -Contain 'Static routes missing after upgrade'
     }
 }
+
+Describe 'Edge cases for thin decision functions (#40)' {
+    Context 'Get-UpgradePathDecision' {
+        It 'a 2025 to 2016 downgrade is a BLOCKER' {
+            $d = Get-UpgradePathDecision '2025' '2016' $false
+            # 2016 is not a configured target, so it is rejected before the downgrade rule.
+            $d.Status | Should -Be 'MANUAL'
+            (Get-UpgradePathDecision '2025' '2022' $false).Status | Should -Be 'BLOCKER'
+            (Get-UpgradePathDecision '2025' '2022' $false).Text | Should -Match 'Downgrade is not possible'
+        }
+        It 'an unconfigured target is MANUAL and names the valid targets' {
+            $d = Get-UpgradePathDecision '2019' '2019' $false
+            $d.Status | Should -Be 'MANUAL'
+            $d.Text | Should -Match '2025 or 2022'
+        }
+        It 'a clustered node on the same release is still a BLOCKER' {
+            (Get-UpgradePathDecision '2025' '2025' $true).Status | Should -Be 'BLOCKER'
+        }
+    }
+
+    Context 'Get-VMwareToolsDecision' {
+        It '<Version> for 2025 is <Expected>' -TestCases @(
+            @{ Version = '12.4.9';         Expected = 'ACTION' }
+            @{ Version = '12.5.0';         Expected = 'OK' }
+            @{ Version = '12.5.0.24276846'; Expected = 'OK' }
+            @{ Version = '12.5.1';         Expected = 'OK' }
+            @{ Version = '9.4';            Expected = 'ACTION' }
+            @{ Version = 'garbage';        Expected = 'MANUAL' }
+            @{ Version = '';               Expected = 'ACTION' }
+        ) {
+            (Get-VMwareToolsDecision $Version '2025').Status | Should -Be $Expected
+        }
+        It 'has no 12.5.0 minimum for a 2022 target' {
+            (Get-VMwareToolsDecision '12.1.0' '2022').Status | Should -Be 'OK'
+        }
+    }
+
+    Context 'Get-PlatformClassification' {
+        It '<Manufacturer> / <Model> is <Type> <Hypervisor>' -TestCases @(
+            @{ Manufacturer = 'Lenovo';                Model = 'ThinkSystem SR650';       Type = 'Physical'; Hypervisor = '' }
+            @{ Manufacturer = 'Cisco Systems Inc';     Model = 'UCSC-C220-M5SX';          Type = 'Physical'; Hypervisor = '' }
+            @{ Manufacturer = 'VMware, Inc.';          Model = 'VMware20,1';              Type = 'Virtual';  Hypervisor = 'VMware' }
+            @{ Manufacturer = 'Microsoft Corporation'; Model = 'Virtual Machine';         Type = 'Virtual';  Hypervisor = 'Hyper-V / Azure' }
+            @{ Manufacturer = 'Amazon EC2';            Model = 't3.medium';               Type = 'Virtual';  Hypervisor = 'AWS EC2' }
+            @{ Manufacturer = 'innotek GmbH';          Model = 'VirtualBox';              Type = 'Virtual';  Hypervisor = 'VirtualBox' }
+            @{ Manufacturer = 'Microsoft Corporation'; Model = 'Surface Pro';             Type = 'Physical'; Hypervisor = '' }
+        ) {
+            $p = Get-PlatformClassification $Manufacturer $Model
+            $p.Type | Should -Be $Type
+            $p.Hypervisor | Should -Be $Hypervisor
+        }
+    }
+
+    Context 'Get-OverallStatus' {
+        BeforeAll {
+            function New-R([string]$Status, [string]$Kind = 'Finding') { [pscustomobject]@{ Status = $Status; Kind = $Kind } }
+        }
+        It 'no results is OK' {
+            Get-OverallStatus @() | Should -Be 'OK'
+            Get-OverallStatus $null | Should -Be 'OK'
+        }
+        It 'a BLOCKER Observation is ignored' {
+            Get-OverallStatus @((New-R 'BLOCKER' 'Observation'), (New-R 'WARNING')) | Should -Be 'WARNING'
+        }
+        It '<Worst> wins when it is the worst present' -TestCases @(
+            @{ Worst = 'BLOCKER'; Others = @('ACTION', 'WARNING', 'MANUAL') }
+            @{ Worst = 'ACTION';  Others = @('WARNING', 'MANUAL') }
+            @{ Worst = 'WARNING'; Others = @('MANUAL') }
+            @{ Worst = 'MANUAL';  Others = @() }
+        ) {
+            $results = @(New-R $Worst) + @($Others | ForEach-Object { New-R $_ }) + @(New-R 'OK' 'Evidence')
+            Get-OverallStatus $results | Should -Be $Worst
+        }
+    }
+
+    Context 'ConvertTo-PendingRenamePath' {
+        It 'an empty value gives an empty list' {
+            (ConvertTo-PendingRenamePath @() 5).Count | Should -Be 0
+            (ConvertTo-PendingRenamePath @('', '') 5).Count | Should -Be 0
+        }
+        It 'an odd number of entries does not lose the last one' {
+            $p = ConvertTo-PendingRenamePath @('\??\C:\a.dll', '', '\??\C:\b.dll') 5
+            @($p) -join '|' | Should -Be 'C:\a.dll|C:\b.dll'
+        }
+        It 'strips the ! (replace) prefix so both forms show the same path' {
+            $p = ConvertTo-PendingRenamePath @('\??\C:\new.dll', '!\??\C:\target.dll', '\??\C:\target.dll') 5
+            @($p) -join '|' | Should -Be 'C:\new.dll|C:\target.dll'
+        }
+    }
+}
