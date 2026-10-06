@@ -4,7 +4,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-10-06
+
+First tagged release. `Merge-IPUAssessments.ps1` 1.0.3 ships with it.
+
 ### Added
+- Release workflow: a tag `vX.Y.Z` that matches the script version publishes a zip, the two scripts and `SHA256SUMS.txt`; a test keeps the header version, `$script:CollectorVersion` and the changelog in step (#19).
 - Pull requests are labelled automatically from the branch name and changed paths, so release notes are grouped (#31).
 - CI runs the end-to-end smoke test on Windows Server 2025 and 2022 images, pins images instead of `windows-latest`, and runs weekly on `main`; a failed weekly run opens an issue (#27).
 - Optional site data files: `-PatternFile` adds, replaces or disables detection patterns and `-ProfileFile` sets site defaults for the settings (an argument still wins). All or nothing: a file that cannot be used is reported as `MANUAL` and the built-in values are used. Examples in `docs/examples/` (#32).
@@ -28,3 +33,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - External tools (DISM, SFC, netsh, ...) that exit at once no longer lose their exit code on Windows PowerShell 5.1: processes are started through `System.Diagnostics.Process` instead of `Start-Process -PassThru`, and output is read without temp files (#66).
 - `Merge-IPUAssessments.ps1` 1.0.2: CSV cells that start with `=`, `+`, `-`, `@`, tab or CR are prefixed with an apostrophe, so data from a server cannot run as an Excel formula (#41).
 - `Merge-IPUAssessments.ps1` 1.0.1: the findings CSV no longer includes findings from an older, superseded result for the same server (#13).
+
+## [4.0.1] - 2026-10-06
+
+Fixes from the first live run and the 4.0.0 review (released as a script file only, before this repository).
+
+### Added
+- `param()` block: every setting is a parameter with a default, so SA runs the script unchanged.
+- JSON result (`IPU-Assessment/1`) next to the HTML, for the fleet overview and as the post-upgrade baseline.
+- Post-upgrade mode (`-AssessmentMode Post`) that compares against the pre-upgrade result.
+- VMware guest readiness (VMware Tools 12.5.0 or later for 2025, certified vSphere versions).
+- Optional Setup compatibility scan with the target media (`-TargetMediaPath`).
+- Features removed or deprecated in the target release; non-Microsoft driver inventory; listening ports; non-Microsoft scheduled tasks; system and recovery partition free space.
+- `Merge-IPUAssessments.ps1` 1.0.0: fleet overview from many JSON results.
+
+### Changed
+- One central detection pattern table for agents, AV/EDR, backup and workloads.
+- AV/EDR detection by product name, service and filter driver (Trend Micro/TrendAI, Defender for Endpoint, CrowdStrike, SentinelOne, ...), with the reason when Defender status cannot be read.
+- Sysmon and RDP NLA reported as observations; clearer "None detected" wording.
+- Ignored errors are logged; `Recommendation` is a named parameter of `Add-Result`.
+
+### Fixed
+- `C:\Windows\Panther\setupact.log` is no longer counted as evidence of an earlier upgrade.
+- Mount points and volume labels are shown again; OpenText SA and Operations agent names are recognised.
+- Pending file rename operations show the file paths.
+
+## [4.0.0]
+
+Restructure of the 3.x script (released as a script file only).
+
+### Changed
+- Check registry and runner: each area is a registered check; a check that throws is reported as `MANUAL`, never as a clean result.
+- One area map for the whole report; decision rules are pure functions with Pester tests.
+- DISM and SFC run time-boxed inside one budget; a checkpoint report is written before the slow checks.
+- Standard change checklist separated from findings; result kinds Finding, Observation, Checklist and Evidence.
+- Upgrade path, edition, Exchange, SQL Server and NIC teaming rules checked against Microsoft documentation.
+
+## [3.5.0]
+
+Local Group Policy backup and RDP readiness. Superseded by 4.0.0.
+
+[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.1.0...HEAD
+[4.1.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.1.0

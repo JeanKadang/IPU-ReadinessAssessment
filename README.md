@@ -50,6 +50,19 @@ It answers four questions:
 3. **Is Windows healthy enough?** Pending reboot, patch age, activation, disk space, DISM component store, SFC.
 4. **Did anything get lost afterwards?** Services, ports, routes, IP/DNS, hosts entries, applications, features and tasks, compared with the pre-upgrade snapshot.
 
+## Get the script
+
+Take it from the [latest release](https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/latest), not from
+`main`: a release is tested in CI and has `SHA256SUMS.txt`. Before you upload the script to OpenText SA, check
+that its hash matches the one in `SHA256SUMS.txt`:
+
+```powershell
+Get-FileHash .\Windows-IPU-Readiness-Assessment.ps1 -Algorithm SHA256
+```
+
+The scripts are not code-signed yet (#14). If your servers enforce signed scripts, sign them with your
+organisation's certificate after checking the hash.
+
 ## Quick start
 
 Run in an elevated session on the server (Windows PowerShell 4.0+):
@@ -137,7 +150,7 @@ flowchart TD
 | `docs/samples/` | Synthetic sample report and result, built by `build/New-SampleReport.ps1` |
 | `docs/adr/` | Architecture decision records |
 | `docs/review/` | Repository quality review |
-| `.github/` | CI workflow, issue forms, PR template, Dependabot, release notes config |
+| `.github/` | CI, release and labeler workflows, issue forms, PR template, Dependabot, release notes config |
 | `.claude/`, `AGENTS.md`, `CLAUDE.md` | Shared GitHub workflow skills, plugin settings and assistant guidance (see [CONTRIBUTING](CONTRIBUTING.md#working-with-claude-code)) |
 
 ## Development
