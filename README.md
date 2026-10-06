@@ -89,6 +89,7 @@ flowchart LR
 Options (`-OutputFolder`, `-Mode Pre|Post|All`, `-Delimiter`) are in the [user guide](docs/user-guide.md#9-combining-many-servers-fleet-overview).
 
 Full parameter reference, status meanings, SA usage and troubleshooting: **[User guide](docs/user-guide.md)**.
+What each of the 31 checks looks at and can report: **[Checks reference](docs/checks.md)**. What a report looks like: [sample report](docs/samples/sample-report.html) (fictional server).
 
 ## Reading the result
 
@@ -121,7 +122,7 @@ The assessment is **non-remediating**. It never installs, removes or reconfigure
 flowchart TD
     R[IPU-ReadinessAssessment] --> S[src/<br/>assessment + fleet merge scripts]
     R --> T[tests/<br/>Pester 5, 105 tests]
-    R --> D[docs/<br/>user guide, review]
+    R --> D[docs/<br/>user guide, checks, schema, samples]
     R --> G[.github/<br/>CI, templates, Dependabot]
     R --> C[.claude/ and AGENTS.md<br/>shared AI workflow]
 ```
@@ -131,6 +132,10 @@ flowchart TD
 | `src/` | `Windows-IPU-Readiness-Assessment.ps1` (runs on each server), `Merge-IPUAssessments.ps1` (fleet overview, runs on a workstation) |
 | `tests/` | Pester tests for the decision rules and reporting |
 | `docs/user-guide.md` | How to run and interpret the assessment |
+| `docs/checks.md` | What every check looks at and can report |
+| `docs/result-schema.md`, `docs/result-schema.json` | JSON result format (`IPU-Assessment/1`) and its JSON Schema |
+| `docs/samples/` | Synthetic sample report and result, built by `build/New-SampleReport.ps1` |
+| `docs/adr/` | Architecture decision records |
 | `docs/review/` | Repository quality review |
 | `.github/` | CI workflow, issue forms, PR template, Dependabot, release notes config |
 | `.claude/`, `AGENTS.md`, `CLAUDE.md` | Shared GitHub workflow skills, plugin settings and assistant guidance (see [CONTRIBUTING](CONTRIBUTING.md#working-with-claude-code)) |

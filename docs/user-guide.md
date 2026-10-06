@@ -212,7 +212,9 @@ Schema id `IPU-Assessment/1`. Top-level keys: `CollectorVersion`, `ComputerName`
 `Started`, `Completed`, `Partial`, `Overall`, `Counts`, `Facts`, `Results`, `CheckRuns`, `Snapshot`.
 `Results[]` has `CheckId, Area, Item, Status, Kind, Value, Details, Recommendation, Source`.
 `Snapshot` is what the post-upgrade run compares against. The fleet overview script (section 9) reads the same
-files and accepts only `Schema` = `IPU-Assessment/1`.
+files and accepts only `Schema` = `IPU-Assessment/1`. Every field is described in
+[result-schema.md](result-schema.md); the formal JSON Schema is [result-schema.json](result-schema.json), and
+[samples/sample-result.json](samples/sample-result.json) is an example.
 
 ## 6. Reading the report
 
@@ -268,6 +270,8 @@ Most severe on the left. The **overall status is the most severe *finding***.
 > If a check shows `Failed` or `Skipped`, an empty section is **not** evidence of readiness. Review it by hand.
 
 ## 7. What is checked
+
+The [checks reference](checks.md) lists every check with what it looks at and the results it can produce.
 
 33 checks. Fast checks run first; the three slow ones run after the checkpoint report.
 
