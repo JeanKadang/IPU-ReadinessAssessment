@@ -1,12 +1,21 @@
 name: Release
 
-# Pushing a tag vX.Y.Z publishes a GitHub release with a zip of the scripts
-# and docs, and a SHA-256 file for the zip and for each script. The tag must
-# match the version in the script header; CI must already be green on the
-# tagged commit (tags are only made on main after a merge).
+# Publishes a GitHub release with a zip of the scripts and docs, and a
+# SHA-256 file for the zip and for each script. Two ways to start it:
+#   - push a tag vX.Y.Z, or
+#   - Actions > Release > Run workflow on main with the version (X.Y.Z);
+#     the workflow then creates the tag vX.Y.Z on that commit itself.
+# The version must match the script header and CHANGELOG. CI must already be
+# green on the commit (releases are only made from main after a merge).
 on:
   push:
     tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, for example 4.1.0 (must match the script)'
+        required: true
+        type: string
 
 permissions: {}
 
@@ -19,17 +28,26 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check the tag against the script version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          if [ "$GITHUB_EVENT_NAME" = 'workflow_dispatch' ]; then
+            if [ "$GITHUB_REF_NAME" != 'main' ]; then echo "::error::Run the release from main."; exit 1; fi
+            version="$INPUT_VERSION"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          echo "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::Version '$version' is not X.Y.Z."; exit 1; }
           header=$(grep -m1 -oP '^\s*VERSION\s*:\s*\K[0-9]+\.[0-9]+\.[0-9]+' src/Windows-IPU-Readiness-Assessment.ps1)
           collector=$(grep -m1 -oP "^\\\$script:CollectorVersion\s*=\s*'\K[0-9.]+" src/Windows-IPU-Readiness-Assessment.ps1)
           echo "tag=$version header=$header collector=$collector"
           if [ "$version" != "$header" ] || [ "$version" != "$collector" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match the script version (header $header, CollectorVersion $collector)."
+            echo "::error::Version $version does not match the script version (header $header, CollectorVersion $collector)."
             exit 1
           fi
           grep -q "^## \[$version\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no section for $version."; exit 1; }
           echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "TAG=v$version" >> "$GITHUB_ENV"
       - name: Build the zip and hashes
         run: |
           name="IPU-ReadinessAssessment-$VERSION"
@@ -60,6 +78,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file dist/notes.md \
+          if [ "$GITHUB_EVENT_NAME" = 'push' ]; then where='--verify-tag'; else where="--target=$GITHUB_SHA"; fi
+          gh release create "$TAG" "$where" --title "$TAG" --notes-file dist/notes.md \
             "dist/IPU-ReadinessAssessment-$VERSION.zip" dist/SHA256SUMS.txt \
             dist/Windows-IPU-Readiness-Assessment.ps1 dist/Merge-IPUAssessments.ps1
