@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub Security Response"
+  short_description: "Handle GitHub repository security findings"
+  default_prompt: "Use $github-security-response to handle this repository security finding safely."

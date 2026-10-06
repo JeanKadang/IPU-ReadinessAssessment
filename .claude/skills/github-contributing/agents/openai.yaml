@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub Contributing"
+  short_description: "Submit and manage a pull request to a repo you don't maintain"
+  default_prompt: "Use $github-contributing to guide forking, syncing, or submitting a PR to an upstream repository."

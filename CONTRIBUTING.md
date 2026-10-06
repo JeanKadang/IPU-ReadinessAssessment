@@ -18,6 +18,16 @@
 - Every new check needs a Pester test and a named recommendation.
 - Do not commit assessment output, hostnames, credentials or other host data.
 
+## Working with Claude Code
+
+The repo ships the team's GitHub workflow so your AI assistant follows the same rules as everyone else:
+
+- `.claude/skills/`: the `github-*` skills (issue first, PR flow, releases, reviews, security response). Source of truth is [DOC-GitHub-Practice-Skills](https://github.com/JeanKadang/DOC-GitHub-Practice-Skills); change them there, then re-copy.
+- `.claude/settings.json`: enables the shared plugins (`superpowers`, `code-review`, `code-simplifier`). Claude Code asks you to approve them on first open.
+- `AGENTS.md` (imported by `CLAUDE.md`): commands, hard rules and workflow summary, read by Claude Code, Codex and Copilot.
+
+Keep personal preferences in your own user settings or `.claude/settings.local.json` (git-ignored).
+
 ## Reporting security problems
 
 See [SECURITY.md](SECURITY.md). Do not use public issues.
