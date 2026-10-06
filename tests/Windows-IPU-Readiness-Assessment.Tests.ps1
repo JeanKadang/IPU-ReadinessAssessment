@@ -1,11 +1,11 @@
 # Pester 5 tests for Windows-IPU-Readiness-Assessment.ps1 (4.x).
 # Runs anywhere PowerShell + Pester run (Windows PowerShell 5.1 or pwsh 7):
-#   Invoke-Pester .\Windows-IPU-Readiness-Assessment.Tests.ps1 -Output Detailed
+#   Invoke-Pester .\tests -Output Detailed
 # The script is loaded in library mode: functions only, nothing is collected.
 
 BeforeAll {
     $env:IPU_ASSESSMENT_LIBRARY_ONLY = '1'
-    . (Join-Path $PSScriptRoot 'Windows-IPU-Readiness-Assessment.ps1')
+    . (Join-Path $PSScriptRoot '..\src\Windows-IPU-Readiness-Assessment.ps1')
 }
 
 AfterAll { Remove-Item Env:\IPU_ASSESSMENT_LIBRARY_ONLY -ErrorAction SilentlyContinue }

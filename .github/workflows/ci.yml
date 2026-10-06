@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pester:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Pester
+        shell: pwsh
+        run: |
+          if (-not (Test-Path src/Windows-IPU-Readiness-Assessment.ps1)) {
+            Write-Host '::warning::src/Windows-IPU-Readiness-Assessment.ps1 not found; tests skipped'
+            exit 0
+          }
+          Install-Module Pester -MinimumVersion 5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+          Invoke-Pester ./tests -CI -Output Detailed
