@@ -121,6 +121,32 @@ try {
         $redObj = Test-ResultJson $redJson[0].FullName 'Pre'
         if ($redObj) { Assert-That ([bool]$redObj.Redacted) 'Redacted JSON has Redacted = true' }
     }
+
+    # Site data files (#32): a pattern file that adds a workload matching a
+    # service every Windows host has, and a profile that raises the C: target
+    # above any runner disk. MaxPatchAgeDays is also an argument, so the
+    # profile value must be ignored.
+    $siteFolder = Join-Path $work 'sitedata'
+    $null = New-Item -ItemType Directory -Path $siteFolder -Force
+    $patternPath = Join-Path $work 'patterns.json'
+    $profilePath = Join-Path $work 'profile.json'
+    [IO.File]::WriteAllText($patternPath, '{ "Schema": "IPU-Patterns/1", "Workloads": [ { "Label": "Smoke test workload", "Service": "^EventLog$" } ] }')
+    [IO.File]::WriteAllText($profilePath, '{ "Schema": "IPU-Profile/1", "Settings": { "MinimumCFreeGB": 2048, "MaxPatchAgeDays": 1 } }')
+    $site = Invoke-Assessment 'Pre' $siteFolder ("-PatternFile '" + $patternPath + "' -ProfileFile '" + $profilePath + "' -MaxPatchAgeDays 3650")
+    Assert-That ($site.Exit -eq 0 -and $site.Fields.Count -ge 12 -and $site.Fields[1] -eq 'SUCCEEDED') 'Run with site data files succeeds'
+    $siteJson = Test-ResultJson (Join-Path $siteFolder ($computer + '-IPU-Assessment.json')) 'Pre'
+    if ($siteJson) {
+        $rows = @($siteJson.Results)
+        $patternRow = @($rows | Where-Object { $_.Item -eq 'Pattern file' }) | Select-Object -First 1
+        $profileRow = @($rows | Where-Object { $_.Item -eq 'Profile file' }) | Select-Object -First 1
+        Assert-That ($patternRow -and $patternRow.Status -eq 'INFO') ('Pattern file applied (got: ' + $(if ($patternRow) { $patternRow.Status + ' ' + $patternRow.Details } else { 'no row' }) + ')')
+        Assert-That ($profileRow -and $profileRow.Status -eq 'INFO') ('Profile file applied (got: ' + $(if ($profileRow) { $profileRow.Status + ' ' + $profileRow.Details } else { 'no row' }) + ')')
+        Assert-That (@($rows | Where-Object { $_.Area -eq 'WORKLOAD' -and $_.Item -eq 'Smoke test workload' }).Count -eq 1) 'The added pattern detects its workload'
+        Assert-That (@($rows | Where-Object { $_.Area -eq 'STORAGE' -and $_.Item -eq 'CFreeSpace' -and $_.Status -eq 'ACTION' }).Count -eq 1) 'The profile threshold is used (C: below 2048 GB)'
+        Assert-That ($profileRow -and $profileRow.Details -match 'MaxPatchAgeDays: the argument given to the script was used') 'An argument wins over the profile'
+    }
+    $plain = @(Get-Content -LiteralPath (Join-Path $reports ($computer + '-IPU-Assessment.json')) -Raw | ConvertFrom-Json)
+    Assert-That (@($plain[0].Results | Where-Object { $_.Item -eq 'Pattern file' -or $_.Item -eq 'Profile file' }).Count -eq 0) 'A run without site data files writes no site data row'
 } finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 }
