@@ -1,7 +1,7 @@
 <#
 ===============================================================================
  SCRIPT NAME : Merge-IPUAssessments.ps1
- VERSION     : 1.0.0 (for Windows-IPU-Readiness-Assessment 4.0.1+)
+ VERSION     : 1.0.1 (for Windows-IPU-Readiness-Assessment 4.0.1+)
  PURPOSE     : Combine the JSON results of many servers into one overview.
  RUNS ON     : Any Windows machine with Windows PowerShell 5.1 or PowerShell 7
                (an admin workstation or jump host - NOT on the assessed servers).
@@ -83,7 +83,7 @@ foreach ($f in $files) {
     foreach ($x in @($r.Results | Where-Object { $_.Kind -eq 'Finding' -and $_.Status -in @('BLOCKER','ACTION','WARNING','MANUAL') })) {
         $findings.Add([pscustomobject][ordered]@{
             ComputerName = $r.ComputerName; Mode = $r.Mode; Status = $x.Status; Area = $x.Area; Item = $x.Item
-            Value = $x.Value; Details = $x.Details; Recommendation = $x.Recommendation
+            Value = $x.Value; Details = $x.Details; Recommendation = $x.Recommendation; SourceFile = $f.Name
         })
     }
 }
@@ -91,8 +91,10 @@ foreach ($f in $files) {
 # If a server has several results for the same mode, keep the newest.
 $latest = @($servers | Group-Object ComputerName,Mode | ForEach-Object { $_.Group | Sort-Object Completed -Descending | Select-Object -First 1 })
 $latest = @($latest | Sort-Object @{Expression={ $rank[[string]$_.Overall] }},ComputerName)
-$keep = @{}; foreach ($s in $latest) { $keep[$s.ComputerName + '|' + $s.Mode] = $true }
-$fleetFindings = @($findings | Where-Object { $keep.ContainsKey($_.ComputerName + '|' + $_.Mode) } | Sort-Object @{Expression={ $rank[[string]$_.Status] }},ComputerName,Item)
+# Findings come only from the result each server/mode row was taken from,
+# never from an older, superseded result for the same server.
+$keep = @{}; foreach ($s in $latest) { $keep[$s.SourceFile] = $true }
+$fleetFindings = @($findings | Where-Object { $keep.ContainsKey($_.SourceFile) } | Sort-Object @{Expression={ $rank[[string]$_.Status] }},ComputerName,Item)
 
 $serversCsv = Join-Path $OutputFolder 'IPU-Fleet-Servers.csv'
 $findingsCsv = Join-Path $OutputFolder 'IPU-Fleet-Findings.csv'
