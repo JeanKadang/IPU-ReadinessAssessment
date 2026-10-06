@@ -609,3 +609,41 @@ Describe 'ConvertTo-RelaunchArgumentText (#38)' {
         $values[3] | Should -Be $false
     }
 }
+
+Describe 'Slow-check time budget (#39)' {
+    It 'default budget is 50 minutes' {
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '..\src\Windows-IPU-Readiness-Assessment.ps1'), [ref]$null, [ref]$null)
+        $p = $ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'SlowCheckBudgetMinutes' }
+        $p.DefaultValue.Value | Should -Be 50
+        Get-SlowBudgetMinutes 50 45 '' 'Pre' | Should -Be 50
+    }
+    It 'adds the compat-scan timeout when media is set in Pre mode' {
+        Get-SlowBudgetMinutes 50 45 'D:\' 'Pre' | Should -Be 95
+    }
+    It 'does not add it in Post mode' {
+        Get-SlowBudgetMinutes 50 45 'D:\' 'Post' | Should -Be 50
+    }
+    It 'computes the seconds left' {
+        Get-SlowSecondsLeft 50 0 | Should -Be 3000
+        Get-SlowSecondsLeft 50 2940.4 | Should -Be 60
+    }
+    It '<Seconds> seconds left: skip = <Expected>' -TestCases @(
+        @{ Seconds = 59;  Expected = $true }
+        @{ Seconds = 60;  Expected = $false }
+        @{ Seconds = 0;   Expected = $true }
+        @{ Seconds = -30; Expected = $true }
+        @{ Seconds = 600; Expected = $false }
+    ) {
+        Test-SlowCheckSkip $Seconds | Should -Be $Expected
+    }
+    It 'a skipped check produces a MANUAL finding and a Skipped run' {
+        $script:Results.Clear(); $script:CheckRuns.Clear()
+        Add-SkippedSlowCheck ([pscustomobject]@{ Id = 'sfc'; Name = 'SFC protected file verification' }) 50
+        $script:Results.Count | Should -Be 1
+        $script:Results[0].Status | Should -Be 'MANUAL'
+        $script:Results[0].Kind | Should -Be 'Finding'
+        $script:Results[0].CheckId | Should -Be 'sfc'
+        $script:CheckRuns[0].Outcome | Should -Be 'Skipped'
+        $script:CurrentCheckId | Should -Be 'core'
+    }
+}
