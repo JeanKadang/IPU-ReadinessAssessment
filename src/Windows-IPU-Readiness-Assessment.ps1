@@ -1030,7 +1030,9 @@ function ConvertTo-PendingRenamePath {
     param([object[]]$Values, [int]$Max = 5)
     $paths = @()
     foreach ($v in @($Values)) {
-        $p = ([string]$v -replace '^\\\?\?\\','').Trim()
+        # A destination prefixed with '!' means "replace the existing file";
+        # strip it with the \??\ prefix so both forms show the same path.
+        $p = ([string]$v -replace '^!','' -replace '^\\\?\?\\','').Trim()
         if ($p -and $paths -notcontains $p) { $paths += $p }
     }
     $shown = @($paths | Select-Object -First $Max)
