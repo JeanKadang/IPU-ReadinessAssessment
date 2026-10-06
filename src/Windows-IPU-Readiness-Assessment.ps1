@@ -99,7 +99,8 @@
             rules with unit tests, time-boxed slow checks, checkpoint report,
             standard checklist separated from findings, Microsoft-verified
             upgrade/edition/Exchange/SQL/teaming rules.
-    3.5.0 - Local Group Policy backup and RDP readiness (ChatGPT-based edition).
+    3.5.0 - Local Group Policy backup and RDP readiness (earlier edition,
+            superseded by the 4.0.0 restructure).
 #>
 
 #requires -Version 4.0
@@ -361,7 +362,7 @@ function Write-Swallowed {
     }
 }
 
-function Find-DetectionMatches {
+function Find-DetectionMatch {
     # Pure: matches one pattern table (section 2) against the inventories and
     # returns one object per detected product with the evidence that matched.
     param([object[]]$Patterns, [object[]]$Apps = @(), [object[]]$Services = @(), [string[]]$Drivers = @())
@@ -516,7 +517,7 @@ function Initialize-OutputFolder {
     }
 }
 
-function Get-BroadFolderReaders {
+function Get-BroadFolderReader {
     # Returns the broad groups (Everyone, Authenticated Users, Users) that are
     # allowed to read the folder. Empty when the ACL cannot be read.
     param([string]$Path)
@@ -586,7 +587,7 @@ function ConvertTo-DateTimeValue {
     return $null
 }
 
-function ConvertFrom-NativeBytes {
+function ConvertFrom-NativeByteArray {
     # Native tools write either UTF-16LE (sfc.exe, secedit) or the OEM code
     # page (dism.exe, netsh, vssadmin). Detect which and strip control chars.
     param([byte[]]$Bytes)
@@ -646,7 +647,7 @@ function Invoke-NativeCapture {
         }
         $chunks = @()
         foreach ($file in @($stdout,$stderr)) {
-            if (Test-Path -LiteralPath $file) { $chunks += (ConvertFrom-NativeBytes ([IO.File]::ReadAllBytes($file))) }
+            if (Test-Path -LiteralPath $file) { $chunks += (ConvertFrom-NativeByteArray ([IO.File]::ReadAllBytes($file))) }
         }
         $result.Output = (($chunks | Where-Object { $_ }) -join "`n")
         $result.Lines = @($result.Output -split '\r?\n' | ForEach-Object { $_.TrimEnd() } | Where-Object { $_ -ne '' })
@@ -668,7 +669,7 @@ function Invoke-NativeTreeKill {
     Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
 }
 
-function Get-InstalledApplications {
+function Get-InstalledApplication {
     $items = @()
     foreach ($path in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*')) {
         foreach ($entry in @(Get-ItemProperty $path -ErrorAction SilentlyContinue)) {
@@ -727,7 +728,7 @@ function Get-LocalGroupMembersBySid {
     return ,$members
 }
 
-function Read-FileTailLines {
+function Read-FileTail {
     # Reads the last part of a log that another process may hold open.
     param([string]$Path, [int]$MaxBytes = 20MB)
     $lines = @()
@@ -987,7 +988,7 @@ function Get-VMwareToolsDecision {
     return [pscustomobject]@{ Status='OK'; Text=('VMware Tools ' + $clean + '. Update to the latest release before IPU, as Broadcom recommends.') }
 }
 
-function Get-FeatureLifecycleFindings {
+function Get-FeatureLifecycleFinding {
     param([string[]]$InstalledFeatures, [string]$Target)
     $out = @()
     foreach ($f in $script:FeatureLifecycle) {
@@ -1023,7 +1024,7 @@ function Get-CompatScanDecision {
     return [pscustomobject]@{ Status='MANUAL'; Code=$hex; Text=('Unexpected Setup result ' + $hex + '. Review the Panther logs.') }
 }
 
-function ConvertTo-PendingRenamePaths {
+function ConvertTo-PendingRenamePath {
     # PendingFileRenameOperations holds pairs (source, destination); show the
     # first few sources so the owning product is recognisable.
     param([object[]]$Values, [int]$Max = 5)
@@ -1116,7 +1117,7 @@ function Get-StatusRank {
 # =============================================================================
 # 5. CHECKS
 # =============================================================================
-function Register-AssessmentChecks {
+function Register-AssessmentCheck {
 
 # ---------------------------------------------------------------------------
 Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
@@ -1125,7 +1126,7 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
     $script:Data.BIOS     = @(Get-CimSafe 'Win32_BIOS') | Select-Object -First 1
     $script:Data.CPU      = @(Get-CimSafe 'Win32_Processor')
     $script:Data.Services = @(Get-CimRequired 'Win32_Service')
-    $script:Data.Apps     = @(Get-InstalledApplications)
+    $script:Data.Apps     = @(Get-InstalledApplication)
     $script:Data.CV       = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
     $script:Data.Features = $null
     if (Get-Command Get-WindowsFeature -ErrorAction SilentlyContinue) {
@@ -1162,7 +1163,7 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
     $folderState = $script:OutputFolderState
     if (-not $folderState) { $folderState = 'Existing' }
     $readers = @()
-    if ($folderState -eq 'Existing') { $readers = @(Get-BroadFolderReaders $ReportDirectory) }
+    if ($folderState -eq 'Existing') { $readers = @(Get-BroadFolderReader $ReportDirectory) }
     $access = Get-OutputFolderAccessDecision $folderState $readers $ReportDirectory
     Add-Result 'ASSESSMENT' 'OutputFolderAccess' $access.Status $ReportDirectory $access.Text -Kind $access.Kind -Source 'Get-Acl'
 }
@@ -1293,7 +1294,7 @@ Register-Check -Id 'pendingreboot' -Name 'Pending reboot and uptime' -Script {
         $v = Get-RegistryValueSafe 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' $name
         if ($v.Exists -and @($v.Value | Where-Object { $_ }).Count -gt 0) { $soft += $name; $renamePaths += @($v.Value) }
     }
-    $renameShown = ConvertTo-PendingRenamePaths $renamePaths 5
+    $renameShown = ConvertTo-PendingRenamePath $renamePaths 5
     try {
         $ccm = Invoke-CimMethod -Namespace 'root\ccm\ClientSDK' -ClassName CCM_ClientUtilities -MethodName DetermineIfRebootPending -ErrorAction Stop
         if ($ccm -and ($ccm.RebootPending -or $ccm.IsHardRebootPending)) { $hard += 'ConfigMgr client reboot pending' }
@@ -1719,14 +1720,14 @@ Register-Check -Id 'workloads' -Name 'Roles and workloads' -Script {
 
     # Application workloads (pattern table in section 2), matched on names
     # and service names only - not executable paths - to avoid false positives.
-    foreach ($m in (Find-DetectionMatches $script:DetectionPatterns.Workloads $script:Data.Apps $script:Data.Services)) {
+    foreach ($m in (Find-DetectionMatch $script:DetectionPatterns.Workloads $script:Data.Apps $script:Data.Services)) {
         Add-Result 'WORKLOAD' $m.Label 'WARNING' ('Applications=' + @($m.Apps).Count + ', Services=' + @($m.Services).Count) (Get-DetectionEvidence $m) -Recommendation ('Engage the application owner and confirm ' + $m.Label + ' supports ' + (Get-ReleaseDisplayName $TargetServerVersion) + '.') -Source 'Uninstall registry and Win32_Service names'
     }
 
     # Features removed or no longer developed in the target release.
     if ($null -ne $script:Data.Features) {
         $installed = @($script:Data.Features.Keys | Where-Object { $script:Data.Features[$_] })
-        foreach ($f in (Get-FeatureLifecycleFindings $installed $TargetServerVersion)) {
+        foreach ($f in (Get-FeatureLifecycleFinding $installed $TargetServerVersion)) {
             Add-Result 'FEATURE_LIFECYCLE' $f.Name $f.Status ('Feature ' + $f.Feature + ' is installed') '' -Recommendation $f.Text -Kind $f.Kind -Source 'Microsoft: features removed or no longer developed'
         }
     }
@@ -1862,7 +1863,7 @@ Register-Check -Id 'pki' -Name 'PKI, certificates and TLS bindings' -Script {
 
 # ---------------------------------------------------------------------------
 Register-Check -Id 'agents' -Name 'Management agents (Aeven/OpenText)' -Script {
-    $matches_ = Find-DetectionMatches $script:DetectionPatterns.Agents $script:Data.Apps $script:Data.Services
+    $matches_ = Find-DetectionMatch $script:DetectionPatterns.Agents $script:Data.Apps $script:Data.Services
     foreach ($pattern in $script:DetectionPatterns.Agents) {
         $m = @($matches_ | Where-Object { $_.Label -eq $pattern.Label }) | Select-Object -First 1
         if (-not $m) {
@@ -1911,7 +1912,7 @@ Register-Check -Id 'antivirus' -Name 'Antivirus, EDR and security tools' -Script
     }
 
     # Third-party AV/EDR by product name, service and driver.
-    $epp = Find-DetectionMatches $script:DetectionPatterns.EndpointProtection $script:Data.Apps $script:Data.Services $script:Data.DriverNames
+    $epp = Find-DetectionMatch $script:DetectionPatterns.EndpointProtection $script:Data.Apps $script:Data.Services $script:Data.DriverNames
     foreach ($m in $epp) {
         $protected = $true
         $running = @($m.Services | Where-Object { $_.State -eq 'Running' }).Count
@@ -1922,7 +1923,7 @@ Register-Check -Id 'antivirus' -Name 'Antivirus, EDR and security tools' -Script
         Add-Result 'ANTIVIRUS' 'EndpointProtection' 'MANUAL' 'No active antivirus or EDR recognised' '' -Recommendation 'Verify endpoint protection manually. If a product is installed under an unknown name, add it to the detection patterns.' -Source 'Get-MpComputerStatus, uninstall registry, services, drivers'
     }
 
-    foreach ($m in (Find-DetectionMatches $script:DetectionPatterns.SecurityTools $script:Data.Apps $script:Data.Services $script:Data.DriverNames)) {
+    foreach ($m in (Find-DetectionMatch $script:DetectionPatterns.SecurityTools $script:Data.Apps $script:Data.Services $script:Data.DriverNames)) {
         Add-Result 'SECURITY' $m.Label 'WARNING' ('Applications=' + @($m.Apps).Count + ', Services=' + @($m.Services).Count + ', Drivers=' + @($m.Drivers).Count) (Get-DetectionEvidence $m) -Recommendation ('Confirm ' + $target + ' support and that it will not block Setup.') -Source 'Uninstall registry, Win32_Service, drivers'
     }
 
@@ -1955,7 +1956,7 @@ Register-Check -Id 'antivirus' -Name 'Antivirus, EDR and security tools' -Script
 
 # ---------------------------------------------------------------------------
 Register-Check -Id 'backup' -Name 'Backup and VSS' -Script {
-    $backup = Find-DetectionMatches $script:DetectionPatterns.Backup $script:Data.Apps $script:Data.Services
+    $backup = Find-DetectionMatch $script:DetectionPatterns.Backup $script:Data.Apps $script:Data.Services
     foreach ($m in $backup) {
         Add-Result 'BACKUP' $m.Label 'INFO' ('Applications=' + @($m.Apps).Count + ', Services=' + @($m.Services).Count) (Get-DetectionEvidence $m) -Source 'Uninstall registry, Win32_Service'
     }
@@ -2175,7 +2176,7 @@ Register-Check -Id 'sfc' -Name 'SFC protected file verification' -Phase 'Slow' -
     if ($r.Error) { throw $r.Error }
     $cbs = @()
     $stamp = $started.AddMinutes(-1).ToString('yyyy-MM-dd HH:mm')
-    foreach ($line in (Read-FileTailLines (Join-Path $env:windir 'Logs\CBS\CBS.log'))) {
+    foreach ($line in (Read-FileTail (Join-Path $env:windir 'Logs\CBS\CBS.log'))) {
         if ($line.Length -ge 16 -and $line.Substring(0,16) -ge $stamp) { $cbs += $line }
     }
     $verdict = Get-SfcVerdict $r.Output $cbs
@@ -2268,7 +2269,7 @@ Register-Check -Id 'compatscan' -Name 'Setup compatibility scan' -Phase 'Slow' -
     }
 }
 
-} # end Register-AssessmentChecks
+} # end Register-AssessmentCheck
 
 
 # ---------------------------------------------------------------------------
@@ -2762,7 +2763,7 @@ function Invoke-Assessment {
     } catch { Write-Swallowed $_ }
     Write-AssessmentLog 'INFO' 'START' ('Collector={0} | Mode={1} | Target={2} | PowerShell={3}' -f $script:CollectorVersion,$AssessmentMode,$TargetServerVersion,$PSVersionTable.PSVersion)
 
-    Register-AssessmentChecks
+    Register-AssessmentCheck
     $skip = @()
     if ($AssessmentMode -eq 'Post') { $skip = @('checklist','compatscan') }
     foreach ($check in @($script:Checks | Where-Object { $_.Phase -eq 'Fast' -and $skip -notcontains $_.Id })) { Invoke-Check $check }
