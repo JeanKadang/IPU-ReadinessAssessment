@@ -1,0 +1,25 @@
+name: Bug report
+description: A check gives a wrong result or the script fails
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Include the check name and what you expected instead.
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: Windows Server release, PowerShell version
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+  - type: markdown
+    attributes:
+      value: Do not paste hostnames, credentials or other host data.
