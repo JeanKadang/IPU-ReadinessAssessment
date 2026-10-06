@@ -1120,6 +1120,37 @@ function ConvertTo-RelaunchArgumentText {
     return $text
 }
 
+function Get-SlowBudgetMinutes {
+    # Pure: DISM and SFC share SlowCheckBudgetMinutes; the optional Setup
+    # compatibility scan adds its own timeout, but only when media is set and
+    # the run is a pre-upgrade run (the scan does not run after the upgrade).
+    param([int]$SlowCheckBudget, [int]$CompatScanTimeout, [string]$MediaPath, [string]$Mode)
+    $minutes = $SlowCheckBudget
+    if ($MediaPath -and $Mode -eq 'Pre') { $minutes += $CompatScanTimeout }
+    return $minutes
+}
+
+function Get-SlowSecondsLeft {
+    param([int]$BudgetMinutes, [double]$ElapsedSeconds)
+    return [int](($BudgetMinutes * 60) - $ElapsedSeconds)
+}
+
+function Test-SlowCheckSkip {
+    # Pure: a slow check needs at least one minute to be worth starting.
+    param([int]$SecondsLeft)
+    return ($SecondsLeft -lt 60)
+}
+
+function Add-SkippedSlowCheck {
+    # Records a slow check that was not started because the budget ran out,
+    # as a MANUAL finding and a Skipped run, so the gap is visible.
+    param($Check, [int]$BudgetMinutes)
+    $script:CurrentCheckId = $Check.Id
+    Add-Result 'WINDOWS_HEALTH' $Check.Name 'MANUAL' 'Skipped - slow-check time budget used up' ('Budget=' + $BudgetMinutes + ' min') -Recommendation 'Run this check manually, or raise SlowCheckBudgetMinutes (and the SA job timeout).'
+    $script:CheckRuns.Add([pscustomobject]@{ Id=$Check.Id; Name=$Check.Name; Phase='Slow'; Outcome='Skipped'; Duration='00:00:00'; Seconds=0; Message='Time budget used up' })
+    $script:CurrentCheckId = 'core'
+}
+
 function Get-OverallStatus {
     param([object[]]$Results)
     $findings = @($Results | Where-Object { $_.Kind -eq 'Finding' })
@@ -2794,17 +2825,12 @@ function Invoke-Assessment {
 
     try { $null = Write-AssessmentReport -Partial } catch { Write-AssessmentLog 'WARNING' 'REPORT' ('Checkpoint report failed: ' + $_.Exception.Message) }
 
-    # DISM and SFC share SlowCheckBudgetMinutes; the optional compatibility
-    # scan adds its own timeout to the budget when media is configured.
-    $budgetMinutes = $SlowCheckBudgetMinutes
-    if ($TargetMediaPath -and $AssessmentMode -eq 'Pre') { $budgetMinutes += $CompatScanTimeoutMinutes }
+    $budgetMinutes = Get-SlowBudgetMinutes $SlowCheckBudgetMinutes $CompatScanTimeoutMinutes $TargetMediaPath $AssessmentMode
     $slowWatch = [Diagnostics.Stopwatch]::StartNew()
     foreach ($check in @($script:Checks | Where-Object { $_.Phase -eq 'Slow' -and $skip -notcontains $_.Id })) {
-        $script:SlowSecondsLeft = [int](($budgetMinutes * 60) - $slowWatch.Elapsed.TotalSeconds)
-        if ($script:SlowSecondsLeft -lt 60) {
-            $script:CurrentCheckId = $check.Id
-            Add-Result 'WINDOWS_HEALTH' $check.Name 'MANUAL' 'Skipped - slow-check time budget used up' ('Budget=' + $budgetMinutes + ' min') -Recommendation 'Run this check manually, or raise SlowCheckBudgetMinutes (and the SA job timeout).'
-            $script:CheckRuns.Add([pscustomobject]@{ Id=$check.Id; Name=$check.Name; Phase='Slow'; Outcome='Skipped'; Duration='00:00:00'; Seconds=0; Message='Time budget used up' })
+        $script:SlowSecondsLeft = Get-SlowSecondsLeft $budgetMinutes $slowWatch.Elapsed.TotalSeconds
+        if (Test-SlowCheckSkip $script:SlowSecondsLeft) {
+            Add-SkippedSlowCheck $check $budgetMinutes
             continue
         }
         Invoke-Check $check
