@@ -5,6 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Pull requests are labelled automatically from the branch name and changed paths, so release notes are grouped (#31).
 - CI runs the end-to-end smoke test on Windows Server 2025 and 2022 images, pins images instead of `windows-latest`, and runs weekly on `main`; a failed weekly run opens an issue (#27).
 - Optional site data files: `-PatternFile` adds, replaces or disables detection patterns and `-ProfileFile` sets site defaults for the settings (an argument still wins). All or nothing: a file that cannot be used is reported as `MANUAL` and the built-in values are used. Examples in `docs/examples/` (#32).
 - Opt-in report redaction (`-RedactReport $true`): names, addresses, accounts, SIDs and certificate details become placeholders in the HTML and JSON; the JSON has `Redacted`; redacted files get a neutral name. Best effort (#30).

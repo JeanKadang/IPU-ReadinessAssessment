@@ -1,0 +1,35 @@
+# Labels applied to pull requests by .github/workflows/labeler.yml.
+# Release notes are grouped by these labels (.github/release.yml).
+# Labels are only added, never removed: adjust them by hand when needed.
+# Every label named here must exist in the repository.
+
+enhancement:
+  - head-branch: ['^feat/']
+
+bug:
+  - head-branch: ['^fix/']
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'docs/**'
+          - 'README.md'
+          - 'CONTRIBUTING.md'
+          - 'SECURITY.md'
+          - 'AGENTS.md'
+
+testing:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'tests/**'
+          - 'build/Invoke-CiTests.ps1'
+          - 'build/Invoke-SmokeTest.ps1'
+
+tooling:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/**'
+          - 'build/**'
+          - 'PSScriptAnalyzerSettings.psd1'
+          - '.editorconfig'
+          - '.gitattributes'
