@@ -42,13 +42,16 @@
         -TargetServerVersion 2022
         -AssessmentMode Post
         -TargetMediaPath 'D:\'   (or an .iso path, or a UNC share)
-    Otherwise edit the defaults in the param() block below.
+    Otherwise edit the defaults in the param() block below, or keep site
+    defaults in a JSON profile (-ProfileFile) and site detection patterns in
+    a JSON pattern file (-PatternFile); see the user guide, Site data files.
 
 .HOW 4.x IS ORGANISED
     1. PARAMETERS / SETTINGS - the only section operators normally change.
     2. DETECTION PATTERNS    - product names, services and drivers used to
                                recognise agents, AV/EDR, backup and workloads.
-                               Update here when a vendor renames a product.
+                               Update here when a vendor renames a product,
+                               or override them with -PatternFile.
     3. CORE                  - result model, check runner, helpers, logging.
     4. DECISION RULES        - pure functions (no system access); unit-tested
                                by Windows-IPU-Readiness-Assessment.Tests.ps1.
@@ -166,8 +169,19 @@ param(
     # Administrators access only; reports describe the server in detail.
     # Existing folders are never changed. $false keeps inherited permissions.
     [bool]$RestrictOutputAcl = $true,
-    [string]$NumberCultureName = 'da-DK'
+    [string]$NumberCultureName = 'da-DK',
+
+    # Optional site data files (JSON), see the user guide, "Site data files".
+    # PatternFile adds, replaces or disables detection patterns (section 2).
+    # ProfileFile sets site defaults for the settings above; an argument given
+    # to the script still wins. A file that cannot be used is reported as
+    # MANUAL and nothing from it is applied. Blank = built-in values only.
+    [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$PatternFile = '',
+    [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$ProfileFile = ''
 )
+
+# Settings given as arguments; they take precedence over a profile file.
+$script:BoundParameterNames = @($PSBoundParameters.Keys)
 
 
 # =============================================================================
@@ -243,6 +257,17 @@ $script:FeatureLifecycle = @(
 # =============================================================================
 $ProgressPreference = 'SilentlyContinue'
 $script:CollectorVersion  = '4.0.1'
+# Settings a profile file (-ProfileFile) may set. Mode, target, media path,
+# report folder and redaction describe one run, so they stay arguments only.
+$script:ProfileSettingNames = @(
+    'TargetMediaLanguage','BlockDomainControllerIPU',
+    'MinimumCFreeGB','ExtendBlockGB','MinimumMemoryGB','MaxPatchAgeDays','UptimeWarningDays','AVMaxAgeDays',
+    'CertificateWarningDays','SystemPartitionMinFreeMB','RecoveryPartitionMinFreeMB',
+    'RunDISMScanHealth','RunSFCVerifyOnly','DISMTimeoutMinutes','SFCTimeoutMinutes','SlowCheckBudgetMinutes','CompatScanTimeoutMinutes',
+    'EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip',
+    'WriteJson','RestrictOutputAcl','NumberCultureName'
+)
+$script:PatternFields = @('Label','App','Service','Display','Driver','Disabled')
 $script:Results           = New-Object System.Collections.Generic.List[object]
 $script:CheckRuns         = New-Object System.Collections.Generic.List[object]
 $script:Checks            = New-Object System.Collections.Generic.List[object]
@@ -1187,6 +1212,117 @@ function Test-HttpSysBindingBlock {
     # is not a binding. Labels stay English on localized Windows.
     param([string[]]$Lines)
     return (@($Lines | Where-Object { $_ -match '^\s*(IP:port|Hostname:port|Central Certificate Store)\s*:' }).Count -gt 0)
+}
+
+function ConvertFrom-SiteDataJson {
+    # Pure: parses the text of a site data file and checks its Schema field.
+    # Throws a message meant for the report when the file cannot be used.
+    param([string]$Text, [string]$Schema)
+    if (-not $Text -or -not $Text.Trim()) { throw 'The file is empty.' }
+    try { $obj = $Text | ConvertFrom-Json -ErrorAction Stop }
+    catch { throw ('The file is not valid JSON: ' + $_.Exception.Message) }
+    if ($null -eq $obj -or $obj -isnot [System.Management.Automation.PSCustomObject]) { throw 'The file must contain one JSON object.' }
+    $found = $obj.PSObject.Properties | Where-Object { $_.Name -eq 'Schema' }
+    if (-not $found -or [string]$found.Value -ne $Schema) { throw ('Schema must be "' + $Schema + '".') }
+    return $obj
+}
+
+function Merge-DetectionPatternSet {
+    # Pure: applies a pattern file (parsed JSON) to the built-in pattern table.
+    # Per category, an entry whose Label matches a built-in entry replaces it,
+    # Disabled = true removes it, and a new Label is added. Returns the merged
+    # table, the changes made and the errors found; with errors, the caller
+    # must keep the built-in table (nothing is applied in part).
+    param([hashtable]$Default, $Override, [string[]]$Fields = $script:PatternFields)
+    $errors = New-Object System.Collections.Generic.List[string]
+    $changes = New-Object System.Collections.Generic.List[string]
+    $merged = @{}
+    foreach ($k in @($Default.Keys)) {
+        $merged[$k] = @(foreach ($e in $Default[$k]) { $c = @{}; foreach ($f in @($e.Keys)) { $c[$f] = $e[$f] }; $c })
+    }
+    foreach ($prop in @($Override.PSObject.Properties)) {
+        if ($prop.Name -eq 'Schema') { continue }
+        $cat = @($Default.Keys | Where-Object { $_ -eq $prop.Name })
+        if ($cat.Count -eq 0) { $errors.Add(('Unknown category "' + $prop.Name + '". Use: ' + ((@($Default.Keys) | Sort-Object) -join ', ') + '.')); continue }
+        $cat = $cat[0]
+        $entries = @($prop.Value)
+        $n = 0
+        foreach ($entry in $entries) {
+            $n++
+            $where = $cat + ' entry ' + $n
+            if ($entry -isnot [System.Management.Automation.PSCustomObject]) { $errors.Add($where + ': must be an object.'); continue }
+            $names = @($entry.PSObject.Properties | ForEach-Object { $_.Name })
+            $unknown = @($names | Where-Object { $Fields -notcontains $_ })
+            if ($unknown.Count -gt 0) { $errors.Add(($where + ': unknown field ' + ($unknown -join ', ') + '. Use: ' + ($Fields -join ', ') + '.')) ; continue }
+            $label = [string]$entry.Label
+            if (-not $label.Trim()) { $errors.Add($where + ': Label is required.'); continue }
+            $where = $cat + ' "' + $label + '"'
+            $idx = -1
+            for ($i = 0; $i -lt $merged[$cat].Count; $i++) { if ($merged[$cat][$i].Label -ieq $label) { $idx = $i; break } }
+            if ($names -contains 'Disabled') {
+                if ($entry.Disabled -isnot [bool]) { $errors.Add($where + ': Disabled must be true or false.'); continue }
+                if ($entry.Disabled) {
+                    if ($idx -lt 0) { $errors.Add($where + ': cannot disable, there is no built-in entry with this Label.'); continue }
+                    $merged[$cat] = @(for ($i = 0; $i -lt $merged[$cat].Count; $i++) { if ($i -ne $idx) { $merged[$cat][$i] } })
+                    $changes.Add(($cat + ': disabled "' + $label + '"'))
+                    continue
+                }
+            }
+            $new = @{ Label = $label }
+            $bad = $false
+            foreach ($f in @('App','Service','Display','Driver')) {
+                if ($names -notcontains $f) { continue }
+                $value = $entry.$f
+                if ($value -isnot [string] -or -not $value.Trim()) { $errors.Add($where + ': ' + $f + ' must be a non-empty text.'); $bad = $true; continue }
+                try { $null = New-Object System.Text.RegularExpressions.Regex($value) }
+                catch { $errors.Add(($where + ': ' + $f + ' is not a valid regular expression: ' + $_.Exception.InnerException.Message)); $bad = $true; continue }
+                $new[$f] = $value
+            }
+            if ($bad) { continue }
+            if ($new.Count -eq 1) { $errors.Add($where + ': needs at least one of App, Service, Display, Driver.'); continue }
+            if ($idx -ge 0) { $merged[$cat][$idx] = $new; $changes.Add(($cat + ': replaced "' + $label + '"')) }
+            else { $merged[$cat] = @($merged[$cat]) + @($new); $changes.Add(($cat + ': added "' + $label + '"')) }
+        }
+    }
+    if ($changes.Count -eq 0 -and $errors.Count -eq 0) { $errors.Add('The file changes no pattern.') }
+    return [pscustomobject]@{ Patterns = $merged; Changes = $changes.ToArray(); Errors = $errors.ToArray() }
+}
+
+function Get-ProfileSettingDecision {
+    # Pure: checks a profile file (parsed JSON) against the settings it may
+    # set. Each value is converted and validated with the parameter's own
+    # attributes ($Attributes: name -> attribute list), so a profile cannot
+    # set what the command line could not. Settings given as arguments
+    # ($Bound) win and are listed as Ignored. With errors, apply nothing.
+    param($Override, [hashtable]$Attributes, [string[]]$Allowed = $script:ProfileSettingNames, [string[]]$Bound = @())
+    $errors = New-Object System.Collections.Generic.List[string]
+    $ignored = New-Object System.Collections.Generic.List[string]
+    $settings = [ordered]@{}
+    foreach ($prop in @($Override.PSObject.Properties)) {
+        if ($prop.Name -ne 'Schema' -and $prop.Name -ne 'Settings') { $errors.Add('Unknown field "' + $prop.Name + '". Use: Schema, Settings.') }
+    }
+    $block = $Override.PSObject.Properties | Where-Object { $_.Name -eq 'Settings' }
+    if (-not $block -or $block.Value -isnot [System.Management.Automation.PSCustomObject]) {
+        $errors.Add('Settings must be an object, for example "Settings": { "MinimumCFreeGB": 60 }.')
+    } else {
+        foreach ($s in @($block.Value.PSObject.Properties)) {
+            $name = @($Allowed | Where-Object { $_ -eq $s.Name })
+            if ($name.Count -eq 0) { $errors.Add(('"' + $s.Name + '" is not a profile setting. Use: ' + ($Allowed -join ', ') + '.')); continue }
+            $name = $name[0]
+            $attrs = New-Object 'System.Collections.ObjectModel.Collection[Attribute]'
+            foreach ($a in @($Attributes[$name])) { if ($a -is [Attribute]) { $attrs.Add($a) } }
+            try {
+                $probe = New-Object System.Management.Automation.PSVariable($name, $s.Value, ([System.Management.Automation.ScopedItemOptions]::None), $attrs)
+            } catch {
+                $msg = $_.Exception.Message; if ($_.Exception.InnerException) { $msg = $_.Exception.InnerException.Message }
+                $errors.Add(($name + ': value "' + [string]$s.Value + '" is not allowed. ' + $msg)); continue
+            }
+            if ($Bound -contains $name) { $ignored.Add($name); continue }
+            $settings[$name] = $probe.Value
+        }
+    }
+    if ($settings.Count -eq 0 -and $ignored.Count -eq 0 -and $errors.Count -eq 0) { $errors.Add('The file sets no setting.') }
+    return [pscustomobject]@{ Settings = $settings; Ignored = $ignored.ToArray(); Errors = $errors.ToArray() }
 }
 
 function New-RedactionContext {
@@ -2950,6 +3086,58 @@ function Write-AssessmentJson {
     Move-Item -LiteralPath $temp -Destination $script:JsonPath -Force -ErrorAction Stop
 }
 
+function Import-SiteDataFile {
+    # Reads -PatternFile and -ProfileFile (both optional) and applies them,
+    # all or nothing. Without either file, nothing changes and no row is
+    # written. A file that cannot be used gives a MANUAL finding.
+    if ($PatternFile) {
+        $hash = ''
+        try {
+            $text = [IO.File]::ReadAllText($PatternFile)
+            try { $hash = (Get-FileHash -LiteralPath $PatternFile -Algorithm SHA256 -ErrorAction Stop).Hash } catch { Write-Swallowed $_ }
+            $obj = ConvertFrom-SiteDataJson $text 'IPU-Patterns/1'
+            $merge = Merge-DetectionPatternSet $script:DetectionPatterns $obj
+            if (@($merge.Errors).Count -gt 0) { throw (@($merge.Errors) -join ' | ') }
+            $script:DetectionPatterns = $merge.Patterns
+            Add-Result 'COLLECTOR' 'Pattern file' 'INFO' ('Applied, ' + @($merge.Changes).Count + ' change(s)') (@($merge.Changes) + @('SHA256=' + $hash)) -Source $PatternFile
+            Write-AssessmentLog 'INFO' 'SITEDATA' ('Pattern file applied: ' + $PatternFile + ' | ' + (@($merge.Changes) -join '; '))
+        } catch {
+            Add-Result 'COLLECTOR' 'Pattern file' 'MANUAL' 'Not applied; the built-in detection patterns were used' @($_.Exception.Message, $(if ($hash) { 'SHA256=' + $hash })) -Recommendation 'Fix the file (user guide, "Site data files") and re-run. Until then, products your site added to the file are not detected.' -Kind 'Finding' -Source $PatternFile
+            Write-AssessmentLog 'WARNING' 'SITEDATA' ('Pattern file not applied: ' + $_.Exception.Message)
+        }
+    }
+    if ($ProfileFile) {
+        $hash = ''
+        try {
+            $text = [IO.File]::ReadAllText($ProfileFile)
+            try { $hash = (Get-FileHash -LiteralPath $ProfileFile -Algorithm SHA256 -ErrorAction Stop).Hash } catch { Write-Swallowed $_ }
+            $obj = ConvertFrom-SiteDataJson $text 'IPU-Profile/1'
+            $attributes = @{}
+            foreach ($n in $script:ProfileSettingNames) {
+                $v = Get-Variable -Name $n -ErrorAction SilentlyContinue
+                if ($v) { $attributes[$n] = @($v.Attributes) }
+            }
+            $decision = Get-ProfileSettingDecision $obj $attributes $script:ProfileSettingNames $script:BoundParameterNames
+            if (@($decision.Errors).Count -gt 0) { throw (@($decision.Errors) -join ' | ') }
+            $details = @()
+            foreach ($k in @($decision.Settings.Keys)) {
+                Set-Variable -Name $k -Value $decision.Settings[$k] -Scope Script
+                $details += ($k + '=' + [string]$decision.Settings[$k])
+            }
+            foreach ($k in @($decision.Ignored)) { $details += ($k + ': the argument given to the script was used') }
+            if ($decision.Settings.Contains('NumberCultureName')) {
+                try { $script:NumberCulture = New-Object System.Globalization.CultureInfo($decision.Settings['NumberCultureName']) }
+                catch { $script:NumberCulture = [System.Globalization.CultureInfo]::InvariantCulture }
+            }
+            Add-Result 'COLLECTOR' 'Profile file' 'INFO' ('Applied, ' + $decision.Settings.Count + ' setting(s)') ($details + @('SHA256=' + $hash)) -Source $ProfileFile
+            Write-AssessmentLog 'INFO' 'SITEDATA' ('Profile file applied: ' + $ProfileFile + ' | ' + ($details -join '; '))
+        } catch {
+            Add-Result 'COLLECTOR' 'Profile file' 'MANUAL' 'Not applied; the built-in defaults and the arguments were used' @($_.Exception.Message, $(if ($hash) { 'SHA256=' + $hash })) -Recommendation 'Fix the file (user guide, "Site data files") and re-run. Until then, thresholds and policy are the built-in defaults, not your site''s.' -Kind 'Finding' -Source $ProfileFile
+            Write-AssessmentLog 'WARNING' 'SITEDATA' ('Profile file not applied: ' + $_.Exception.Message)
+        }
+    }
+}
+
 function Invoke-PostUpgradeComparison {
     $script:CurrentCheckId = 'postcompare'
     $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -2997,6 +3185,7 @@ function Invoke-Assessment {
     } catch { Write-Swallowed $_ }
     Write-AssessmentLog 'INFO' 'START' ('Collector={0} | Mode={1} | Target={2} | PowerShell={3}' -f $script:CollectorVersion,$AssessmentMode,$TargetServerVersion,$PSVersionTable.PSVersion)
 
+    Import-SiteDataFile
     Register-AssessmentCheck
     $skip = @()
     if ($AssessmentMode -eq 'Post') { $skip = @('checklist','compatscan') }

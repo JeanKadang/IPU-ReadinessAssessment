@@ -178,6 +178,76 @@ When the budget runs out, remaining slow checks are reported as `MANUAL` (skippe
 | `NumberCultureName` | `da-DK` | Culture used to format numbers in the SA result line. Invalid values fall back to invariant |
 | `RedactReport` | `$false` | Replace names, addresses, accounts, SIDs and certificate details with placeholders in the HTML and JSON, for sharing outside the team. See [Sharing a report: redaction](#sharing-a-report-redaction) |
 
+### Site data files
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `PatternFile` | blank | Optional JSON file that adds, replaces or disables detection patterns (products, services and drivers the script recognises). See [Site data files](#site-data-files-patterns-and-profile) |
+| `ProfileFile` | blank | Optional JSON file with your site's defaults for the settings above. An argument given to the script still wins |
+
+#### Site data files: patterns and profile
+
+Both files are optional. Without them the script behaves exactly as before and writes no extra row. They let
+you keep vendor names and site policy outside the script, so the script itself does not need editing when a
+vendor renames a product or a site uses other thresholds. Keep them next to the script in SA, or on a share the
+computer account can read, and pass the full path.
+
+**All or nothing.** If a file cannot be read, is not valid JSON, has the wrong `Schema`, or contains any
+invalid entry, *nothing* from that file is applied: the run uses the built-in values and the report shows a
+`MANUAL` finding *Pattern file* or *Profile file* in *Assessment and Collector* with every problem found. When a
+file is applied, an `INFO` row lists what it changed and the file's SHA-256, so the report shows which version
+was used.
+
+**Pattern file** (`"Schema": "IPU-Patterns/1"`). Top-level keys are the categories `Agents`,
+`EndpointProtection`, `SecurityTools`, `Backup` and `Workloads` (see section 2 of the script for the built-in
+entries). Each category is a list of entries:
+
+| Field | Meaning |
+|---|---|
+| `Label` | Required. The name shown in the report. An entry with the same label as a built-in one (case does not matter) **replaces** it; a new label is **added** |
+| `App` | Regular expression for the installed application name |
+| `Service` | Regular expression for the service short name |
+| `Display` | Regular expression for the service display name |
+| `Driver` | Regular expression for a filter or kernel driver name |
+| `Disabled` | `true` **removes** the built-in entry with this label |
+
+An entry needs at least one of `App`, `Service`, `Display`, `Driver` (unless it disables). Patterns are matched
+case-insensitively; keep them specific, because a broad word matches unrelated software.
+
+```json
+{
+  "Schema": "IPU-Patterns/1",
+  "EndpointProtection": [
+    { "Label": "Contoso EDR", "App": "^Contoso EDR", "Service": "^CtsEdr$", "Driver": "^CtsEdrFlt$" }
+  ],
+  "Workloads": [
+    { "Label": "Contoso ERP", "Service": "^CtsErp" },
+    { "Label": "Boomi", "Disabled": true }
+  ]
+}
+```
+
+**Profile file** (`"Schema": "IPU-Profile/1"`). One object `Settings` with any of these parameters:
+`TargetMediaLanguage`, `BlockDomainControllerIPU`, the thresholds, the slow-check settings, the RDP policy
+evidence settings, `WriteJson`, `RestrictOutputAcl` and `NumberCultureName`. Each value must pass the same
+checks as the parameter (range, type, absolute path). `AssessmentMode`, `TargetServerVersion`,
+`TargetMediaPath`, `ReportDirectory`, `RedactReport` and the two file parameters describe one run and cannot
+be set in a profile. Settings passed as arguments win; the *Profile file* row names them.
+
+```json
+{
+  "Schema": "IPU-Profile/1",
+  "Settings": {
+    "MinimumCFreeGB": 60,
+    "MaxPatchAgeDays": 45,
+    "TargetMediaLanguage": "en-US",
+    "NumberCultureName": "en-GB"
+  }
+}
+```
+
+Both examples are in [`docs/examples`](examples/). A JSON backslash must be doubled: `"C:\\Tools\\LGPO.exe"`.
+
 ## 5. Outputs
 
 For computer `SRV01`:

@@ -1,0 +1,10 @@
+{
+  "Schema": "IPU-Patterns/1",
+  "EndpointProtection": [
+    { "Label": "Contoso EDR", "App": "^Contoso EDR", "Service": "^CtsEdr$", "Driver": "^CtsEdrFlt$" }
+  ],
+  "Workloads": [
+    { "Label": "Contoso ERP", "Service": "^CtsErp" },
+    { "Label": "Boomi", "Disabled": true }
+  ]
+}

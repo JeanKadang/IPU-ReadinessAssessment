@@ -1,0 +1,9 @@
+{
+  "Schema": "IPU-Profile/1",
+  "Settings": {
+    "MinimumCFreeGB": 60,
+    "MaxPatchAgeDays": 45,
+    "TargetMediaLanguage": "en-US",
+    "NumberCultureName": "en-GB"
+  }
+}
