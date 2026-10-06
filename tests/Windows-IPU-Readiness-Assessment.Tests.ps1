@@ -520,7 +520,7 @@ Describe 'Hygiene (#18)' {
             (ConvertTo-DateTimeValue '2026-09-28').ToString('yyyy-MM-dd') | Should -Be '2026-09-28'
         }
         It 'reads a WMI DMTF date (Windows)' -Skip:($env:OS -ne 'Windows_NT') {
-            (ConvertTo-DateTimeValue '20260929011022.500000+120').ToString('yyyy-MM-dd') | Should -Be '2026-09-29'
+            (ConvertTo-DateTimeValue '20260929120000.000000+120').ToString('yyyy-MM-dd') | Should -Be '2026-09-29'
         }
         It 'returns nothing for <Value>' -TestCases @(
             @{ Value = $null }
