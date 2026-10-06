@@ -1097,6 +1097,29 @@ function Get-OutputFolderAccessDecision {
     return [pscustomobject]@{ Status='INFO'; Kind='Evidence'; Text='Existing folder; its permissions were left unchanged and do not grant read access to Everyone, Authenticated Users or Users.' }
 }
 
+function ConvertTo-RelaunchArgumentText {
+    # Pure: turns the caller's bound parameters into PowerShell argument text
+    # for the 64-bit relaunch (-Command). Strings are single-quoted with
+    # embedded quotes doubled; booleans and switches keep their type. Any
+    # other type throws, so a future parameter cannot be passed wrongly.
+    param([System.Collections.IDictionary]$Parameters)
+    $text = ''
+    if ($null -eq $Parameters) { return $text }
+    foreach ($key in @($Parameters.Keys | Sort-Object)) {
+        $v = $Parameters[$key]
+        if ($v -is [System.Management.Automation.SwitchParameter]) { $text += ' -' + $key + ':$' + ([bool]$v).ToString().ToLowerInvariant() }
+        elseif ($v -is [bool]) { $text += ' -' + $key + ' $' + $v.ToString().ToLowerInvariant() }
+        elseif ($v -is [int]) { $text += ' -' + $key + ' ' + $v.ToString([Globalization.CultureInfo]::InvariantCulture) }
+        elseif ($v -is [string]) { $text += ' -' + $key + " '" + ($v -replace "'","''") + "'" }
+        else {
+            $typeName = '<null>'
+            if ($null -ne $v) { $typeName = $v.GetType().FullName }
+            throw ("Parameter '" + $key + "' has type " + $typeName + ", which the 64-bit relaunch cannot pass. Add support in ConvertTo-RelaunchArgumentText.")
+        }
+    }
+    return $text
+}
+
 function Get-OverallStatus {
     param([object[]]$Results)
     $findings = @($Results | Where-Object { $_.Kind -eq 'Finding' })
@@ -2828,13 +2851,7 @@ if ($script:Is32BitHost -and $env:IPU_ASSESSMENT_RELAUNCHED -ne '1') {
     if ($selfPath -and (Test-Path -LiteralPath $ps64)) {
         $env:IPU_ASSESSMENT_RELAUNCHED = '1'
         # Pass through every parameter the caller gave, typed correctly.
-        $argText = ''
-        foreach ($key in $PSBoundParameters.Keys) {
-            $v = $PSBoundParameters[$key]
-            if ($v -is [bool]) { $argText += ' -' + $key + ' $' + $v.ToString().ToLowerInvariant() }
-            elseif ($v -is [int]) { $argText += ' -' + $key + ' ' + $v }
-            else { $argText += ' -' + $key + " '" + ([string]$v -replace "'","''") + "'" }
-        }
+        $argText = ConvertTo-RelaunchArgumentText $PSBoundParameters
         $command = "& '" + ($selfPath -replace "'","''") + "'" + $argText + '; exit $LASTEXITCODE'
         & $ps64 -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $command
         exit $LASTEXITCODE
