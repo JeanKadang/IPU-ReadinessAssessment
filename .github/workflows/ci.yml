@@ -21,10 +21,12 @@ jobs:
             shell: powershell
           - name: PowerShell 7
             shell: pwsh
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     steps:
       - uses: actions/checkout@v7
       - name: Install Pester
-        shell: ${{ matrix.shell }}
         run: |
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           if ($PSVersionTable.PSVersion.Major -lt 6) {
@@ -32,5 +34,4 @@ jobs:
           }
           Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck
       - name: Run Pester
-        shell: ${{ matrix.shell }}
         run: ./build/Invoke-CiTests.ps1
