@@ -1,38 +1,122 @@
 # IPU-ReadinessAssessment
 
-In-place upgrade (IPU) readiness assessment suite for Windows Server. Collects
-host data, checks it against Microsoft's supported upgrade paths and known
-blockers, and produces an HTML and JSON report with a named recommendation per
-finding.
+Read-only **in-place upgrade (IPU) readiness assessment** for Windows Server. Run it on a server
+before an upgrade to **Windows Server 2025** (default) or **2022**, and get one verdict, a prioritised
+list of what to fix, and a self-contained report. Run it again afterwards to check the server against
+its own pre-upgrade snapshot.
+
+[![CI](https://github.com/JeanKadang/IPU-ReadinessAssessment/actions/workflows/ci.yml/badge.svg)](https://github.com/JeanKadang/IPU-ReadinessAssessment/actions/workflows/ci.yml)
+![License](https://img.shields.io/badge/license-GPL--3.0-blue)
+![PowerShell](https://img.shields.io/badge/PowerShell-4.0%2B-5391FE)
+
+## What you get
+
+| Output | For | File |
+|---|---|---|
+| HTML report | People: findings, what to do, evidence | `<Computer>-IPU-Assessment.html` |
+| JSON result | Tools, fleet roll-ups, post-upgrade baseline | `<Computer>-IPU-Assessment.json` |
+| Log | Troubleshooting the collector | `<Computer>-IPU-Assessment.log` |
+| One result line | The automation platform (OpenText SA) | stdout, semicolon-delimited |
+
+Default output folder: `C:\Temp\IPU-Assessment`.
+
+## How it works
+
+```mermaid
+flowchart LR
+    A[Run on server<br/>Mode Pre] --> B[Fast checks]
+    B --> C[Checkpoint report<br/>PARTIAL]
+    C --> D[Slow checks<br/>DISM, SFC, Setup scan]
+    D --> E[Final report<br/>HTML + JSON + log]
+    E --> F{Fix findings}
+    F --> G[Upgrade]
+    G --> H[Run again<br/>Mode Post]
+    H --> I[Before/after comparison]
+    E -.baseline JSON.-> H
+```
+
+It answers four questions:
+
+1. **Is the path supported?** Source release, edition and target, per Microsoft's installation-media table.
+2. **Will the server and its workloads survive?** SQL, Exchange, IIS, RDS, clustering, VMware, drivers, agents, antivirus/EDR, backup, certificates, removed or deprecated features.
+3. **Is Windows healthy enough?** Pending reboot, patch age, activation, disk space, DISM component store, SFC.
+4. **Did anything get lost afterwards?** Services, ports, routes, IP/DNS, hosts entries, applications, features and tasks, compared with the pre-upgrade snapshot.
+
+## Quick start
+
+Run in an elevated session on the server (Windows PowerShell 4.0+):
+
+```powershell
+# Pre-upgrade assessment, target Windows Server 2025
+.\src\Windows-IPU-Readiness-Assessment.ps1
+
+# Target 2022 instead
+.\src\Windows-IPU-Readiness-Assessment.ps1 -TargetServerVersion 2022
+
+# After the upgrade: compare with the pre-upgrade snapshot
+.\src\Windows-IPU-Readiness-Assessment.ps1 -AssessmentMode Post
+```
+
+Then open `C:\Temp\IPU-Assessment\<Computer>-IPU-Assessment.html`.
+
+Full parameter reference, status meanings, SA usage and troubleshooting: **[User guide](docs/user-guide.md)**.
+
+## Reading the result
+
+| Status | Meaning | Counts toward overall |
+|---|---|---|
+| `BLOCKER` | Do not upgrade until resolved | Yes |
+| `ACTION` | Must be done as part of the change | Yes |
+| `WARNING` | Plan for it | Yes |
+| `MANUAL` | Cannot be proven by the script; a person must check | Yes |
+| `OK` | Checked, fine | No |
+| `INFO` | For visibility | No |
+
+The overall status is the most severe finding.
+
+## Safety
+
+The assessment is **non-remediating**. It never installs, removes or reconfigures anything.
+
+- DISM runs `/ScanHealth` only; SFC runs `/verifyonly` only.
+- `LGPO.exe` is used only with `/b` (backup) and `/parse`, never `/g` or `/m`.
+- No `Win32_Product` query.
+- Side effects, by design: report, log, JSON and evidence files are written. Only when `-TargetMediaPath` is set is an ISO mounted and dismounted, and Setup's compatibility scan creates `C:\$WINDOWS.~BT`.
+- A crashed check is reported as `MANUAL`: absence of findings in that area is not evidence of readiness.
+
+> Reports describe a server in detail (ports, tasks, certificates, agents). Treat them as sensitive and restrict access to the output folder.
 
 ## Repository layout
 
-| Path | Contents |
-|---|---|
-| `src/` | Assessment script(s) |
-| `tests/` | Pester 5 tests |
-| `docs/` | Documentation |
-| `.github/` | CI workflow and PR template |
-
-## Requirements
-
-- Windows PowerShell 5.1 or PowerShell 7
-- [Pester](https://pester.dev) 5 (tests only)
-
-## Usage
-
-```powershell
-.\src\Windows-IPU-Readiness-Assessment.ps1
+```mermaid
+flowchart TD
+    R[IPU-ReadinessAssessment] --> S[src/<br/>assessment script]
+    R --> T[tests/<br/>Pester 5, 105 tests]
+    R --> D[docs/<br/>user guide, review]
+    R --> G[.github/<br/>CI, templates, Dependabot]
 ```
 
-## Testing
+| Path | Contents |
+|---|---|
+| `src/` | `Windows-IPU-Readiness-Assessment.ps1` |
+| `tests/` | Pester tests for the decision rules and reporting |
+| `docs/user-guide.md` | How to run and interpret the assessment |
+| `docs/review/` | Repository quality review |
+| `.github/` | CI workflow, issue forms, PR template, Dependabot, release notes config |
+
+## Development
 
 ```powershell
+# Run the tests (Pester 5)
 Invoke-Pester .\tests -Output Detailed
 ```
 
-Tests load the script in library mode (`IPU_ASSESSMENT_LIBRARY_ONLY=1`):
-functions only, nothing is collected.
+Tests load the script in library mode (`IPU_ASSESSMENT_LIBRARY_ONLY=1`): functions only, nothing is collected,
+so they run on any machine with PowerShell and Pester. If your machine enforces a signed-script policy, start
+the session with `pwsh -ExecutionPolicy Bypass` (process scope only).
+
+Contributing workflow and conventions: [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md](SECURITY.md).
+Version history: [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
