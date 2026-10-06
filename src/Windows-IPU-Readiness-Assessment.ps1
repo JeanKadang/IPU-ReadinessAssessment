@@ -1129,7 +1129,7 @@ function ConvertTo-RelaunchArgumentText {
     return $text
 }
 
-function Get-SlowBudgetMinutes {
+function Get-SlowCheckBudget {
     # Pure: DISM and SFC share SlowCheckBudgetMinutes; the optional Setup
     # compatibility scan adds its own timeout, but only when media is set and
     # the run is a pre-upgrade run (the scan does not run after the upgrade).
@@ -2845,7 +2845,7 @@ function Invoke-Assessment {
 
     try { $null = Write-AssessmentReport -Partial } catch { Write-AssessmentLog 'WARNING' 'REPORT' ('Checkpoint report failed: ' + $_.Exception.Message) }
 
-    $budgetMinutes = Get-SlowBudgetMinutes $SlowCheckBudgetMinutes $CompatScanTimeoutMinutes $TargetMediaPath $AssessmentMode
+    $budgetMinutes = Get-SlowCheckBudget $SlowCheckBudgetMinutes $CompatScanTimeoutMinutes $TargetMediaPath $AssessmentMode
     $slowWatch = [Diagnostics.Stopwatch]::StartNew()
     foreach ($check in @($script:Checks | Where-Object { $_.Phase -eq 'Slow' -and $skip -notcontains $_.Id })) {
         $script:SlowSecondsLeft = Get-SlowSecondsLeft $budgetMinutes $slowWatch.Elapsed.TotalSeconds

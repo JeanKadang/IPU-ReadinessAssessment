@@ -3,6 +3,9 @@
 #   Invoke-Pester .\tests -Output Detailed
 # The script is loaded in library mode: functions only, nothing is collected.
 
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '', Justification = 'Tests set script settings as local variables, which shadow them for the code under test.')]
+param()
+
 BeforeAll {
     $env:IPU_ASSESSMENT_LIBRARY_ONLY = '1'
     . (Join-Path $PSScriptRoot '..\src\Windows-IPU-Readiness-Assessment.ps1')
@@ -685,13 +688,13 @@ Describe 'Slow-check time budget (#39)' {
         $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '..\src\Windows-IPU-Readiness-Assessment.ps1'), [ref]$null, [ref]$null)
         $p = $ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'SlowCheckBudgetMinutes' }
         $p.DefaultValue.Value | Should -Be 50
-        Get-SlowBudgetMinutes 50 45 '' 'Pre' | Should -Be 50
+        Get-SlowCheckBudget 50 45 '' 'Pre' | Should -Be 50
     }
     It 'adds the compat-scan timeout when media is set in Pre mode' {
-        Get-SlowBudgetMinutes 50 45 'D:\' 'Pre' | Should -Be 95
+        Get-SlowCheckBudget 50 45 'D:\' 'Pre' | Should -Be 95
     }
     It 'does not add it in Post mode' {
-        Get-SlowBudgetMinutes 50 45 'D:\' 'Post' | Should -Be 50
+        Get-SlowCheckBudget 50 45 'D:\' 'Post' | Should -Be 50
     }
     It 'computes the seconds left' {
         Get-SlowSecondsLeft 50 0 | Should -Be 3000

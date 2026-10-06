@@ -56,4 +56,4 @@ jobs:
       - name: Install PSScriptAnalyzer
         run: Install-Module PSScriptAnalyzer -RequiredVersion $env:PSSA_VERSION -Scope CurrentUser -Force
       - name: Run PSScriptAnalyzer
-        run: ./build/Invoke-CiLint.ps1 -FailOn Error
+        run: ./build/Invoke-CiLint.ps1 -FailOn Warning
