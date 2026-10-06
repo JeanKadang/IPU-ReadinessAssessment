@@ -21,7 +21,7 @@ If the machine enforces signed scripts, start the session with `pwsh -ExecutionP
 
 - **The script must stay non-remediating.** No installs, removals or configuration changes. DISM `/ScanHealth` and SFC `/verifyonly` only; `LGPO.exe` only with `/b` and `/parse`. No `Win32_Product`.
 - **Windows PowerShell 4.0 compatibility.** The target hosts run Windows PowerShell, not PowerShell 7. Avoid newer syntax and cmdlets without a fallback.
-- **One file.** The script runs as a single file from OpenText Server Automation. Do not split it into modules without a decision (see issue tracker).
+- **One file.** The script runs as a single file from OpenText Server Automation. Decided in [ADR 0001](docs/adr/0001-single-file-script.md); do not split it into modules unless a new ADR supersedes that decision.
 - **Failures stay visible.** A check that errors must report `MANUAL`; never turn an error into a clean result.
 - **New decision logic is a pure function with a Pester test.** Keep system access out of `Get-*Decision` style functions.
 - **No host data in the repo.** No real hostnames, credentials, report output or customer names in code, tests or docs.
