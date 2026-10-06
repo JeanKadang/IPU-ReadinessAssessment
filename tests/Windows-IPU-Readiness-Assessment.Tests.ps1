@@ -1477,3 +1477,72 @@ Describe 'Version (#19)' {
         $script:Changelog | Should -Match ('(?m)^## \[' + [regex]::Escape($script:CollectorVersion) + '\]')
     }
 }
+
+Describe 'System access helpers (#33)' {
+    It 'ConvertTo-SAField keeps the SA result line one field per value' {
+        ConvertTo-SAField "a;b`r`nc" | Should -Be 'a,b | c'
+        ConvertTo-SAField $null | Should -Be ''
+    }
+    It 'Test-CommandAvailable finds a cmdlet and not a missing one' {
+        Test-CommandAvailable 'Get-Date' | Should -BeTrue
+        Test-CommandAvailable 'Get-IpuNoSuchCommand' | Should -BeFalse
+    }
+    Context 'Read-FileTail' {
+        It 'returns nothing for a missing file' {
+            $lines = Read-FileTail (Join-Path $TestDrive 'missing.log')
+            $lines.Count | Should -Be 0
+        }
+        It 'returns the lines of a small file' {
+            $path = Join-Path $TestDrive 'small.log'
+            [IO.File]::WriteAllText($path, "one`r`ntwo`r`nthree")
+            (Read-FileTail $path) -join ',' | Should -Be 'one,two,three'
+        }
+        It 'returns only the end of a file larger than MaxBytes' {
+            $path = Join-Path $TestDrive 'large.log'
+            [IO.File]::WriteAllText($path, "first-line`nsecond-line`nlast-line")
+            $lines = Read-FileTail $path 9
+            $lines[-1] | Should -Be 'last-line'
+            ($lines -join ',') | Should -Not -Match 'first-line'
+        }
+        It 'reads a file another process holds open for writing' {
+            $path = Join-Path $TestDrive 'open.log'
+            $writer = New-Object IO.FileStream($path, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
+            try {
+                $bytes = [Text.Encoding]::ASCII.GetBytes("held-open`n")
+                $writer.Write($bytes, 0, $bytes.Length); $writer.Flush()
+                (Read-FileTail $path) | Should -Contain 'held-open'
+            } finally { $writer.Dispose() }
+        }
+    }
+}
+
+Describe 'Registry and local account helpers (#33)' -Tag 'Integration' {
+    It 'Get-RegistryValueSafe reads an existing value' -Skip:($env:OS -ne 'Windows_NT') {
+        $r = Get-RegistryValueSafe 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' 'CurrentBuild'
+        $r.Exists | Should -BeTrue
+        [string]$r.Value | Should -Match '^\d+$'
+    }
+    It 'Get-RegistryValueSafe reports a missing value and a missing key without throwing' -Skip:($env:OS -ne 'Windows_NT') {
+        (Get-RegistryValueSafe 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' 'IpuNoSuchValue').Exists | Should -BeFalse
+        $r = Get-RegistryValueSafe 'HKLM:\SOFTWARE\IpuNoSuchKey' 'Anything'
+        $r.Exists | Should -BeFalse
+        $r.Value | Should -BeNullOrEmpty
+    }
+    It 'Get-InstalledApplication lists named applications, sorted, without duplicates' -Skip:($env:OS -ne 'Windows_NT') {
+        $apps = @(Get-InstalledApplication)
+        $apps.Count | Should -BeGreaterThan 0
+        @($apps | Where-Object { -not $_.Name }).Count | Should -Be 0
+        $keys = @($apps | ForEach-Object { $_.Name + '|' + $_.Version })
+        @($keys | Sort-Object -Unique).Count | Should -Be $keys.Count
+        ($apps[0].PSObject.Properties.Name -join ',') | Should -Be 'Name,Version,Publisher,InstallDate'
+    }
+    It 'Get-LocalGroupMembersBySid lists the local Administrators' -Skip:($env:OS -ne 'Windows_NT') {
+        $members = Get-LocalGroupMembersBySid 'S-1-5-32-544'
+        $members.Count | Should -BeGreaterThan 0
+        $members[0] | Should -Match '\[WinNT://'
+    }
+    It 'Get-LocalGroupMembersBySid returns an empty list for an unknown group' -Skip:($env:OS -ne 'Windows_NT') {
+        $members = Get-LocalGroupMembersBySid 'S-1-5-32-999'
+        $members.Count | Should -Be 0
+    }
+}
