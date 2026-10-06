@@ -1103,3 +1103,70 @@ Describe 'Test-HttpSysBindingBlock' {
         Test-HttpSysBindingBlock @('Central Certificate Store    : 443') | Should -BeTrue
     }
 }
+
+Describe 'HTML report accessibility (#28)' {
+    BeforeAll {
+        $script:Results.Clear(); $script:CheckRuns.Clear()
+        Add-Result 'STORAGE' 'CFreeSpace' 'ACTION' 'low'
+        Add-Result 'STORAGE' 'PartitionAfterC' 'WARNING' 'Yes'
+        Add-Result 'CHECKLIST' 'Backup and fallback' 'MANUAL' 'x' -Kind 'Checklist'
+        $script:CheckRuns.Add([pscustomobject]@{ Id = 'storage'; Name = 'Storage'; Phase = 'Fast'; Outcome = 'Completed'; Duration = '00:00:01'; Seconds = 1; Message = '' })
+        $script:A11yHtml = New-IPUReportHtml -Results $script:Results.ToArray() -CheckRuns $script:CheckRuns.ToArray() -OverallStatus 'ACTION' -CompletedTime (Get-Date)
+
+        function Get-Luminance([string]$Hex) {
+            $h = $Hex.TrimStart('#')
+            $c = foreach ($i in 0, 2, 4) {
+                $v = [Convert]::ToInt32($h.Substring($i, 2), 16) / 255
+                if ($v -le 0.03928) { $v / 12.92 } else { [math]::Pow(($v + 0.055) / 1.055, 2.4) }
+            }
+            return 0.2126 * $c[0] + 0.7152 * $c[1] + 0.0722 * $c[2]
+        }
+        function Get-ContrastRatio([string]$A, [string]$B) {
+            $la = Get-Luminance $A; $lb = Get-Luminance $B
+            return ([math]::Max($la, $lb) + 0.05) / ([math]::Min($la, $lb) + 0.05)
+        }
+        function Get-CssToken([string]$Block) {
+            $t = @{}
+            foreach ($m in [regex]::Matches($Block, '--([a-z-]+):(#[0-9a-fA-F]{6})')) { $t[$m.Groups[1].Value] = $m.Groups[2].Value }
+            return $t
+        }
+        $script:Light = Get-CssToken ([regex]::Match($script:A11yHtml, ':root\{[^}]*\}').Value)
+        $script:Dark = $script:Light.Clone()
+        $darkBlock = Get-CssToken ([regex]::Match($script:A11yHtml, '@media \(prefers-color-scheme: dark\)\{:root\{[^}]*\}').Value)
+        foreach ($k in $darkBlock.Keys) { $script:Dark[$k] = $darkBlock[$k] }
+    }
+
+    It 'every table has a caption and every header cell a column scope' {
+        $tables = [regex]::Matches($script:A11yHtml, '<table>').Count
+        $tables | Should -BeGreaterThan 3
+        [regex]::Matches($script:A11yHtml, '<table><caption').Count | Should -Be $tables
+        [regex]::Matches($script:A11yHtml, '<th(?![^>]*scope="col")').Count | Should -Be 0
+    }
+    It 'the checklist glyph is hidden from screen readers and has a text status' {
+        $script:A11yHtml | Should -Match '<span aria-hidden="true">&#x2610;</span> <span class="cbt">open</span>'
+        $script:A11yHtml | Should -Match '<th scope="col" class="cb">Done</th>'
+    }
+    It 'collapsible sections have a visible keyboard focus style' {
+        $script:A11yHtml | Should -Match 'summary:focus-visible\{outline:3px solid var\(--focus\)'
+    }
+    It 'defines a dark theme' {
+        $script:Dark.Count | Should -BeGreaterThan 10
+        $script:Dark['bg'] | Should -Not -Be $script:Light['bg']
+    }
+    It 'text contrast is at least 4.5:1 in the <Theme> theme' -TestCases @(@{ Theme = 'light' }, @{ Theme = 'dark' }) {
+        $t = $script:Light; if ($Theme -eq 'dark') { $t = $script:Dark }
+        foreach ($pair in @(@('ink', 'panel'), @('ink', 'bg'), @('muted', 'panel'), @('heading', 'panel'), @('th-ink', 'th-bg'), @('partial-ink', 'partial-bg'))) {
+            Get-ContrastRatio $t[$pair[0]] $t[$pair[1]] | Should -BeGreaterOrEqual 4.5 -Because ($Theme + ': ' + ($pair -join ' on '))
+        }
+    }
+    It 'focus outline contrast is at least 3:1 in the <Theme> theme' -TestCases @(@{ Theme = 'light' }, @{ Theme = 'dark' }) {
+        $t = $script:Light; if ($Theme -eq 'dark') { $t = $script:Dark }
+        Get-ContrastRatio $t['focus'] $t['panel'] | Should -BeGreaterOrEqual 3
+        Get-ContrastRatio $t['focus'] $t['bg'] | Should -BeGreaterOrEqual 3
+    }
+    It 'white badge text meets 4.5:1 on every status colour' {
+        foreach ($s in 'blocker', 'action', 'warning', 'manual', 'ok', 'info') {
+            Get-ContrastRatio '#ffffff' $script:Light[$s] | Should -BeGreaterOrEqual 4.5 -Because $s
+        }
+    }
+}

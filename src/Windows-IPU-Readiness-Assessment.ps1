@@ -2539,14 +2539,16 @@ function Get-ResultText {
 }
 
 function New-FindingTable {
-    param($Rows, [switch]$WithCheckbox)
+    param($Rows, [switch]$WithCheckbox, [string]$Caption = 'Findings')
     $sb = New-Object System.Text.StringBuilder
-    [void]$sb.Append('<div class="scroll"><table><thead><tr>')
-    if ($WithCheckbox) { [void]$sb.Append('<th class="cb"></th>') }
-    [void]$sb.Append('<th>Status</th><th>Area</th><th>Item</th><th>Finding</th><th>What to do</th></tr></thead><tbody>')
+    [void]$sb.Append('<div class="scroll"><table><caption class="sr">' + (ConvertTo-HtmlText $Caption) + '</caption><thead><tr>')
+    if ($WithCheckbox) { [void]$sb.Append('<th scope="col" class="cb">Done</th>') }
+    [void]$sb.Append('<th scope="col">Status</th><th scope="col">Area</th><th scope="col">Item</th><th scope="col">Finding</th><th scope="col">What to do</th></tr></thead><tbody>')
     foreach ($r in $Rows) {
         [void]$sb.Append('<tr>')
-        if ($WithCheckbox) { [void]$sb.Append('<td class="cb">&#x2610;</td>') }
+        # A printable tick box: the glyph is hidden from screen readers, which
+        # read the visible word "open" instead.
+        if ($WithCheckbox) { [void]$sb.Append('<td class="cb"><span aria-hidden="true">&#x2610;</span> <span class="cbt">open</span></td>') }
         $finding = (@($r.Value,$r.Details) | Where-Object { $_ }) -join ' | '
         [void]$sb.Append('<td class="nw">' + (New-StatusBadge $r.Status) + '</td><td class="nw">' + (ConvertTo-HtmlText (Get-AreaName $r.Area)) + '</td><td class="item">' + (ConvertTo-HtmlText $r.Item) + '</td><td class="txt">' + (ConvertTo-HtmlText $finding) + '</td><td class="txt">' + (ConvertTo-HtmlText $r.Recommendation) + '</td></tr>')
     }
@@ -2624,28 +2626,31 @@ function New-IPUReportHtml {
     [void]$sb.AppendLine('<title>' + (& $e $(if ($isPost) { 'IPU Post-Upgrade' } else { 'IPU Assessment' })) + ' - ' + (& $e $script:ComputerName) + '</title>')
     [void]$sb.AppendLine(@'
 <style>
-:root{--ink:#16202e;--muted:#5d6a79;--line:#dde3ea;--bg:#f3f5f8;--panel:#fff;--navy:#16365f;--blocker:#7a1717;--action:#b42318;--warning:#9a5800;--manual:#5b47a0;--ok:#17703a;--info:#4a6578}
+/* Colour tokens. Contrast (WCAG 2.1) is checked by the tests: text >= 4.5:1, focus outline >= 3:1, in both themes. */
+:root{--ink:#16202e;--muted:#5d6a79;--line:#dde3ea;--bg:#f3f5f8;--panel:#ffffff;--navy:#16365f;--heading:#16365f;--th-bg:#eef2f7;--th-ink:#30475f;--focus:#16365f;--partial-bg:#fff4d6;--partial-ink:#5c4400;--partial-line:#e6c46a;--blocker:#7a1717;--action:#b42318;--warning:#9a5800;--manual:#5b47a0;--ok:#17703a;--info:#4a6578}
+@media (prefers-color-scheme: dark){:root{--ink:#e6edf5;--muted:#a9b6c4;--line:#2c3947;--bg:#0e141b;--panel:#16202b;--heading:#a9c8f0;--th-bg:#1e2a37;--th-ink:#c5d3e0;--focus:#8fb8ff;--partial-bg:#3a2e0b;--partial-ink:#ffe08a;--partial-line:#7a6220}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 "Segoe UI",Arial,sans-serif}
 .wrap{max-width:1440px;margin:auto;padding:24px 16px}
 .hero{background:var(--navy);color:#fff;padding:24px 28px;border-radius:12px}
 .hero h1{margin:0 0 6px;font-size:24px;font-weight:600}.hero p{margin:3px 0;color:#d5e1ee}
 .verdict{margin-top:12px;font-size:16px}.verdict .badge{font-size:14px;padding:5px 12px}
-.partial{background:#fff4d6;border:1px solid #e6c46a;color:#5c4400;border-radius:10px;padding:12px 16px;margin:14px 0;font-weight:600}
+.partial{background:var(--partial-bg);border:1px solid var(--partial-line);color:var(--partial-ink);border-radius:10px;padding:12px 16px;margin:14px 0;font-weight:600}
 .cards{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin:16px 0}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}.card b{display:block;font-size:24px;font-weight:650}.card small{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
 section,details{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:14px 0}
-section{padding:18px 20px}h2{font-size:18px;margin:0 0 6px;color:var(--navy)}.lead{color:var(--muted);margin:0 0 12px}
-summary{cursor:pointer;font-size:16px;font-weight:600;color:var(--navy);padding:14px 20px}details>div{padding:0 20px 18px}
+section{padding:18px 20px}h2{font-size:18px;margin:0 0 6px;color:var(--heading)}.lead{color:var(--muted);margin:0 0 12px}
+summary{cursor:pointer;font-size:16px;font-weight:600;color:var(--heading);padding:14px 20px}summary:focus-visible{outline:3px solid var(--focus);outline-offset:2px;border-radius:8px}details>div{padding:0 20px 18px}
 .badge{display:inline-block;color:#fff;font-weight:700;font-size:11px;letter-spacing:.03em;padding:3px 8px;border-radius:999px;white-space:nowrap}
 .s-blocker{background:var(--blocker)}.s-action{background:var(--action)}.s-warning{background:var(--warning)}.s-manual{background:var(--manual)}.s-ok{background:var(--ok)}.s-info{background:var(--info)}
 .scroll{width:100%;overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:860px}
 th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--line);padding:8px}
-th{background:#eef2f7;color:#30475f;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
-.nw{white-space:nowrap}.txt{overflow-wrap:anywhere}.item{min-width:150px;overflow-wrap:break-word}.cb{width:28px;font-size:18px;color:#7b8794}
+th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.nw{white-space:nowrap}.txt{overflow-wrap:anywhere}.item{min-width:150px;overflow-wrap:break-word}.cb{width:64px;white-space:nowrap;color:var(--muted)}.cb span[aria-hidden]{font-size:18px}.cbt{font-size:11px}
+.sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 24px}.fact{border-bottom:1px solid var(--line);padding:8px 0}.fact b{display:block;color:var(--muted);font-size:12px;font-weight:600}
 .legend p{margin:6px 0}.muted{color:var(--muted)}footer{padding:16px 2px;color:var(--muted);font-size:12px}
 @media(max-width:900px){.cards{grid-template-columns:repeat(2,1fr)}.facts{grid-template-columns:1fr}}
-@media print{body{background:#fff}.wrap{max-width:none;padding:0}details{break-inside:avoid}.scroll{overflow:visible}table{min-width:0;font-size:10px}}
+@media print{:root{--ink:#16202e;--muted:#5d6a79;--line:#dde3ea;--bg:#ffffff;--panel:#ffffff;--heading:#16365f;--th-bg:#eef2f7;--th-ink:#30475f;--partial-bg:#fff4d6;--partial-ink:#5c4400;--partial-line:#e6c46a}body{background:#fff;color:#16202e}.wrap{max-width:none;padding:0}details{break-inside:avoid}.scroll{overflow:visible}table{min-width:0;font-size:10px}}
 </style></head><body><div class="wrap">
 '@)
     [void]$sb.AppendLine('<div class="hero"><h1>' + (& $e $title) + '</h1>')
@@ -2677,17 +2682,17 @@ th{background:#eef2f7;color:#30475f;font-size:11px;text-transform:uppercase;lett
 
     if ($isPost) { [void]$sb.AppendLine('<section><h2>Must be resolved</h2><p class="lead">Problems found after the upgrade, including what changed compared with the pre-upgrade snapshot.</p>') }
     else { [void]$sb.AppendLine('<section><h2>IPU decision - must be resolved</h2><p class="lead">BLOCKER: this server cannot follow the standard IPU path as configured. ACTION: must be fixed or investigated before the change.</p>') }
-    if ($decision.Count -eq 0) { [void]$sb.AppendLine('<p>No BLOCKER or ACTION findings.</p>') } else { [void]$sb.AppendLine((New-FindingTable $decision -WithCheckbox)) }
+    if ($decision.Count -eq 0) { [void]$sb.AppendLine('<p>No BLOCKER or ACTION findings.</p>') } else { [void]$sb.AppendLine((New-FindingTable $decision -WithCheckbox -Caption 'Findings that must be resolved')) }
     [void]$sb.AppendLine('</section>')
 
     if ($isPost) { [void]$sb.AppendLine('<section><h2>Verify</h2><p class="lead">WARNING: check that this is expected. MANUAL: needs a human or external check.</p>') }
     else { [void]$sb.AppendLine('<section><h2>IPU planning - validate before the change</h2><p class="lead">WARNING: risk to plan for. MANUAL: needs a human or external check.</p>') }
-    if ($planning.Count -eq 0) { [void]$sb.AppendLine('<p>No planning findings.</p>') } else { [void]$sb.AppendLine((New-FindingTable $planning -WithCheckbox)) }
+    if ($planning.Count -eq 0) { [void]$sb.AppendLine('<p>No planning findings.</p>') } else { [void]$sb.AppendLine((New-FindingTable $planning -WithCheckbox -Caption 'Findings to validate before the change')) }
     [void]$sb.AppendLine('</section>')
 
     if ($checklist.Count -gt 0) {
         [void]$sb.AppendLine('<section><h2>Standard change checklist</h2><p class="lead">Required for every IPU. These do not affect the overall status.</p>')
-        [void]$sb.AppendLine((New-FindingTable $checklist -WithCheckbox))
+        [void]$sb.AppendLine((New-FindingTable $checklist -WithCheckbox -Caption 'Standard change checklist'))
         [void]$sb.AppendLine('</section>')
     }
 
@@ -2706,7 +2711,7 @@ th{background:#eef2f7;color:#30475f;font-size:11px;text-transform:uppercase;lett
         if (@($rows | Where-Object { $_.Kind -eq 'Finding' -and $_.Status -in @('BLOCKER','ACTION') }).Count -gt 0) { $open = ' open' }
         [void]$sb.AppendLine('<details' + $open + '><summary>' + (& $e $chapter) + ' (' + $rows.Count + ')</summary><div>')
         if ($chapter -eq 'Assessment and Collector') {
-            [void]$sb.AppendLine('<h2>Collector coverage</h2><div class="scroll"><table><thead><tr><th>Check</th><th>Phase</th><th>Outcome</th><th>Duration</th><th>Message</th></tr></thead><tbody>')
+            [void]$sb.AppendLine('<h2>Collector coverage</h2><div class="scroll"><table><caption class="sr">Collector coverage: outcome of every check</caption><thead><tr><th scope="col">Check</th><th scope="col">Phase</th><th scope="col">Outcome</th><th scope="col">Duration</th><th scope="col">Message</th></tr></thead><tbody>')
             foreach ($run in $CheckRuns) {
                 $st = 'OK'; if ($run.Outcome -eq 'Failed') { $st = 'MANUAL' } elseif ($run.Outcome -ne 'Completed') { $st = 'WARNING' }
                 [void]$sb.AppendLine('<tr><td>' + (& $e $run.Name) + '</td><td>' + (& $e $run.Phase) + '</td><td class="nw">' + (New-StatusBadge $st) + ' ' + (& $e $run.Outcome) + '</td><td class="nw">' + (& $e $run.Duration) + '</td><td class="txt">' + (& $e $run.Message) + '</td></tr>')
@@ -2714,7 +2719,7 @@ th{background:#eef2f7;color:#30475f;font-size:11px;text-transform:uppercase;lett
             [void]$sb.AppendLine('</tbody></table></div><h2 style="margin-top:16px">Records</h2>')
         }
         if ($rows.Count -gt 0) {
-            [void]$sb.AppendLine('<div class="scroll"><table><thead><tr><th>Status</th><th>Area</th><th>Item</th><th>Value</th><th>Details</th><th>Recommendation</th><th>Source</th></tr></thead><tbody>')
+            [void]$sb.AppendLine('<div class="scroll"><table><caption class="sr">' + (& $e ($chapter + ': all records')) + '</caption><thead><tr><th scope="col">Status</th><th scope="col">Area</th><th scope="col">Item</th><th scope="col">Value</th><th scope="col">Details</th><th scope="col">Recommendation</th><th scope="col">Source</th></tr></thead><tbody>')
             foreach ($r in $rows) {
                 $kindNote = ''; if ($r.Kind -eq 'Observation') { $kindNote = '<br><em class="muted">Observation</em>' }
                 [void]$sb.AppendLine('<tr><td class="nw">' + (New-StatusBadge $r.Status) + $kindNote + '</td><td class="nw">' + (& $e (Get-AreaName $r.Area)) + '</td><td class="item">' + (& $e $r.Item) + '</td><td class="txt">' + (& $e $r.Value) + '</td><td class="txt">' + (& $e $r.Details) + '</td><td class="txt">' + (& $e $r.Recommendation) + '</td><td class="txt muted">' + (& $e $r.Source) + '</td></tr>')

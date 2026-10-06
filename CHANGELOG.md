@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pester tests for `Merge-IPUAssessments.ps1` (#13).
 
 ### Changed
+- HTML report accessibility: every table has a caption and column scopes, the checklist box reads as "open" to screen readers, collapsible sections show a keyboard focus outline, and the report follows the system dark mode. Contrast is tested (WCAG AA) in both themes (#28).
 - WMI cmdlets replaced by CIM cmdlets (`Get-CimInstance`, `Invoke-CimMethod`); dates are read through one helper that accepts CIM and WMI formats (#18).
 - Parameters are validated: thresholds and timeouts must be within sensible ranges, paths must be absolute, the media language must look like a culture name. Invalid values stop the script before it collects anything (#18).
 - No silent `catch {}` remains: ignored optional failures are logged, and an incomplete log is flagged in the report (#18).
