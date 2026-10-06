@@ -45,6 +45,28 @@ jobs:
         run: |
           if ('${{ matrix.coverage }}' -eq 'true') { ./build/Invoke-CiTests.ps1 -Coverage } else { ./build/Invoke-CiTests.ps1 }
 
+  smoke:
+    # Runs the real script end to end on the runner (Pre, then Post against
+    # the Pre result) and validates the JSON against docs/result-schema.json.
+    # Nothing is uploaded: the reports describe the runner in detail.
+    name: smoke (${{ matrix.name }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows PowerShell 5.1
+            shell: powershell
+          - name: PowerShell 7
+            shell: pwsh
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run the assessment end to end
+        run: ./build/Invoke-SmokeTest.ps1
+
   lint:
     name: lint (PSScriptAnalyzer)
     runs-on: windows-latest

@@ -1,0 +1,120 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/JeanKadang/IPU-ReadinessAssessment/docs/result-schema.json",
+  "title": "IPU assessment result (IPU-Assessment/1)",
+  "description": "Machine-readable result written next to the HTML report as <Computer>-IPU-Assessment.json (Mode Pre) or <Computer>-IPU-PostUpgrade.json (Mode Post). Read by Merge-IPUAssessments.ps1 and used as the baseline for the post-upgrade comparison.",
+  "type": "object",
+  "required": ["Schema", "CollectorVersion", "ComputerName", "Mode", "TargetServerVersion", "Started", "Completed", "Partial", "Overall", "Counts", "Facts", "Results", "CheckRuns", "Snapshot"],
+  "properties": {
+    "Schema": { "const": "IPU-Assessment/1" },
+    "CollectorVersion": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "ComputerName": { "type": "string", "minLength": 1 },
+    "Mode": { "enum": ["Pre", "Post"] },
+    "TargetServerVersion": { "enum": ["2025", "2022"] },
+    "Started": { "$ref": "#/definitions/timestamp" },
+    "Completed": { "$ref": "#/definitions/timestamp" },
+    "Partial": { "type": "boolean", "description": "True for the checkpoint written before the slow checks finished." },
+    "Overall": { "$ref": "#/definitions/overall" },
+    "Counts": {
+      "type": "object",
+      "description": "Number of Finding rows per status (Observations, Checklist items and Evidence are not counted).",
+      "required": ["BLOCKER", "ACTION", "WARNING", "MANUAL"],
+      "properties": {
+        "BLOCKER": { "type": "integer", "minimum": 0 },
+        "ACTION": { "type": "integer", "minimum": 0 },
+        "WARNING": { "type": "integer", "minimum": 0 },
+        "MANUAL": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "Facts": {
+      "type": "object",
+      "description": "Summary values shown at the top of the report. Empty or null when the check that sets them did not run.",
+      "properties": {
+        "CurrentOS": { "$ref": "#/definitions/text" },
+        "SourceRelease": { "$ref": "#/definitions/text" },
+        "UpgradePath": { "$ref": "#/definitions/text" },
+        "RecommendedMedia": { "$ref": "#/definitions/text" },
+        "Platform": { "$ref": "#/definitions/text" },
+        "DomainRole": { "$ref": "#/definitions/text" },
+        "SqlServer": { "$ref": "#/definitions/text" },
+        "Activation": { "$ref": "#/definitions/text" },
+        "CDrive": { "$ref": "#/definitions/text" },
+        "CompatScan": { "$ref": "#/definitions/text" }
+      },
+      "additionalProperties": false
+    },
+    "Results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["CheckId", "Area", "Item", "Status", "Kind", "Value", "Details", "Recommendation", "Source"],
+        "properties": {
+          "CheckId": { "type": "string" },
+          "Area": { "type": "string", "pattern": "^[A-Z_]+$" },
+          "Item": { "type": "string" },
+          "Status": { "enum": ["BLOCKER", "ACTION", "WARNING", "MANUAL", "OK", "INFO"] },
+          "Kind": { "enum": ["Finding", "Observation", "Checklist", "Evidence"] },
+          "Value": { "type": "string" },
+          "Details": { "type": "string" },
+          "Recommendation": { "type": "string" },
+          "Source": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "CheckRuns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["Id", "Name", "Phase", "Outcome", "Duration"],
+        "properties": {
+          "Id": { "type": "string" },
+          "Name": { "type": "string" },
+          "Phase": { "enum": ["Fast", "Slow"] },
+          "Outcome": { "enum": ["Completed", "Failed", "Skipped", "TimedOut"] },
+          "Duration": { "type": "string", "pattern": "^(\\d+\\.)?\\d{2}:\\d{2}:\\d{2}$" },
+          "Message": { "$ref": "#/definitions/text" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "Snapshot": {
+      "type": "object",
+      "description": "State compared by the post-upgrade run. Lists may be empty.",
+      "properties": {
+        "Services": {
+          "$ref": "#/definitions/list",
+          "items": {
+            "type": "object",
+            "required": ["Name", "State", "StartMode"],
+            "properties": { "Name": { "type": "string" }, "State": { "type": "string" }, "StartMode": { "type": "string" } }
+          }
+        },
+        "Apps": {
+          "$ref": "#/definitions/list",
+          "items": {
+            "type": "object",
+            "required": ["Name"],
+            "properties": { "Name": { "type": "string" }, "Version": { "$ref": "#/definitions/text" } }
+          }
+        },
+        "Features": { "$ref": "#/definitions/stringList" },
+        "Ports": { "$ref": "#/definitions/stringList" },
+        "Routes": { "$ref": "#/definitions/stringList" },
+        "IPv4": { "$ref": "#/definitions/stringList" },
+        "Dns": { "$ref": "#/definitions/stringList" },
+        "Hosts": { "$ref": "#/definitions/stringList" },
+        "Tasks": { "$ref": "#/definitions/stringList" }
+      }
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "timestamp": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$" },
+    "overall": { "enum": ["BLOCKER", "ACTION", "WARNING", "MANUAL", "OK"] },
+    "text": { "type": ["string", "null"] },
+    "list": { "type": ["array", "null"] },
+    "stringList": { "type": ["array", "null"], "items": { "type": "string" } }
+  }
+}
