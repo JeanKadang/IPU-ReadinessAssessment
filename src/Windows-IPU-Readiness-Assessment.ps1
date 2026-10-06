@@ -156,6 +156,12 @@ param(
     # Output.
     [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$ReportDirectory = 'C:\Temp\IPU-Assessment',
     [bool]$WriteJson = $true,
+    # Replace host names, IP and MAC addresses, accounts, SIDs and certificate
+    # details with placeholders (HOST-1, IP-3, ...) in the HTML and JSON, for
+    # sharing a report outside the team. Best effort - read before sharing.
+    # Output files are then named REDACTED-<time>-..., and a redacted result
+    # cannot serve as the post-upgrade baseline. The log is not redacted.
+    [bool]$RedactReport = $false,
     # Folders this run creates (report, policy evidence) get SYSTEM and
     # Administrators access only; reports describe the server in detail.
     # Existing folders are never changed. $false keeps inherited permissions.
@@ -249,9 +255,12 @@ $script:CollectionStarted = Get-Date
 $script:ComputerName      = $env:COMPUTERNAME
 if (-not $script:ComputerName) { $script:ComputerName = [Environment]::MachineName }
 $script:SafeComputerName  = ($script:ComputerName -replace '[^A-Za-z0-9_.-]','_')
-$script:ReportBaseName    = $script:SafeComputerName + $(if ($AssessmentMode -eq 'Post') { '-IPU-PostUpgrade' } else { '-IPU-Assessment' })
+$script:ReportSuffix      = $(if ($AssessmentMode -eq 'Post') { '-IPU-PostUpgrade' } else { '-IPU-Assessment' })
+$script:ReportBaseName    = $script:SafeComputerName + $script:ReportSuffix
+# A redacted report must not carry the computer name in its file name.
+if ($RedactReport) { $script:ReportBaseName = 'REDACTED-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + $script:ReportSuffix }
 $script:ReportPath        = [IO.Path]::Combine($ReportDirectory, $script:ReportBaseName + '.html')
-$script:LogPath           = [IO.Path]::Combine($ReportDirectory, $script:ReportBaseName + '.log')
+$script:LogPath           = [IO.Path]::Combine($ReportDirectory, $script:SafeComputerName + $script:ReportSuffix + '.log')
 $script:JsonPath          = [IO.Path]::Combine($ReportDirectory, $script:ReportBaseName + '.json')
 $script:BaselinePath      = [IO.Path]::Combine($ReportDirectory, $script:SafeComputerName + '-IPU-Assessment.json')
 
@@ -1166,6 +1175,119 @@ function Test-HttpSysBindingBlock {
     # is not a binding. Labels stay English on localized Windows.
     param([string[]]$Lines)
     return (@($Lines | Where-Object { $_ -match '^\s*(IP:port|Hostname:port|Central Certificate Store)\s*:' }).Count -gt 0)
+}
+
+function New-RedactionContext {
+    # Holds the placeholder map for one run, so the same value always gets
+    # the same placeholder (in the HTML, the JSON and both report writes).
+    param([string]$ComputerName, [string]$DomainFqdn)
+    $netbios = @()
+    if ($DomainFqdn -and $DomainFqdn -match '\.') { $netbios += ($DomainFqdn -split '\.')[0] }
+    if ($ComputerName) { $netbios += $ComputerName }
+    return @{ Map = @{}; Counters = @{}; ComputerName = $ComputerName; DomainFqdn = $DomainFqdn; NetBios = $netbios }
+}
+
+function Get-RedactionPlaceholder {
+    param([hashtable]$Context, [string]$Kind, [string]$Value)
+    $key = $Kind + '|' + $Value.ToLowerInvariant()
+    if (-not $Context.Map.ContainsKey($key)) {
+        $n = 1 + [int]$Context.Counters[$Kind]
+        $Context.Counters[$Kind] = $n
+        $Context.Map[$key] = $Kind + '-' + $n
+    }
+    return $Context.Map[$key]
+}
+
+function Protect-ReportText {
+    # Best-effort redaction of one text. Well-known names (BUILTIN, NT
+    # AUTHORITY, S-1-5-32-*, 127.0.0.1, 0.0.0.0), versions and file paths are
+    # kept. Pure apart from the shared placeholder map in $Context.
+    param([string]$Text, [hashtable]$Context)
+    if (-not $Text) { return $Text }
+    $ctx = $Context
+    $t = $Text
+    $ic = [Text.RegularExpressions.RegexOptions]::IgnoreCase
+
+    # Local group members: "name [WinNT://DOMAIN/name]"
+    $t = [regex]::Replace($t, '([^\s|>\[\]][^|<>\[\]]*?) \[WinNT://([^/\]]+)/([^\]]+)\]', {
+        param($m)
+        $acct = Get-RedactionPlaceholder $ctx 'ACCOUNT' ($m.Groups[2].Value + '\' + $m.Groups[3].Value)
+        $domKind = 'DOMAIN'; if ($m.Groups[2].Value -ieq $ctx.ComputerName) { $domKind = 'HOST' }
+        $dom = Get-RedactionPlaceholder $ctx $domKind $m.Groups[2].Value
+        return $acct + ' [WinNT://' + $dom + '/' + $acct + ']'
+    })
+    # Certificate thumbprints (40 hex characters)
+    $t = [regex]::Replace($t, '(?<![0-9A-Fa-f])[0-9A-Fa-f]{40}(?![0-9A-Fa-f])', { param($m) Get-RedactionPlaceholder $ctx 'CERT' $m.Value })
+    # Certificate subject and issuer names
+    $t = [regex]::Replace($t, '\b(CN|OU|O)=([^,|<>\]\r\n]*[^,|<>\]\r\n\s])', { param($m) $m.Groups[1].Value + '=' + (Get-RedactionPlaceholder $ctx 'NAME' $m.Groups[2].Value) })
+    # MAC addresses
+    $t = [regex]::Replace($t, '\b([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b', { param($m) Get-RedactionPlaceholder $ctx 'MAC' $m.Value })
+    # Domain SIDs (well-known S-1-5-32-*, S-1-5-18 etc. are kept)
+    $t = [regex]::Replace($t, '\bS-1-5-21(-\d+){3,4}\b', { param($m) Get-RedactionPlaceholder $ctx 'SID' $m.Value })
+    # DOMAIN\user. Not after \ : or / (path segments). The domain part must be
+    # a known NetBIOS name or an all-caps name that is not a well-known root.
+    $skip = '^(BUILTIN|AUTHORITY|SERVICE|APPPOOL|HKLM|HKCU|HKU|HKCR|HKCC|SYSTEM|SOFTWARE)$'
+    $t = [regex]::Replace($t, '(?<![\\:/\w.-])([A-Za-z0-9][A-Za-z0-9-]{1,14})\\([A-Za-z0-9._$-]{1,64})', {
+        param($m)
+        $d = $m.Groups[1].Value
+        $known = @($ctx.NetBios | Where-Object { $_ -and $_ -ieq $d }).Count -gt 0
+        $caps = ($d -cmatch '^[A-Z0-9-]+$') -and ($d -notmatch $skip) -and ($d -match '[A-Z]')
+        if ($known -or $caps) { return Get-RedactionPlaceholder $ctx 'ACCOUNT' $m.Value }
+        return $m.Value
+    })
+    # UPN-style accounts and e-mail addresses
+    $t = [regex]::Replace($t, '\b[\w.+-]+@[\w-]+(\.[\w-]+)+\b', { param($m) Get-RedactionPlaceholder $ctx 'ACCOUNT' $m.Value })
+    # FQDNs in the server's domain, the domain itself, then the computer name
+    if ($ctx.DomainFqdn) {
+        $dom = [regex]::Escape($ctx.DomainFqdn)
+        $t = [regex]::Replace($t, '\b[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.' + $dom + '\b', { param($m) Get-RedactionPlaceholder $ctx 'HOST' $m.Value }, $ic)
+        $t = [regex]::Replace($t, '\b' + $dom + '\b', { param($m) Get-RedactionPlaceholder $ctx 'DOMAIN' $m.Value }, $ic)
+    }
+    foreach ($n in @($ctx.NetBios)) {
+        if (-not $n) { continue }
+        $kind = 'DOMAIN'; if ($n -ieq $ctx.ComputerName) { $kind = 'HOST' }
+        $t = [regex]::Replace($t, '(?<![\w-])' + [regex]::Escape($n) + '(?![\w])', { param($m) Get-RedactionPlaceholder $ctx $kind $m.Value }, $ic)
+    }
+    # IPv4 (not version numbers, masks, loopback or the any-address)
+    $t = [regex]::Replace($t, '(?<![\w.])(?<!Version[=: ])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![\w.])', {
+        param($m)
+        $o = @(1..4 | ForEach-Object { [int]$m.Groups[$_].Value })
+        if (@($o | Where-Object { $_ -gt 255 }).Count -gt 0) { return $m.Value }
+        if ($o[0] -eq 255 -or $m.Value -eq '0.0.0.0' -or $o[0] -eq 127) { return $m.Value }
+        return Get-RedactionPlaceholder $ctx 'IP' $m.Value
+    })
+    # IPv6: contains '::' or at least five colons, and at least one hex letter or '::'
+    $t = [regex]::Replace($t, '(?<![\w:.])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![\w:])', {
+        param($m)
+        $v = $m.Value
+        $colons = ($v.ToCharArray() | Where-Object { $_ -eq ':' }).Count
+        if ($v -eq '::' -or $v -eq '::1') { return $v }
+        if (($v.Contains('::') -and $v.Length -gt 3) -or ($colons -ge 5 -and $v -match '[A-Fa-f]')) { return Get-RedactionPlaceholder $ctx 'IP' $v }
+        return $v
+    })
+    return $t
+}
+
+function Protect-ReportObject {
+    # Returns a redacted copy of strings, arrays, hashtables and objects.
+    param($Value, [hashtable]$Context)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [string]) { return (Protect-ReportText $Value $Context) }
+    if ($Value -is [System.Collections.IDictionary]) {
+        $copy = [ordered]@{}
+        foreach ($k in @($Value.Keys)) { $copy[$k] = Protect-ReportObject $Value[$k] $Context }
+        return $copy
+    }
+    if ($Value -is [System.Collections.IEnumerable]) {
+        $items = @(foreach ($i in $Value) { , (Protect-ReportObject $i $Context) })
+        return ,$items
+    }
+    if ($Value -is [System.Management.Automation.PSCustomObject]) {
+        $copy = [ordered]@{}
+        foreach ($p in $Value.PSObject.Properties) { $copy[$p.Name] = Protect-ReportObject $p.Value $Context }
+        return [pscustomobject]$copy
+    }
+    return $Value
 }
 
 function Get-OverallStatus {
@@ -2738,6 +2860,7 @@ function Write-AssessmentReport {
     $results = $script:Results.ToArray()
     $overall = Get-OverallStatus $results
     $html = New-IPUReportHtml -Results $results -CheckRuns $script:CheckRuns.ToArray() -OverallStatus $overall -CompletedTime $completed -Partial:$Partial
+    if ($RedactReport) { $html = Protect-ReportText $html (Get-RedactionContext) }
     if ($html.Length -lt 2048 -or $html -notmatch '(?is)^\s*<!doctype html' -or $html -notmatch '(?is)</html>\s*$') {
         throw ('HTML validation failed (length {0}).' -f $html.Length)
     }
@@ -2770,6 +2893,7 @@ function New-AssessmentJsonObject {
         Started             = $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss')
         Completed           = $Completed.ToString('yyyy-MM-dd HH:mm:ss')
         Partial             = [bool]$Partial
+        Redacted            = $false
         Overall             = $Overall
         Counts              = [pscustomobject]$counts
         Facts               = [pscustomobject][ordered]@{
@@ -2790,9 +2914,24 @@ function New-AssessmentJsonObject {
     }
 }
 
+function Get-RedactionContext {
+    # One context per run, so placeholders match between the checkpoint and
+    # the final report, and between the HTML and the JSON.
+    if (-not $script:RedactionContext) {
+        $domain = ''
+        if ($script:Data.CS -and $script:Data.CS.PartOfDomain) { $domain = [string]$script:Data.CS.Domain }
+        $script:RedactionContext = New-RedactionContext $script:ComputerName $domain
+    }
+    return $script:RedactionContext
+}
+
 function Write-AssessmentJson {
     param([object[]]$Results, [string]$Overall, [datetime]$Completed, [switch]$Partial)
     $obj = New-AssessmentJsonObject -Results $Results -Overall $Overall -Completed $Completed -Partial:$Partial
+    if ($RedactReport) {
+        $obj = Protect-ReportObject $obj (Get-RedactionContext)
+        $obj.Redacted = $true
+    }
     $json = $obj | ConvertTo-Json -Depth 6
     $temp = $script:JsonPath + '.writing'
     [IO.File]::WriteAllText($temp,$json,(New-Object System.Text.UTF8Encoding($false)))
@@ -2813,6 +2952,10 @@ function Invoke-PostUpgradeComparison {
             return
         }
         $baseline = Get-Content -LiteralPath $script:BaselinePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($baseline.Redacted) {
+            Add-Result 'POST_UPGRADE' 'Baseline' 'MANUAL' 'The pre-upgrade result is redacted' $script:BaselinePath -Recommendation 'A redacted result has its names and addresses replaced, so it cannot be compared with this server. Keep an unredacted pre-upgrade run (without -RedactReport) as the baseline and redact only copies you share.' -Source 'File check'
+            return
+        }
         Add-Result 'POST_UPGRADE' 'Baseline' 'INFO' ('Pre-upgrade run ' + $baseline.Completed + ' (collector ' + $baseline.CollectorVersion + ')') @(('Overall then=' + $baseline.Overall),('OS then=' + $baseline.Facts.CurrentOS)) -Source $script:BaselinePath
         if ($baseline.Partial) {
             Add-Result 'POST_UPGRADE' 'BaselineComplete' 'WARNING' 'The pre-upgrade result was a partial (checkpoint) report' '' -Recommendation 'The snapshot data is still complete (it is collected by the fast checks); only the slow checks were missing.' -Kind 'Observation' -Source $script:BaselinePath

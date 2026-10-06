@@ -190,3 +190,20 @@ Describe 'Merge-IPUAssessments.ps1 - modes, order, delimiter and safety (#41)' {
         (Import-Csv -LiteralPath (Join-Path $dir 'IPU-Fleet-Servers.csv') -Delimiter ';')[0].Blocker | Should -Be '0'
     }
 }
+
+Describe 'Merge-IPUAssessments.ps1 - redacted results (#30)' {
+    It 'keeps every redacted file as its own row and marks it' {
+        $dir = Join-Path $TestDrive 'redacted'
+        New-Item -ItemType Directory -Path $dir | Out-Null
+        foreach ($n in 1..2) {
+            $r = New-FakeResult 'HOST-1' -Overall 'WARNING'
+            $r | Add-Member -NotePropertyName Redacted -NotePropertyValue $true
+            Save-Result $r $dir ('REDACTED-2026100' + $n + '-090000-IPU-Assessment.json')
+        }
+        $null = & $script:MergeScript -InputFolder $dir
+        $rows = @(Import-Csv -LiteralPath (Join-Path $dir 'IPU-Fleet-Servers.csv') -Delimiter ';')
+        $rows.Count | Should -Be 2
+        @($rows | Where-Object { $_.Redacted -eq 'True' }).Count | Should -Be 2
+        Get-Content -LiteralPath (Join-Path $dir 'IPU-Fleet-Overview.html') -Raw | Should -Match 'redacted'
+    }
+}
