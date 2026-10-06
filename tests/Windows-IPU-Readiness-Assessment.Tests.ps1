@@ -568,3 +568,44 @@ Describe 'Hygiene (#18)' {
         }
     }
 }
+
+Describe 'ConvertTo-RelaunchArgumentText (#38)' {
+    It 'quotes strings and doubles embedded apostrophes' {
+        ConvertTo-RelaunchArgumentText @{ ReportDirectory = "D:\O'Brien" } | Should -Be " -ReportDirectory 'D:\O''Brien'"
+    }
+    It 'keeps booleans typed' {
+        ConvertTo-RelaunchArgumentText @{ WriteJson = $true } | Should -Be ' -WriteJson $true'
+        ConvertTo-RelaunchArgumentText @{ RunSFCVerifyOnly = $false } | Should -Be ' -RunSFCVerifyOnly $false'
+    }
+    It 'passes integers unquoted' {
+        ConvertTo-RelaunchArgumentText @{ MinimumCFreeGB = 60 } | Should -Be ' -MinimumCFreeGB 60'
+    }
+    It 'passes switches with an explicit value' {
+        $on = [System.Management.Automation.SwitchParameter]::new($true)
+        $off = [System.Management.Automation.SwitchParameter]::new($false)
+        ConvertTo-RelaunchArgumentText @{ Demo = $on } | Should -Be ' -Demo:$true'
+        ConvertTo-RelaunchArgumentText @{ Demo = $off } | Should -Be ' -Demo:$false'
+    }
+    It 'orders parameters by name so the command line is predictable' {
+        ConvertTo-RelaunchArgumentText ([ordered]@{ Zeta = 'z'; Alpha = 1 }) | Should -Be " -Alpha 1 -Zeta 'z'"
+    }
+    It 'throws a clear error for an unsupported type' {
+        { ConvertTo-RelaunchArgumentText @{ Ratio = [double]1.5 } } | Should -Throw -ExpectedMessage "*Ratio*System.Double*"
+        { ConvertTo-RelaunchArgumentText @{ Paths = @('a','b') } } | Should -Throw -ExpectedMessage "*Paths*"
+    }
+    It 'returns an empty string when no parameters were given' {
+        ConvertTo-RelaunchArgumentText @{} | Should -Be ''
+        ConvertTo-RelaunchArgumentText $null | Should -Be ''
+    }
+    It 'produces text that PowerShell parses back to the same values' {
+        $text = ConvertTo-RelaunchArgumentText ([ordered]@{ AssessmentMode = 'Post'; MinimumCFreeGB = 60; ReportDirectory = "D:\it's here"; WriteJson = $false })
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput('Test-Cmd' + $text, [ref]$tokens, [ref]$errors)
+        $errors.Count | Should -Be 0
+        $values = @($ast.EndBlock.Statements[0].PipelineElements[0].CommandElements | Where-Object { $_ -isnot [System.Management.Automation.Language.CommandParameterAst] } | Select-Object -Skip 1 | ForEach-Object { $_.SafeGetValue() })
+        $values[0] | Should -Be 'Post'
+        $values[1] | Should -Be 60
+        $values[2] | Should -Be "D:\it's here"
+        $values[3] | Should -Be $false
+    }
+}
