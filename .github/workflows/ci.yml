@@ -19,6 +19,12 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch or PR cancels the run still in progress,
+# so superseded commits do not use Actions minutes (#85).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 # Tool versions are pinned so a new release cannot change results unnoticed.
 # Actions are pinned to commit SHAs; Dependabot proposes updates.
 env:
@@ -64,13 +70,16 @@ jobs:
     # Nothing is uploaded: the reports describe the runner in detail.
     # Every Windows Server image GitHub offers (2025 and 2022; 2019 was
     # retired in 2025), because what the script reads differs per release.
+    # Pull requests run windows-2025 only, to save Actions minutes (#85);
+    # pushes to main, the weekly schedule and manual runs add windows-2022,
+    # so every image is covered before a release.
     # Stable job names: "smoke (<shell>, <image>)".
     name: smoke (${{ matrix.name }}, ${{ matrix.image }})
     runs-on: ${{ matrix.image }}
     strategy:
       fail-fast: false
       matrix:
-        image: [windows-2025, windows-2022]
+        image: ${{ fromJSON(github.event_name == 'pull_request' && '["windows-2025"]' || '["windows-2025","windows-2022"]') }}
         name: [Windows PowerShell 5.1, PowerShell 7]
         include:
           - name: Windows PowerShell 5.1
