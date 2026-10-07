@@ -141,6 +141,7 @@ These are project values, not Microsoft minimums (unless noted).
 | `MinimumMemoryGB` | 8 | Below this, a `WARNING` recommends adding memory |
 | `MaxPatchAgeDays` | 60 | Warn when the last patch is older |
 | `UptimeWarningDays` | 60 | Warn on long uptime (a reboot is overdue) |
+| `GroupPolicyMaxAgeDays` | 7 | Domain members: warn when Group Policy has not applied for longer |
 | `AVMaxAgeDays` | 3 | Warn when antivirus signatures are older |
 | `CertificateWarningDays` | 90 | Warn on certificates expiring sooner |
 | `SystemPartitionMinFreeMB` | 50 | Minimum free space on the system partition |

@@ -1664,6 +1664,123 @@ Describe 'Security tools: finding only with a driver (#78)' {
     }
 }
 
+Describe 'Group Policy, WMI filters and AD groups (#80)' {
+    BeforeAll {
+    # Synthetic gpresult /x output in the RSoP format (fictional domain).
+    function New-FakeGpXml {
+        param([switch]$Workgroup)
+        $t = 'xmlns="http://www.microsoft.com/GroupPolicy/Types"'
+        if ($Workgroup) {
+            return '<?xml version="1.0" encoding="utf-16"?><Rsop xmlns="http://www.microsoft.com/GroupPolicy/Rsop"><ComputerResults><Name>SRV01</Name><Domain>WORKGROUP</Domain>' +
+                '<GPO><Name>Local Group Policy</Name><Path><Identifier ' + $t + '>LocalGPO</Identifier></Path><Enabled>true</Enabled><IsValid>true</IsValid><FilterAllowed>true</FilterAllowed><AccessDenied>false</AccessDenied><Link><SOMPath>Local</SOMPath><AppliedOrder>1</AppliedOrder><Enabled>true</Enabled></Link></GPO>' +
+                '</ComputerResults></Rsop>'
+        }
+        return '<?xml version="1.0" encoding="utf-16"?><Rsop xmlns="http://www.microsoft.com/GroupPolicy/Rsop"><ReadTime>2026-10-07T10:00:00</ReadTime><ComputerResults><Name>CORP\SRV01$</Name><Domain>corp.example.test</Domain><Site>Site-A</Site>' +
+            '<SecurityGroup><SID ' + $t + '>S-1-5-21-1-2-3-515</SID><Name ' + $t + '>CORP\Domain Computers</Name></SecurityGroup>' +
+            '<SecurityGroup><SID ' + $t + '>S-1-5-21-1-2-3-4001</SID><Name ' + $t + '>CORP\Patch Ring 2</Name></SecurityGroup>' +
+            '<GPO><Name>Server Baseline</Name><Path><Identifier ' + $t + '>{11111111-1111-1111-1111-111111111111}</Identifier><Domain ' + $t + '>corp.example.test</Domain></Path><Enabled>true</Enabled><IsValid>true</IsValid><FilterAllowed>true</FilterAllowed><AccessDenied>false</AccessDenied><Link><SOMPath>corp.example.test/Servers</SOMPath><SOMOrder>1</SOMOrder><AppliedOrder>2</AppliedOrder><LinkOrder>1</LinkOrder><Enabled>true</Enabled><NoOverride>false</NoOverride></Link><FilterName>Server 2016-2022 only</FilterName></GPO>' +
+            '<GPO><Name>Default Domain Policy</Name><Path><Identifier ' + $t + '>{31B2F340-016D-11D2-945F-00C04FB984F9}</Identifier></Path><Enabled>true</Enabled><IsValid>true</IsValid><FilterAllowed>true</FilterAllowed><AccessDenied>false</AccessDenied><Link><SOMPath>corp.example.test</SOMPath><AppliedOrder>1</AppliedOrder><Enabled>true</Enabled></Link></GPO>' +
+            '<GPO><Name>Workstation Settings</Name><Path><Identifier ' + $t + '>{22222222-2222-2222-2222-222222222222}</Identifier></Path><Enabled>true</Enabled><IsValid>true</IsValid><FilterAllowed>false</FilterAllowed><AccessDenied>false</AccessDenied><Link><SOMPath>corp.example.test</SOMPath><AppliedOrder>0</AppliedOrder><Enabled>true</Enabled></Link></GPO>' +
+            '<GPO><Name>Admins Only</Name><Path><Identifier ' + $t + '>{33333333-3333-3333-3333-333333333333}</Identifier></Path><Enabled>true</Enabled><IsValid>true</IsValid><FilterAllowed>true</FilterAllowed><AccessDenied>true</AccessDenied><Link><SOMPath>corp.example.test/Servers</SOMPath><AppliedOrder>0</AppliedOrder><Enabled>true</Enabled></Link></GPO>' +
+            '</ComputerResults></Rsop>'
+    }
+    }
+    It 'reads applied and filtered GPOs with the reason, and the security groups' {
+        $r = ConvertFrom-GpResultXml (New-FakeGpXml)
+        $r.Domain | Should -Be 'corp.example.test'
+        (@($r.Gpos | ForEach-Object { $_.Name + '=' + $(if ($_.Applied) { 'Applied' } else { $_.Reason }) }) -join '; ') | Should -Be 'Server Baseline=Applied; Default Domain Policy=Applied; Workstation Settings=Denied (WMI filter); Admins Only=Denied (security filtering)'
+        $r.Gpos[0].Guid | Should -Be '{11111111-1111-1111-1111-111111111111}'
+        $r.Gpos[0].Links | Should -Be @('corp.example.test/Servers')
+        $r.Gpos[0].FilterName | Should -Be 'Server 2016-2022 only'
+        ($r.Groups -join ', ') | Should -Be 'CORP\Domain Computers, CORP\Patch Ring 2'
+    }
+    It 'reads a workgroup server''s local policy' {
+        $r = ConvertFrom-GpResultXml (New-FakeGpXml -Workgroup)
+        @($r.Gpos).Count | Should -Be 1
+        $r.Gpos[0].Name | Should -Be 'Local Group Policy'
+        $r.Gpos[0].Applied | Should -BeTrue
+        @($r.Groups).Count | Should -Be 0
+    }
+    It 'rejects output without computer results' {
+        { ConvertFrom-GpResultXml '<Rsop xmlns="http://www.microsoft.com/GroupPolicy/Rsop"></Rsop>' } | Should -Throw '*No computer results*'
+    }
+    It 'reads the queries of a WMI filter' {
+        $q = ConvertFrom-WmiFilterParm "1;3;10;66;WQL;root\CIMv2;SELECT * FROM Win32_OperatingSystem WHERE Version LIKE '10.0.14393%';3;10;45;WQL;root\CIMv2;SELECT * FROM Win32_ComputerSystem WHERE DomainRole=3;"
+        $q.Count | Should -Be 2
+        $q[0].Namespace | Should -Be 'root\CIMv2'
+        $q[0].Query | Should -Be "SELECT * FROM Win32_OperatingSystem WHERE Version LIKE '10.0.14393%'"
+        $q[1].Query | Should -Be 'SELECT * FROM Win32_ComputerSystem WHERE DomainRole=3'
+        (ConvertFrom-WmiFilterParm '').Count | Should -Be 0
+    }
+    It '"<Query>" depends on the Windows version: <Expected>' -TestCases @(
+        @{ Query = "SELECT * FROM Win32_OperatingSystem WHERE Version LIKE '10.0.14393%'"; Expected = $true }
+        @{ Query = "select * from Win32_OperatingSystem where Caption like '%2016%'";       Expected = $true }
+        @{ Query = 'SELECT * FROM Win32_OperatingSystem WHERE BuildNumber >= 17763';        Expected = $true }
+        @{ Query = 'SELECT * FROM Win32_OperatingSystem WHERE ProductType = 3';             Expected = $false }
+        @{ Query = 'SELECT * FROM Win32_ComputerSystem WHERE Model LIKE "%VMware%"';        Expected = $false }
+        @{ Query = '';                                                                       Expected = $false }
+    ) {
+        Test-WmiFilterOsDependent $Query | Should -Be $Expected
+    }
+    Context 'Get-GroupPolicyDecision' {
+        BeforeAll { $script:GpNow = [datetime]'2026-10-07 12:00' }
+        It 'a workgroup server gets INFO only, never MANUAL - even when nothing could be read' {
+            $rows = Get-GroupPolicyDecision $false $false $false $null $script:GpNow 7
+            @($rows).Count | Should -Be 1
+            $rows[0].Status | Should -Be 'INFO'
+            $rows[0].Value | Should -Be 'Workgroup server: only local policy applies'
+        }
+        It 'a domain member with everything read: last applied is OK' {
+            $rows = Get-GroupPolicyDecision $true $true $true ($script:GpNow.AddDays(-1)) $script:GpNow 7
+            (@($rows | ForEach-Object { $_.Item + '=' + $_.Status }) -join ',') | Should -Be 'GroupPolicyLastApplied=OK'
+        }
+        It 'a domain member that cannot reach AD gets MANUAL with the reason' {
+            $rows = Get-GroupPolicyDecision $true $true $false ($script:GpNow.AddDays(-1)) $script:GpNow 7 '' 'The server is not operational.'
+            $row = @($rows | Where-Object { $_.Item -eq 'DomainLookup' })[0]
+            $row.Status | Should -Be 'MANUAL'
+            $row.Value | Should -Be 'Could not reach the domain: WMI filters and AD groups are incomplete'
+            $row.Details | Should -Be 'The server is not operational.'
+        }
+        It 'a domain member where gpresult failed gets MANUAL, not an empty list' {
+            $rows = Get-GroupPolicyDecision $true $false $true ($script:GpNow.AddDays(-1)) $script:GpNow 7 'Access is denied.'
+            @($rows | Where-Object { $_.Item -eq 'GroupPolicyScope' -and $_.Status -eq 'MANUAL' }).Count | Should -Be 1
+        }
+        It 'last applied <Days> days ago with a limit of 7 is <Status>' -TestCases @(
+            @{ Days = 7; Status = 'OK' }
+            @{ Days = 8; Status = 'WARNING' }
+        ) {
+            $rows = Get-GroupPolicyDecision $true $true $true ($script:GpNow.AddDays(-1 * $Days)) $script:GpNow 7
+            @($rows | Where-Object { $_.Item -eq 'GroupPolicyLastApplied' })[0].Status | Should -Be $Status
+        }
+        It 'a stale policy names the date' {
+            $rows = Get-GroupPolicyDecision $true $true $true ([datetime]'2026-09-01 08:30') $script:GpNow 7
+            @($rows | Where-Object { $_.Item -eq 'GroupPolicyLastApplied' })[0].Value | Should -Be 'This server has not received Group Policy since 2026-09-01 08:30 (36 days)'
+        }
+        It 'an unreadable last-applied time is a MANUAL observation' {
+            $row = @(Get-GroupPolicyDecision $true $true $true $null $script:GpNow 7)[0]
+            "$($row.Status)/$($row.Kind)" | Should -Be 'MANUAL/Observation'
+        }
+    }
+    It 'converts the registry FILETIME parts' {
+        $ft = ([datetime]'2026-10-01 06:00').ToFileTime()
+        (ConvertFrom-FileTimeValue ([int64]($ft -shr 32)) ([int64]($ft -band 0xFFFFFFFF))) | Should -Be ([datetime]'2026-10-01 06:00')
+        ConvertFrom-FileTimeValue $null 1 | Should -BeNullOrEmpty
+        ConvertFrom-FileTimeValue 0 0 | Should -BeNullOrEmpty
+    }
+    It 'the post-upgrade comparison reports lost and new GPOs and lost groups' {
+        $before = @{ Gpos = @('Default Domain Policy', 'Server Baseline'); Groups = @('CORP\Patch Ring 2') }
+        $after = @{ Gpos = @('Default Domain Policy', 'Server 2025 Baseline'); Groups = @() }
+        $d = Compare-IPUSnapshot $before $after
+        @($d | Where-Object { $_.Item -eq 'Applied GPOs missing after upgrade' })[0].Details | Should -Be 'Server Baseline'
+        @($d | Where-Object { $_.Item -eq 'GPOs newly applied after upgrade' })[0].Details | Should -Be 'Server 2025 Baseline'
+        @($d | Where-Object { $_.Item -eq 'AD groups missing after upgrade' })[0].Details | Should -Be 'CORP\Patch Ring 2'
+    }
+    It 'an older baseline without GPO lists is not compared' {
+        $d = Compare-IPUSnapshot @{} @{ Gpos = @('Default Domain Policy') }
+        @($d | Where-Object { $_.Item -like '*GPO*' }).Count | Should -Be 0
+    }
+}
+
 Describe 'Commands and links with recommendations (#79)' {
     It 'builds the exact <Id> command' -TestCases @(
         @{ Id = 'PendingRename'; Kind = 'Check';  Values = @{}; Expected = "Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue | Select-Object -ExpandProperty PendingFileRenameOperations" }
@@ -1815,5 +1932,26 @@ Describe 'User Account Control (#75)' {
     It 'an older baseline without UAC is not reported as a change' {
         $d = Compare-IPUSnapshot @{ } @{ Uac = 'On - prompt for consent' }
         @($d | Where-Object { $_.Item -eq 'UAC changed' }).Count | Should -Be 0
+    }
+}
+
+Describe 'Group Policy system helpers on a real Windows host (#80)' -Tag 'Integration' {
+    It 'Get-GpResultXml returns RSoP XML that the parser reads, or a clear error' -Skip:($env:OS -ne 'Windows_NT') {
+        $xml = $null; $err = $null
+        try { $xml = Get-GpResultXml } catch { $err = $_.Exception.Message }
+        if ($xml) {
+            { ConvertFrom-GpResultXml $xml } | Should -Not -Throw
+            @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Filter 'IPU-gpresult-*.xml' -ErrorAction SilentlyContinue).Count | Should -Be 0
+        } else {
+            $err | Should -Not -BeNullOrEmpty
+        }
+    }
+    It 'Get-GroupPolicyLastApplied returns a date or nothing, never throws' -Skip:($env:OS -ne 'Windows_NT') {
+        { $script:gpLast = Get-GroupPolicyLastApplied } | Should -Not -Throw
+        if ($null -ne $script:gpLast) { $script:gpLast | Should -BeOfType ([datetime]) }
+    }
+    It 'Get-AdComputerGroup and Get-WmiFilterQuery fail clearly when the host is not in a domain' -Skip:($env:OS -ne 'Windows_NT' -or $env:USERDNSDOMAIN) {
+        { Get-AdComputerGroup } | Should -Throw
+        { Get-WmiFilterQuery @('{11111111-1111-1111-1111-111111111111}') } | Should -Throw
     }
 }
