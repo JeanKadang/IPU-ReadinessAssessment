@@ -163,6 +163,10 @@ param(
     [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$LgpoExe = 'C:\Temp\Tools\LGPO.exe',
     [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$PolicyEvidenceRoot = 'C:\Temp\Tools\PolBackup',
     [bool]$CreatePolicyEvidenceZip = $true,
+    # When IIS is installed, copy its configuration files (the same files
+    # "appcmd add backup" saves) into a restricted evidence folder and ZIP
+    # under PolicyEvidenceRoot. A read-only copy; IIS itself is not touched.
+    [bool]$EnableIISConfigEvidence = $true,
 
     # Output.
     [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$ReportDirectory = 'C:\Temp\IPU-Assessment',
@@ -277,7 +281,7 @@ $script:ProfileSettingNames = @(
     'MinimumCFreeGB','ExtendBlockGB','MinimumMemoryGB','MaxPatchAgeDays','UptimeWarningDays','AVMaxAgeDays',
     'CertificateWarningDays','SystemPartitionMinFreeMB','RecoveryPartitionMinFreeMB',
     'RunDISMScanHealth','RunSFCVerifyOnly','DISMTimeoutMinutes','SFCTimeoutMinutes','SlowCheckBudgetMinutes','CompatScanTimeoutMinutes',
-    'EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip',
+    'EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip','EnableIISConfigEvidence',
     'WriteJson','RestrictOutputAcl','NumberCultureName'
 )
 $script:PatternFields = @('Label','App','Service','Display','Driver','Disabled')
@@ -565,6 +569,47 @@ function Initialize-OutputFolder {
         Write-AssessmentLog 'WARNING' 'ACL' ('Could not restrict ' + $Path + ': ' + $_.Exception.Message)
         return 'CreatedUnrestricted'
     }
+}
+
+function Save-IISConfigEvidence {
+    # Copies the IIS configuration files into a new, restricted evidence
+    # folder and zips it (#76). Read-only for IIS: nothing under inetsrv is
+    # written. applicationHost.config can hold encrypted secrets, so the
+    # folder gets the same SYSTEM/Administrators-only access as the other
+    # evidence. Throws when nothing could be copied.
+    param(
+        [Parameter(Mandatory=$true)][string]$Destination,
+        [string]$SourceFolder = (Join-Path $env:windir 'System32\inetsrv\config'),
+        [bool]$Zip = $true
+    )
+    $files = @(Get-ChildItem -LiteralPath $SourceFolder -Filter '*.config' -File -ErrorAction Stop)
+    if ($files.Count -eq 0) { throw ('No .config files found in ' + $SourceFolder) }
+    $null = Initialize-OutputFolder $Destination
+    foreach ($f in $files) { Copy-Item -LiteralPath $f.FullName -Destination $Destination -Force -ErrorAction Stop }
+    $hash = ''
+    $appHost = Join-Path $Destination 'applicationHost.config'
+    if (Test-Path -LiteralPath $appHost) {
+        try { $hash = (Get-FileHash -LiteralPath $appHost -Algorithm SHA256 -ErrorAction Stop).Hash } catch { Write-Swallowed $_ }
+    }
+    # Shared configuration: redirection.config points to the real files.
+    $shared = ''
+    $redirection = Join-Path $Destination 'redirection.config'
+    if (Test-Path -LiteralPath $redirection) {
+        try {
+            [xml]$doc = [IO.File]::ReadAllText($redirection)
+            $node = $doc.SelectSingleNode('//configurationRedirection')
+            if ($node -and [string]$node.GetAttribute('enabled') -eq 'true') { $shared = [string]$node.GetAttribute('path') }
+        } catch { Write-Swallowed $_ }
+    }
+    $location = $Destination
+    if ($Zip) {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zipPath = $Destination + '.zip'
+        if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+        [IO.Compression.ZipFile]::CreateFromDirectory($Destination, $zipPath, [IO.Compression.CompressionLevel]::Optimal, $false)
+        $location = $zipPath
+    }
+    return [pscustomobject]@{ Location = $location; Folder = $Destination; Files = @($files | ForEach-Object { $_.Name } | Sort-Object); ApplicationHostSha256 = $hash; SharedConfigPath = $shared }
 }
 
 function Get-BroadFolderReader {
@@ -2168,7 +2213,23 @@ Register-Check -Id 'workloads' -Name 'Roles and workloads' -Script {
 # ---------------------------------------------------------------------------
 Register-Check -Id 'iis' -Name 'IIS' -Script {
     if ((Get-FeatureState 'Web-Server') -ne $true) { Add-Result 'IIS' 'Web-Server' 'OK' 'Not installed' -Source 'Get-WindowsFeature'; return }
-    Add-Result 'IIS' 'Web-Server' 'WARNING' 'Installed' -Recommendation 'Back up the IIS configuration immediately before IPU (appcmd add backup) and keep site, binding and certificate documentation.' -Source 'Get-WindowsFeature'
+    Add-Result 'IIS' 'Web-Server' 'WARNING' 'Installed' -Recommendation 'Immediately before the IPU, run "%windir%\system32\inetsrv\appcmd.exe add backup PreIPU" (the copy in this report is from assessment time), and keep site, binding and certificate documentation.' -Source 'Get-WindowsFeature'
+    if ($EnableIISConfigEvidence) {
+        try {
+            $dest = Join-Path $PolicyEvidenceRoot ($script:SafeComputerName + '-IPU-IIS-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+            $null = Initialize-OutputFolder $PolicyEvidenceRoot
+            $copy = Save-IISConfigEvidence -Destination $dest -Zip $CreatePolicyEvidenceZip
+            $script:Data.IISConfigEvidence = $copy.Location
+            Add-Result 'IIS' 'ConfigurationCopy' 'OK' $copy.Location @(('Files=' + ($copy.Files -join ', ')), ('applicationHost.config SHA256=' + $copy.ApplicationHostSha256)) -Recommendation 'Restore: copy the files back to %windir%\System32\inetsrv\config, or put them in a folder under inetsrv\backup and run "appcmd restore backup <folder>". See the user guide.' -Source 'inetsrv\config (copied, not changed)'
+            if ($copy.SharedConfigPath) {
+                Add-Result 'IIS' 'SharedConfiguration' 'WARNING' ('Enabled: ' + $copy.SharedConfigPath) 'The local files only point to the shared location.' -Recommendation 'Back up the shared configuration at that path as well, and confirm every server that uses it before the change.' -Kind 'Observation' -Source 'redirection.config'
+            }
+        } catch {
+            Add-Result 'IIS' 'ConfigurationCopy' 'MANUAL' 'Could not copy the IIS configuration' $_.Exception.Message -Recommendation 'Back up the IIS configuration manually before the change: appcmd add backup PreIPU, or copy %windir%\System32\inetsrv\config.' -Kind 'Finding' -Source 'inetsrv\config'
+        }
+    } else {
+        Add-Result 'IIS' 'ConfigurationCopy' 'INFO' 'Not taken (EnableIISConfigEvidence is off)' -Source 'SETTINGS'
+    }
     if (-not (Get-Module -ListAvailable WebAdministration)) { return }
     Import-Module WebAdministration
     foreach ($site in @(Get-Website)) {

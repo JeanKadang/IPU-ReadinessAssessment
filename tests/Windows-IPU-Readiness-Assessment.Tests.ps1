@@ -1660,6 +1660,45 @@ Describe 'Security tools: finding only with a driver (#78)' {
     }
 }
 
+Describe 'Save-IISConfigEvidence (#76)' {
+    BeforeAll {
+        $script:IisSource = Join-Path $TestDrive 'inetsrv-config'
+        New-Item -ItemType Directory -Path $script:IisSource | Out-Null
+        [IO.File]::WriteAllText((Join-Path $script:IisSource 'applicationHost.config'), '<configuration><system.applicationHost /></configuration>')
+        [IO.File]::WriteAllText((Join-Path $script:IisSource 'administration.config'), '<configuration />')
+        [IO.File]::WriteAllText((Join-Path $script:IisSource 'redirection.config'), '<configuration><configSections /><configurationRedirection /></configuration>')
+        [IO.File]::WriteAllText((Join-Path $script:IisSource 'notes.txt'), 'not a config file')
+        $script:IisBefore = @(Get-ChildItem -LiteralPath $script:IisSource | ForEach-Object { $_.Name + '|' + $_.Length + '|' + $_.LastWriteTimeUtc.Ticks })
+    }
+    It 'copies every .config file, hashes applicationHost.config and zips the folder' {
+        $dest = Join-Path $TestDrive 'evidence\SRV-IPU-IIS-1'
+        $null = New-Item -ItemType Directory -Path (Split-Path $dest) -Force
+        $r = Save-IISConfigEvidence -Destination $dest -SourceFolder $script:IisSource
+        ($r.Files -join ',') | Should -Be 'administration.config,applicationHost.config,redirection.config'
+        $r.Location | Should -Be ($dest + '.zip')
+        Test-Path -LiteralPath $r.Location | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $dest 'notes.txt') | Should -BeFalse
+        $r.ApplicationHostSha256 | Should -Be (Get-FileHash -LiteralPath (Join-Path $script:IisSource 'applicationHost.config') -Algorithm SHA256).Hash
+        $r.SharedConfigPath | Should -Be ''
+    }
+    It 'does not change the source folder' {
+        @(Get-ChildItem -LiteralPath $script:IisSource | ForEach-Object { $_.Name + '|' + $_.Length + '|' + $_.LastWriteTimeUtc.Ticks }) -join ';' | Should -Be ($script:IisBefore -join ';')
+    }
+    It 'reports shared configuration from redirection.config' {
+        $src = Join-Path $TestDrive 'shared-config'
+        New-Item -ItemType Directory -Path $src | Out-Null
+        [IO.File]::WriteAllText((Join-Path $src 'redirection.config'), '<configuration><configurationRedirection enabled="true" path="\\files.example.test\iisconfig" /></configuration>')
+        $r = Save-IISConfigEvidence -Destination (Join-Path $TestDrive 'shared-copy') -SourceFolder $src -Zip $false
+        $r.SharedConfigPath | Should -Be '\\files.example.test\iisconfig'
+        $r.Location | Should -Be (Join-Path $TestDrive 'shared-copy')
+    }
+    It 'throws when there is nothing to copy' {
+        $empty = Join-Path $TestDrive 'empty-config'
+        New-Item -ItemType Directory -Path $empty | Out-Null
+        { Save-IISConfigEvidence -Destination (Join-Path $TestDrive 'never') -SourceFolder $empty } | Should -Throw '*No .config files*'
+    }
+}
+
 Describe 'User Account Control (#75)' {
     It '<Case>' -TestCases @(
         @{ Case = 'all defaults (no values) is on, Windows default'; Lua = $null; Consent = $null; Secure = $null; Filter = $null; Expected = 'On - prompt for consent for non-Windows programs (Windows default)' }

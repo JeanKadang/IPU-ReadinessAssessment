@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- When IIS is installed, its configuration files are copied into a restricted evidence folder and ZIP (`-EnableIISConfigEvidence`, default on); the report shows the location and the SHA-256 of `applicationHost.config`, and flags shared configuration (#76).
+
 - User Account Control status in plain words in the summary, the JSON facts and the snapshot; the post-upgrade comparison reports a change (#75).
 
 ### CI
