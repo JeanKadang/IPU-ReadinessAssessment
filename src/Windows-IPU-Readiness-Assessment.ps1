@@ -1241,6 +1241,19 @@ function Get-DefenderEndpointDecision {
     return [pscustomobject]@{ Status='INFO'; Active=$false; Text='Built-in sensor present, not onboarded (service ' + $SenseState + ', OnboardingState ' + $state + ')' }
 }
 
+function Get-SecurityToolDecision {
+    # Pure: a security or monitoring tool with a kernel or filter driver can
+    # break Windows Setup (a common cause of rollback), so it is a finding.
+    # A user-mode tool without drivers rarely does; it is listed as an
+    # observation to verify after the upgrade (#78).
+    param([string[]]$Drivers = @(), [string]$Target = 'the target release')
+    $drv = @($Drivers | Where-Object { $_ })
+    if ($drv.Count -gt 0) {
+        return [pscustomobject]@{ Kind = 'Finding'; Recommendation = ('Installs a driver (' + ($drv -join ', ') + '). Confirm this version supports ' + $Target + ' and whether the vendor wants it updated or stopped during Setup; drivers are a common cause of rollback.') }
+    }
+    return [pscustomobject]@{ Kind = 'Observation'; Recommendation = ('No driver found, so it rarely affects Setup. Check that it starts and reports again after the upgrade, and that the vendor supports ' + $Target + '.') }
+}
+
 function Get-DetectionProductName {
     # Pure: "<Label> <version>" from the first application that matched, so
     # the summary names the product and build that is installed.
@@ -2318,7 +2331,8 @@ Register-Check -Id 'antivirus' -Name 'Antivirus, EDR and security tools' -Script
     }
 
     foreach ($m in (Find-DetectionMatch $script:DetectionPatterns.SecurityTools $script:Data.Apps $script:Data.Services $script:Data.DriverNames)) {
-        Add-Result 'SECURITY' $m.Label 'WARNING' ('Applications=' + @($m.Apps).Count + ', Services=' + @($m.Services).Count + ', Drivers=' + @($m.Drivers).Count) (Get-DetectionEvidence $m) -Recommendation ('Confirm ' + $target + ' support and that it will not block Setup.') -Source 'Uninstall registry, Win32_Service, drivers'
+        $tool = Get-SecurityToolDecision @($m.Drivers) $target
+        Add-Result 'SECURITY' $m.Label 'WARNING' ('Applications=' + @($m.Apps).Count + ', Services=' + @($m.Services).Count + ', Drivers=' + @($m.Drivers).Count) (Get-DetectionEvidence $m) -Recommendation $tool.Recommendation -Kind $tool.Kind -Source 'Uninstall registry, Win32_Service, drivers'
     }
 
     if (Test-CommandAvailable 'Get-AppLockerPolicy') {

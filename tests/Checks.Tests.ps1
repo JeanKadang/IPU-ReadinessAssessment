@@ -885,6 +885,7 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             (Get-Row 'ANTIVIRUS' 'Microsoft Defender Antivirus')[0].Status | Should -Be 'OK'
             (Get-Row 'ANTIVIRUS' 'Trend Micro Deep Security Agent (Server & Workload Protection)')[0].Status | Should -Be 'WARNING'
             (Get-Row 'SECURITY' 'Tenable Nessus agent')[0].Status | Should -Be 'WARNING'
+            (Get-Row 'SECURITY' 'Tenable Nessus agent')[0].Kind | Should -Be 'Observation'   # no driver (#78)
             (Get-Row 'ANTIVIRUS' 'EndpointProtection').Count | Should -Be 0
             (Get-Row 'SECURITY' 'FileSystemFilterDrivers')[0].Details | Should -Match 'tmeyes'
         }

@@ -1643,3 +1643,19 @@ Describe 'Report header: linked counters and plain coverage notes (#77)' {
         }
     }
 }
+
+Describe 'Security tools: finding only with a driver (#78)' {
+    It 'a tool with a driver is a finding that names the driver' {
+        $d = Get-SecurityToolDecision @('SysmonDrv') 'Windows Server 2025'
+        $d.Kind | Should -Be 'Finding'
+        $d.Recommendation | Should -Match 'Installs a driver \(SysmonDrv\)'
+        $d.Recommendation | Should -Match 'Windows Server 2025'
+    }
+    It 'a tool without a driver is an observation to verify after the upgrade' {
+        foreach ($none in @(@(), @(''), $null)) {
+            $d = Get-SecurityToolDecision $none 'Windows Server 2025'
+            $d.Kind | Should -Be 'Observation'
+            $d.Recommendation | Should -Match 'after the upgrade'
+        }
+    }
+}
