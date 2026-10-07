@@ -1934,3 +1934,24 @@ Describe 'User Account Control (#75)' {
         @($d | Where-Object { $_.Item -eq 'UAC changed' }).Count | Should -Be 0
     }
 }
+
+Describe 'Group Policy system helpers on a real Windows host (#80)' -Tag 'Integration' {
+    It 'Get-GpResultXml returns RSoP XML that the parser reads, or a clear error' -Skip:($env:OS -ne 'Windows_NT') {
+        $xml = $null; $err = $null
+        try { $xml = Get-GpResultXml } catch { $err = $_.Exception.Message }
+        if ($xml) {
+            { ConvertFrom-GpResultXml $xml } | Should -Not -Throw
+            @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Filter 'IPU-gpresult-*.xml' -ErrorAction SilentlyContinue).Count | Should -Be 0
+        } else {
+            $err | Should -Not -BeNullOrEmpty
+        }
+    }
+    It 'Get-GroupPolicyLastApplied returns a date or nothing, never throws' -Skip:($env:OS -ne 'Windows_NT') {
+        { $script:gpLast = Get-GroupPolicyLastApplied } | Should -Not -Throw
+        if ($null -ne $script:gpLast) { $script:gpLast | Should -BeOfType ([datetime]) }
+    }
+    It 'Get-AdComputerGroup and Get-WmiFilterQuery fail clearly when the host is not in a domain' -Skip:($env:OS -ne 'Windows_NT' -or $env:USERDNSDOMAIN) {
+        { Get-AdComputerGroup } | Should -Throw
+        { Get-WmiFilterQuery @('{11111111-1111-1111-1111-111111111111}') } | Should -Throw
+    }
+}

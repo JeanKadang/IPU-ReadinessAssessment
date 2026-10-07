@@ -2145,7 +2145,9 @@ Register-Check -Id 'grouppolicy' -Name 'Group Policy and AD groups' -Script {
     $groups = @(); $filters = @{}; $adError = ''; $adRead = $true
     if ($domainMember) {
         try {
-            $groups = @(Get-AdComputerGroup)
+            # Assign first: the function returns the list as one object.
+            $groups = Get-AdComputerGroup
+            $groups = @($groups | Where-Object { $_ })
             if ($gp) { $filters = Get-WmiFilterQuery @($gp.Gpos | ForEach-Object { $_.Guid }) }
         } catch { $adRead = $false; $adError = $_.Exception.Message; Write-Swallowed $_ }
     }
