@@ -191,6 +191,24 @@ Describe 'Merge-IPUAssessments.ps1 - modes, order, delimiter and safety (#41)' {
     }
 }
 
+Describe 'Merge-IPUAssessments.ps1 - commands and links (#79)' {
+    It 'exports Command and Link with each finding, empty for results from older versions' {
+        $dir = Join-Path $TestDrive 'cmd'
+        New-Item -ItemType Directory -Path $dir | Out-Null
+        $withCmd = New-FakeFinding 'ACTION' 'C: free space'
+        $withCmd | Add-Member -NotePropertyName Command -NotePropertyValue 'Get-Volume -DriveLetter C'
+        $withCmd | Add-Member -NotePropertyName CommandKind -NotePropertyValue 'Check'
+        $withCmd | Add-Member -NotePropertyName Link -NotePropertyValue 'https://learn.microsoft.com/x'
+        Save-Result (New-FakeResult 'SRV-CMD' -Overall 'ACTION' -Results @($withCmd, (New-FakeFinding 'WARNING' 'Old style'))) $dir 'SRV-CMD-IPU-Assessment.json'
+        $null = & $script:MergeScript -InputFolder $dir
+        $rows = @(Import-Csv -LiteralPath (Join-Path $dir 'IPU-Fleet-Findings.csv') -Delimiter ';')
+        $a = @($rows | Where-Object { $_.Item -eq 'C: free space' })[0]
+        $a.Command | Should -Be 'Get-Volume -DriveLetter C'
+        $a.Link | Should -Be 'https://learn.microsoft.com/x'
+        @($rows | Where-Object { $_.Item -eq 'Old style' })[0].Command | Should -Be ''
+    }
+}
+
 Describe 'Merge-IPUAssessments.ps1 - redacted results (#30)' {
     It 'keeps every redacted file as its own row and marks it' {
         $dir = Join-Path $TestDrive 'redacted'

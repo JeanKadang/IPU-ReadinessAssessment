@@ -1,4 +1,4 @@
-# Pester 5 tests for the 31 Register-Check bodies (issue #17).
+# Pester 5 tests for the Register-Check bodies (issue #17).
 #
 # The checks run against a FAKE SERVER: after the script is loaded in library
 # mode, this file defines stand-ins for every system command the checks use
@@ -78,6 +78,48 @@ BeforeAll {
         }
     }
     function Get-InstalledApplication { return @($script:Fake.Apps) }
+    function Get-GpResultXml {
+        if ($script:Fake.GpResultError) { throw $script:Fake.GpResultError }
+        if ($script:Fake.GpResultXml) { return $script:Fake.GpResultXml }
+        if ($script:Fake.Cim['Win32_ComputerSystem'].PartOfDomain) { return (New-FakeGpXml) }
+        return (New-FakeGpXml -Workgroup)
+    }
+    function Get-AdComputerGroup {
+        if ($script:Fake.AdError) { throw $script:Fake.AdError }
+        return ,@('CORP\Domain Computers', 'CORP\Patch Ring 2', 'CORP\Servers - All')
+    }
+    function Get-WmiFilterQuery {
+        param([string[]]$GpoGuids)
+        if ($script:Fake.AdError) { throw $script:Fake.AdError }
+        return @{ '{11111111-1111-1111-1111-111111111111}' = @{ Name = 'Server 2016-2022 only'; Queries = @([pscustomobject]@{ Namespace = 'root\CIMv2'; Query = "SELECT * FROM Win32_OperatingSystem WHERE Version LIKE '10.0.14393%' OR Version LIKE '10.0.20348%'" }) } }
+    }
+    function Get-GroupPolicyLastApplied {
+        if ($script:Fake.ContainsKey('GpLastApplied')) { return $script:Fake.GpLastApplied }
+        return (Get-Date).AddHours(-3)
+    }
+    # Synthetic gpresult /x output in the RSoP format (fictional domain).
+    function New-FakeGpXml {
+        param([switch]$Workgroup)
+        $t = 'xmlns="http://www.microsoft.com/GroupPolicy/Types"'
+        if ($Workgroup) {
+            return '<?xml version="1.0" encoding="utf-16"?><Rsop xmlns="http://www.microsoft.com/GroupPolicy/Rsop"><ComputerResults><Name>SRV01</Name><Domain>WORKGROUP</Domain>' +
+                '<GPO><Name>Local Group Policy</Name><Path><Identifier ' + $t + '>LocalGPO</Identifier></Path><Enabled>true</Enabled><IsValid>true</IsValid><FilterAllowed>true</FilterAllowed><AccessDenied>false</AccessDenied><Link><SOMPath>Local</SOMPath><AppliedOrder>1</AppliedOrder><Enabled>true</Enabled></Link></GPO>' +
+                '</ComputerResults></Rsop>'
+        }
+        return '<?xml version="1.0" encoding="utf-16"?><Rsop xmlns="http://www.microsoft.com/GroupPolicy/Rsop"><ReadTime>2026-10-07T10:00:00</ReadTime><ComputerResults><Name>CORP\SRV01$</Name><Domain>corp.example.test</Domain><Site>Site-A</Site>' +
+            '<SecurityGroup><SID ' + $t + '>S-1-5-21-1-2-3-515</SID><Name ' + $t + '>CORP\Domain Computers</Name></SecurityGroup>' +
+            '<SecurityGroup><SID ' + $t + '>S-1-5-21-1-2-3-4001</SID><Name ' + $t + '>CORP\Patch Ring 2</Name></SecurityGroup>' +
+            '<GPO><Name>Server Baseline</Name><Path><Identifier ' + $t + '>{11111111-1111-1111-1111-111111111111}</Identifier><Domain ' + $t + '>corp.example.test</Domain></Path><Enabled>true</Enabled><IsValid>true</IsValid><FilterAllowed>true</FilterAllowed><AccessDenied>false</AccessDenied><Link><SOMPath>corp.example.test/Servers</SOMPath><SOMOrder>1</SOMOrder><AppliedOrder>2</AppliedOrder><LinkOrder>1</LinkOrder><Enabled>true</Enabled><NoOverride>false</NoOverride></Link><FilterName>Server 2016-2022 only</FilterName></GPO>' +
+            '<GPO><Name>Default Domain Policy</Name><Path><Identifier ' + $t + '>{31B2F340-016D-11D2-945F-00C04FB984F9}</Identifier></Path><Enabled>true</Enabled><IsValid>true</IsValid><FilterAllowed>true</FilterAllowed><AccessDenied>false</AccessDenied><Link><SOMPath>corp.example.test</SOMPath><AppliedOrder>1</AppliedOrder><Enabled>true</Enabled></Link></GPO>' +
+            '<GPO><Name>Workstation Settings</Name><Path><Identifier ' + $t + '>{22222222-2222-2222-2222-222222222222}</Identifier></Path><Enabled>true</Enabled><IsValid>true</IsValid><FilterAllowed>false</FilterAllowed><AccessDenied>false</AccessDenied><Link><SOMPath>corp.example.test</SOMPath><AppliedOrder>0</AppliedOrder><Enabled>true</Enabled></Link></GPO>' +
+            '<GPO><Name>Admins Only</Name><Path><Identifier ' + $t + '>{33333333-3333-3333-3333-333333333333}</Identifier></Path><Enabled>true</Enabled><IsValid>true</IsValid><FilterAllowed>true</FilterAllowed><AccessDenied>true</AccessDenied><Link><SOMPath>corp.example.test/Servers</SOMPath><AppliedOrder>0</AppliedOrder><Enabled>true</Enabled></Link></GPO>' +
+            '</ComputerResults></Rsop>'
+    }
+    function Save-IISConfigEvidence {
+        param([string]$Destination, [string]$SourceFolder = '', [bool]$Zip = $true)
+        if ($script:Fake.IISCopyError) { throw $script:Fake.IISCopyError }
+        return [pscustomobject]@{ Location = ($Destination + '.zip'); Folder = $Destination; Files = @('administration.config', 'applicationHost.config', 'redirection.config'); ApplicationHostSha256 = ('AB' * 32); SharedConfigPath = [string]$script:Fake.IISShared }
+    }
     function Get-LocalGroupMembersBySid { param([string]$Sid) return ,@($script:Fake.Groups[$Sid]) }
     function Read-FileTail { param([string]$Path, [int]$MaxBytes = 0) return ,@($script:Fake.CbsLines) }
     function Test-CommandAvailable { param([string]$Name) return ($script:Fake.MissingCommands -notcontains $Name) }
@@ -367,8 +409,8 @@ BeforeAll {
 AfterAll { Remove-Item Env:\IPU_ASSESSMENT_LIBRARY_ONLY -ErrorAction SilentlyContinue }
 
 Describe 'Check registry' {
-    It 'registers 31 checks with unique ids' {
-        $script:AllChecks.Count | Should -Be 31
+    It 'registers 32 checks with unique ids' {
+        $script:AllChecks.Count | Should -Be 32
         @($script:AllChecks | Group-Object Id | Where-Object { $_.Count -gt 1 }).Count | Should -Be 0
     }
     It 'docs/checks.md describes every registered check' {
@@ -539,6 +581,50 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
         }
     }
 
+    Context 'grouppolicy' {
+        It 'a domain member: GPOs with their state, an OS-version WMI filter as WARNING, groups and the snapshot (#80)' {
+            (Invoke-TestCheck 'grouppolicy').Outcome | Should -Be 'Completed'
+            $baseline = (Get-Row 'GROUP_POLICY' 'GPO: Server Baseline')[0]
+            $baseline.Status | Should -Be 'WARNING'
+            $baseline.Value | Should -Be 'Applied - WMI filter depends on the Windows version'
+            $baseline.Details | Should -Match "Query: SELECT \* FROM Win32_OperatingSystem WHERE Version LIKE '10.0.14393%'"
+            (Get-Row 'GROUP_POLICY' 'GPO: Default Domain Policy')[0].Status | Should -Be 'INFO'
+            (Get-Row 'GROUP_POLICY' 'GPO: Workstation Settings')[0].Value | Should -Be 'Denied (WMI filter)'
+            (Get-Row 'GROUP_POLICY' 'ADGroup').Count | Should -Be 3
+            (Get-Row 'GROUP_POLICY' 'GroupPolicyLastApplied')[0].Status | Should -Be 'OK'
+            ($script:Data.Snapshot.Gpos -join ',') | Should -Be 'Default Domain Policy,Server Baseline'
+            $script:Data.Snapshot.Groups | Should -Contain 'CORP\Patch Ring 2'
+        }
+        It 'a workgroup server: local policy only, no MANUAL (#80)' {
+            $script:Fake.Cim['Win32_ComputerSystem'].PartOfDomain = $false
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'grouppolicy'
+            (Get-Row 'GROUP_POLICY' 'GroupPolicyScope')[0].Value | Should -Be 'Workgroup server: only local policy applies'
+            (Get-Row 'GROUP_POLICY' 'GPO: Local Group Policy')[0].Value | Should -Be 'Applied'
+            (Get-Row 'GROUP_POLICY' 'ADGroup')[0].Value | Should -Be 'Not applicable (workgroup)'
+            @($script:Results | Where-Object { $_.Area -eq 'GROUP_POLICY' -and $_.Status -eq 'MANUAL' }).Count | Should -Be 0
+        }
+        It 'a domain member that cannot reach AD: MANUAL, GPO list still shown, groups not in the snapshot (#80)' {
+            $script:Fake.AdError = 'The server is not operational.'
+            $null = Invoke-TestCheck 'grouppolicy'
+            (Get-Row 'GROUP_POLICY' 'DomainLookup')[0].Status | Should -Be 'MANUAL'
+            (Get-Row 'GROUP_POLICY' 'GPO: Server Baseline')[0].Status | Should -Be 'INFO'
+            (Get-Row 'GROUP_POLICY' 'ADGroup').Count | Should -Be 0
+            $script:Data.Snapshot.ContainsKey('Groups') | Should -BeFalse
+        }
+        It 'gpresult failing on a domain member: MANUAL and no GPO list in the snapshot (#80)' {
+            $script:Fake.GpResultError = 'gpresult wrote no result (exit 1)'
+            $null = Invoke-TestCheck 'grouppolicy'
+            (Get-Row 'GROUP_POLICY' 'GroupPolicyScope')[0].Status | Should -Be 'MANUAL'
+            $script:Data.Snapshot.ContainsKey('Gpos') | Should -BeFalse
+        }
+        It 'Group Policy not applied for longer than GroupPolicyMaxAgeDays is a WARNING (#80)' {
+            $script:Fake.GpLastApplied = (Get-Date).AddDays(-30)
+            $null = Invoke-TestCheck 'grouppolicy'
+            (Get-Row 'GROUP_POLICY' 'GroupPolicyLastApplied')[0].Status | Should -Be 'WARNING'
+        }
+    }
+
     Context 'domain' {
         It 'a member server with a working secure channel is OK' {
             (Invoke-TestCheck 'domain').Outcome | Should -Be 'Completed'
@@ -546,6 +632,16 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             (Get-Row 'ACCESS' 'BuiltInAdministrator')[0].Value | Should -Be 'Name=LocalAdmin'
             (Get-Row 'ACCESS' 'LocalAdministratorsMember').Count | Should -Be 2
             (Get-Row 'DOMAIN_CONTROLLER' 'DomainController').Count | Should -Be 0
+        }
+        It 'reports UAC in plain words, from the registry (#75)' {
+            $script:Fake.Registry['HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System|EnableLUA'] = 1
+            $script:Fake.Registry['HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System|ConsentPromptBehaviorAdmin'] = 2
+            $null = Invoke-TestCheck 'domain'
+            $row = (Get-Row 'ACCESS' 'UAC')[0]
+            $row.Status | Should -Be 'INFO'
+            $row.Value | Should -Be 'On - prompt for consent on the secure desktop'
+            $script:Data.UacSummary | Should -Be $row.Value
+            $script:Data.Snapshot.Uac | Should -Be $row.Value
         }
         It 'a domain controller is a BLOCKER by company policy' {
             $script:Fake.Cim['Win32_ComputerSystem'].DomainRole = 5
@@ -803,6 +899,50 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $null = Invoke-TestCheck 'iis'
             (Get-Row 'IIS' 'Web-Server')[0].Status | Should -Be 'WARNING'
             (Get-Row 'IIS' 'Site: Default Web Site')[0].Details | Should -Match 'https:\*:443:'
+        }
+        It 'IIS installed: the configuration is copied into the evidence folder (#76)' {
+            $PolicyEvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $script:Fake.Features['Web-Server'] = $true
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'iis'
+            $row = (Get-Row 'IIS' 'ConfigurationCopy')[0]
+            $row.Status | Should -Be 'OK'
+            $row.Value | Should -BeLike '*-IPU-IIS-*.zip'
+            $row.Details | Should -Match 'applicationHost.config SHA256=(AB){32}'
+            (Get-Row 'IIS' 'SharedConfiguration').Count | Should -Be 0
+            (Get-Row 'IIS' 'Web-Server')[0].Recommendation | Should -Match 'appcmd.exe add backup'
+        }
+        It 'IIS with shared configuration is a WARNING observation (#76)' {
+            $PolicyEvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $script:Fake.Features['Web-Server'] = $true
+            $script:Fake.IISShared = '\\files.example.test\iisconfig'
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'iis'
+            $row = (Get-Row 'IIS' 'SharedConfiguration')[0]
+            $row.Status | Should -Be 'WARNING'
+            $row.Kind | Should -Be 'Observation'
+        }
+        It 'a failed copy is MANUAL, not silence (#76)' {
+            $PolicyEvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $script:Fake.Features['Web-Server'] = $true
+            $script:Fake.IISCopyError = 'Access is denied'
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'iis'
+            $row = (Get-Row 'IIS' 'ConfigurationCopy')[0]
+            $row.Status | Should -Be 'MANUAL'
+            $row.Kind | Should -Be 'Finding'
+            $row.Details | Should -Match 'Access is denied'
+        }
+        It 'switched off: no copy, and said so (#76)' {
+            $EnableIISConfigEvidence = $false
+            $script:Fake.Features['Web-Server'] = $true
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'iis'
+            (Get-Row 'IIS' 'ConfigurationCopy')[0].Status | Should -Be 'INFO'
+        }
+        It 'no IIS: nothing is copied (#76)' {
+            $null = Invoke-TestCheck 'iis'
+            (Get-Row 'IIS' 'ConfigurationCopy').Count | Should -Be 0
         }
     }
 

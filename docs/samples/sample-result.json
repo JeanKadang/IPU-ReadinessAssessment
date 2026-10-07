@@ -22,6 +22,7 @@
     "RecommendedMedia": "Windows Server 2025 Standard (Desktop Experience) - en-US media",
     "Platform": "Virtual (VMware) | Manufacturer=VMware, Inc. | Model=VMware7,1",
     "DomainRole": "Member server",
+    "Uac": null,
     "SqlServer": "MSSQLSERVER=SQL Server 2017",
     "Activation": "Status=Licensed, Channel=Volume:GVLK",
     "CDrive": "Size 100,00 GB, free 22,00 GB",
@@ -37,7 +38,11 @@
       "Value": "Microsoft Windows Server 2016 Standard",
       "Details": "Build=14393.7428 | Release=Windows Server 2016 | Architecture=64-bit",
       "Recommendation": "",
-      "Source": "Win32_OperatingSystem"
+      "Source": "Win32_OperatingSystem",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "upgradepath",
@@ -48,7 +53,11 @@
       "Value": "Supported in-place upgrade path: Windows Server 2016 to Windows Server 2025.",
       "Details": "Target=Windows Server 2025",
       "Recommendation": "",
-      "Source": "Microsoft supported upgrade paths (installation media)"
+      "Source": "Microsoft supported upgrade paths (installation media)",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "https://learn.microsoft.com/en-us/windows-server/get-started/perform-in-place-upgrade",
+      "LinkTitle": "Microsoft: Perform an in-place upgrade of Windows Server"
     },
     {
       "CheckId": "upgradepath",
@@ -59,7 +68,11 @@
       "Value": "Edition=Standard, Desktop Experience",
       "Details": "EditionID=ServerStandard | InstallationType=Server",
       "Recommendation": "Standard is retained by default (Datacenter is also allowed as an upgrade). Select the Desktop Experience image; switching between Server Core and Desktop Experience during IPU is not supported.",
-      "Source": "HKLM CurrentVersion"
+      "Source": "HKLM CurrentVersion",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "upgradepath",
@@ -70,7 +83,11 @@
       "Value": "Installed=en-US",
       "Details": "DefaultUILanguage=en-US | SystemLocale=da-DK (not relevant for media)",
       "Recommendation": "Installation media must be en-US.",
-      "Source": "Nls\\Language InstallLanguage"
+      "Source": "Nls\\Language InstallLanguage",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "upgradepath",
@@ -81,7 +98,11 @@
       "Value": "Windows Server 2025 Standard (Desktop Experience) - en-US media",
       "Details": "Select exactly this image in Setup.",
       "Recommendation": "",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "licensing",
@@ -92,7 +113,11 @@
       "Value": "Status=Licensed, Channel=Volume:GVLK",
       "Details": "PartialProductKey=ABCDE | KMS=kms.example.test:1688",
       "Recommendation": "",
-      "Source": "SoftwareLicensingProduct"
+      "Source": "SoftwareLicensingProduct",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "pendingreboot",
@@ -103,7 +128,11 @@
       "Value": "PendingFileRenameOperations",
       "Details": "Files waiting to be replaced: | C:\\Program Files\\Example EDR\\driver.sys",
       "Recommendation": "The paths show which product left the pending rename (often AV or an agent update). Reboot in the pre-change window; if the same entries come back, ask that product's owner.",
-      "Source": ""
+      "Source": "",
+      "Command": "Get-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue | Select-Object -ExpandProperty PendingFileRenameOperations",
+      "CommandKind": "Check",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "pendingreboot",
@@ -114,7 +143,11 @@
       "Value": "UptimeDays=7",
       "Details": "LastBoot=2026-09-29 01:09",
       "Recommendation": "",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "sql",
@@ -125,7 +158,11 @@
       "Value": "SQL Server 2017",
       "Details": "Version=14.0.3485.1 | Edition=Standard Edition | InstanceId=MSSQL14.MSSQLSERVER",
       "Recommendation": "SQL Server 2017 is not supported on Windows Server 2025. Windows Server 2022 supports this SQL version - choose that target, or upgrade SQL Server first.",
-      "Source": "SQL Server instance registry"
+      "Source": "SQL Server instance registry",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "workloads",
@@ -136,7 +173,11 @@
       "Value": "Applications=1, Services=0",
       "Details": "Eclipse Temurin JRE with Hotspot 17.0.12",
       "Recommendation": "Engage the application owner and confirm Java runtime supports Windows Server 2025.",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "platform",
@@ -147,7 +188,11 @@
       "Value": "Virtual (VMware)",
       "Details": "Manufacturer=VMware, Inc. | Model=VMware7,1",
       "Recommendation": "",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "vmware",
@@ -158,7 +203,11 @@
       "Value": "Version=12.3.5.22544099",
       "Details": "VMTools service Running, Auto",
       "Recommendation": "VMware Tools 12.3.5.22544099 predates 12.5.0, the first release with drivers certified for Windows Server 2025. Update VMware Tools before IPU.",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "vmware",
@@ -169,7 +218,11 @@
       "Value": "Not visible from inside the guest",
       "Details": "",
       "Recommendation": "Windows Server 2025 is certified on vSphere 7.0 U3 and 8.0.x. Confirm the host (and any vMotion/DRS target) runs one of these.",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "performance",
@@ -180,7 +233,11 @@
       "Value": "2",
       "Details": "",
       "Recommendation": "Setup will be noticeably slower on 2 logical CPUs; consider adding CPU temporarily for the change window.",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "performance",
@@ -191,7 +248,11 @@
       "Value": "16,00",
       "Details": "",
       "Recommendation": "",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "storage",
@@ -202,7 +263,11 @@
       "Value": "Size 100,00 GB, free 22,00 GB",
       "Details": "RequiredExpansionGB=20",
       "Recommendation": "Extend C: by at least 20 GB to reach the 40 GB free-space target.",
-      "Source": ""
+      "Source": "",
+      "Command": "Get-Volume -DriveLetter C | Format-List DriveLetter, FileSystemLabel, @{ n = 'SizeGB'; e = { [math]::Round($_.Size / 1GB, 1) } }, @{ n = 'FreeGB'; e = { [math]::Round($_.SizeRemaining / 1GB, 1) } }",
+      "CommandKind": "Check",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "storage",
@@ -213,7 +278,11 @@
       "Value": "No",
       "Details": "",
       "Recommendation": "",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "storage",
@@ -224,7 +293,11 @@
       "Value": "SizeGB=30,00",
       "Details": "BusType=SAS | Style=GPT | Offline=False | P1:Basic:20480MB:D::Label=Data:NTFS | P2:Basic:10240MB:MountedAt=D:\\Logs\\:Label=Logs:NTFS",
       "Recommendation": "",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "network",
@@ -235,7 +308,11 @@
       "Value": "IPv4=10.20.30.40 / 255.255.255.0",
       "Details": "Gateway=10.20.30.1 | DNS=10.20.1.10,10.20.1.11 | DHCP=False",
       "Recommendation": "",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "network",
@@ -246,7 +323,11 @@
       "Value": "No LBFO team detected",
       "Details": "",
       "Recommendation": "",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "network",
@@ -257,7 +338,11 @@
       "Value": "ActiveEntries=1",
       "Details": "C:\\Windows\\System32\\drivers\\etc\\hosts",
       "Recommendation": "Confirm owner and purpose of each hosts entry and test the affected name resolution after IPU.",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "domain",
@@ -268,7 +353,11 @@
       "Value": "Domain=corp.example.test",
       "Details": "Role=Member server",
       "Recommendation": "",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "domain",
@@ -279,7 +368,11 @@
       "Value": "Secure channel verified",
       "Details": "",
       "Recommendation": "",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "rdp",
@@ -290,7 +383,11 @@
       "Value": "GO",
       "Details": "No local RDP blocker detected",
       "Recommendation": "Upstream firewalls, PAM and credentials are outside this check.",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "antivirus",
@@ -301,7 +398,11 @@
       "Value": "Applications=1, Services=1 (1 running), Drivers=2",
       "Details": "Trend Micro Deep Security Agent 20.0 | Service ds_agent (Running) | Drivers TmKmSnsr,tmeyes",
       "Recommendation": "Confirm this version supports Windows Server 2025 and get the vendor's IPU procedure. Many AV/EDR agents must be upgraded before, or paused during, Setup; their drivers are a common cause of rollback.",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "antivirus",
@@ -312,7 +413,11 @@
       "Value": "Applications=1, Services=1, Drivers=0",
       "Details": "Nessus Agent (x64) 11.2",
       "Recommendation": "Confirm Windows Server 2025 support and that it will not block Setup.",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "backup",
@@ -323,7 +428,11 @@
       "Value": "[1] Stable",
       "Details": "No error",
       "Recommendation": "",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "checklist",
@@ -334,7 +443,11 @@
       "Value": "Cannot be proven from inside the guest",
       "Details": "",
       "Recommendation": "Confirm a recent successful backup externally, snapshot eligibility (VMware) and the approved snapshot procedure.",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "checklist",
@@ -345,7 +458,11 @@
       "Value": "Not provable by an unattended inventory",
       "Details": "",
       "Recommendation": "Validate domain logon, PAM checkout and local fallback credentials, plus console (vCenter/iLO/iDRAC) access in case network logon fails.",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "checklist",
@@ -356,7 +473,11 @@
       "Value": "Windows Server 2025 Standard (Desktop Experience) - en-US media",
       "Details": "",
       "Recommendation": "Use media with the exact edition, installation type and language listed.",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "dism",
@@ -367,7 +488,11 @@
       "Value": "ExitCode=0",
       "Details": "Duration=00:07:21 | No component store corruption detected.",
       "Recommendation": "",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "sfc",
@@ -378,7 +503,11 @@
       "Value": "ExitCode=0, Basis=SFC output",
       "Details": "Duration=00:04:18",
       "Recommendation": "",
-      "Source": ""
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     },
     {
       "CheckId": "compatscan",
@@ -389,7 +518,11 @@
       "Value": "0xC1900210 - Setup found no compatibility issues.",
       "Details": "Duration=00:11:05 | ImageIndex=2",
       "Recommendation": "",
-      "Source": "setup.exe /compat scanonly from \\\\fileserver.example.test\\media\\WS2025"
+      "Source": "setup.exe /compat scanonly from \\\\fileserver.example.test\\media\\WS2025",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
     }
   ],
   "CheckRuns": [

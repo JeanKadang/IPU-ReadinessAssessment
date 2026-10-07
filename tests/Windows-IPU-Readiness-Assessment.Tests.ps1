@@ -265,15 +265,18 @@ Describe 'HTML report' {
         $script:html | Should -Match '(?is)</html>\s*$'
     }
     It 'HTML-encodes values' {
-        $script:html | Should -Not -Match '<script>'
-        $script:html | Should -Match '&lt;script&gt;'
+        $script:html | Should -Not -Match 'Not supported <script>'
+        $script:html | Should -Match 'Not supported &lt;script&gt;'
     }
     It 'shows the partial banner and the not-assessed warning' {
         $script:html | Should -Match 'PARTIAL REPORT'
         $script:html | Should -Match 'Not fully assessed'
     }
     It 'contains no external resources' {
-        $script:html | Should -Not -Match '(src|href)="https?:'
+        # Documentation links (#79) are plain <a href>; nothing is loaded.
+        $script:html | Should -Not -Match 'src="https?:'
+        $script:html | Should -Not -Match '<link[^>]+href="https?:'
+        $script:html | Should -Not -Match '@import'
     }
 }
 
@@ -529,7 +532,8 @@ Describe 'Output folder access (#12)' {
     It 'gives the icacls command for an open existing folder, and never counts it as a finding' {
         $d = Get-OutputFolderAccessDecision 'Existing' @('Authenticated Users','Users') 'C:\Reports'
         $d.Kind | Should -Be 'Observation'
-        $d.Text | Should -Match 'icacls "C:\\Reports" /inheritance:r'
+        $d.Command | Should -Be 'icacls "C:\Reports" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F'
+        $d.Text | Should -Match 'command shown'
         $d.Text | Should -Match 'Authenticated Users, Users'
     }
 
@@ -1672,5 +1676,297 @@ Describe 'No company or host names in the repository (#90)' {
             foreach ($n in $names) { if ($text.IndexOf($n, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $hits += $f.Name } }
         }
         $hits | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Group Policy, WMI filters and AD groups (#80)' {
+    BeforeAll {
+    # Synthetic gpresult /x output in the RSoP format (fictional domain).
+    function New-FakeGpXml {
+        param([switch]$Workgroup)
+        $t = 'xmlns="http://www.microsoft.com/GroupPolicy/Types"'
+        if ($Workgroup) {
+            return '<?xml version="1.0" encoding="utf-16"?><Rsop xmlns="http://www.microsoft.com/GroupPolicy/Rsop"><ComputerResults><Name>SRV01</Name><Domain>WORKGROUP</Domain>' +
+                '<GPO><Name>Local Group Policy</Name><Path><Identifier ' + $t + '>LocalGPO</Identifier></Path><Enabled>true</Enabled><IsValid>true</IsValid><FilterAllowed>true</FilterAllowed><AccessDenied>false</AccessDenied><Link><SOMPath>Local</SOMPath><AppliedOrder>1</AppliedOrder><Enabled>true</Enabled></Link></GPO>' +
+                '</ComputerResults></Rsop>'
+        }
+        return '<?xml version="1.0" encoding="utf-16"?><Rsop xmlns="http://www.microsoft.com/GroupPolicy/Rsop"><ReadTime>2026-10-07T10:00:00</ReadTime><ComputerResults><Name>CORP\SRV01$</Name><Domain>corp.example.test</Domain><Site>Site-A</Site>' +
+            '<SecurityGroup><SID ' + $t + '>S-1-5-21-1-2-3-515</SID><Name ' + $t + '>CORP\Domain Computers</Name></SecurityGroup>' +
+            '<SecurityGroup><SID ' + $t + '>S-1-5-21-1-2-3-4001</SID><Name ' + $t + '>CORP\Patch Ring 2</Name></SecurityGroup>' +
+            '<GPO><Name>Server Baseline</Name><Path><Identifier ' + $t + '>{11111111-1111-1111-1111-111111111111}</Identifier><Domain ' + $t + '>corp.example.test</Domain></Path><Enabled>true</Enabled><IsValid>true</IsValid><FilterAllowed>true</FilterAllowed><AccessDenied>false</AccessDenied><Link><SOMPath>corp.example.test/Servers</SOMPath><SOMOrder>1</SOMOrder><AppliedOrder>2</AppliedOrder><LinkOrder>1</LinkOrder><Enabled>true</Enabled><NoOverride>false</NoOverride></Link><FilterName>Server 2016-2022 only</FilterName></GPO>' +
+            '<GPO><Name>Default Domain Policy</Name><Path><Identifier ' + $t + '>{31B2F340-016D-11D2-945F-00C04FB984F9}</Identifier></Path><Enabled>true</Enabled><IsValid>true</IsValid><FilterAllowed>true</FilterAllowed><AccessDenied>false</AccessDenied><Link><SOMPath>corp.example.test</SOMPath><AppliedOrder>1</AppliedOrder><Enabled>true</Enabled></Link></GPO>' +
+            '<GPO><Name>Workstation Settings</Name><Path><Identifier ' + $t + '>{22222222-2222-2222-2222-222222222222}</Identifier></Path><Enabled>true</Enabled><IsValid>true</IsValid><FilterAllowed>false</FilterAllowed><AccessDenied>false</AccessDenied><Link><SOMPath>corp.example.test</SOMPath><AppliedOrder>0</AppliedOrder><Enabled>true</Enabled></Link></GPO>' +
+            '<GPO><Name>Admins Only</Name><Path><Identifier ' + $t + '>{33333333-3333-3333-3333-333333333333}</Identifier></Path><Enabled>true</Enabled><IsValid>true</IsValid><FilterAllowed>true</FilterAllowed><AccessDenied>true</AccessDenied><Link><SOMPath>corp.example.test/Servers</SOMPath><AppliedOrder>0</AppliedOrder><Enabled>true</Enabled></Link></GPO>' +
+            '</ComputerResults></Rsop>'
+    }
+    }
+    It 'reads applied and filtered GPOs with the reason, and the security groups' {
+        $r = ConvertFrom-GpResultXml (New-FakeGpXml)
+        $r.Domain | Should -Be 'corp.example.test'
+        (@($r.Gpos | ForEach-Object { $_.Name + '=' + $(if ($_.Applied) { 'Applied' } else { $_.Reason }) }) -join '; ') | Should -Be 'Server Baseline=Applied; Default Domain Policy=Applied; Workstation Settings=Denied (WMI filter); Admins Only=Denied (security filtering)'
+        $r.Gpos[0].Guid | Should -Be '{11111111-1111-1111-1111-111111111111}'
+        $r.Gpos[0].Links | Should -Be @('corp.example.test/Servers')
+        $r.Gpos[0].FilterName | Should -Be 'Server 2016-2022 only'
+        ($r.Groups -join ', ') | Should -Be 'CORP\Domain Computers, CORP\Patch Ring 2'
+    }
+    It 'reads a workgroup server''s local policy' {
+        $r = ConvertFrom-GpResultXml (New-FakeGpXml -Workgroup)
+        @($r.Gpos).Count | Should -Be 1
+        $r.Gpos[0].Name | Should -Be 'Local Group Policy'
+        $r.Gpos[0].Applied | Should -BeTrue
+        @($r.Groups).Count | Should -Be 0
+    }
+    It 'rejects output without computer results' {
+        { ConvertFrom-GpResultXml '<Rsop xmlns="http://www.microsoft.com/GroupPolicy/Rsop"></Rsop>' } | Should -Throw '*No computer results*'
+    }
+    It 'reads the queries of a WMI filter' {
+        $q = ConvertFrom-WmiFilterParm "1;3;10;66;WQL;root\CIMv2;SELECT * FROM Win32_OperatingSystem WHERE Version LIKE '10.0.14393%';3;10;45;WQL;root\CIMv2;SELECT * FROM Win32_ComputerSystem WHERE DomainRole=3;"
+        $q.Count | Should -Be 2
+        $q[0].Namespace | Should -Be 'root\CIMv2'
+        $q[0].Query | Should -Be "SELECT * FROM Win32_OperatingSystem WHERE Version LIKE '10.0.14393%'"
+        $q[1].Query | Should -Be 'SELECT * FROM Win32_ComputerSystem WHERE DomainRole=3'
+        (ConvertFrom-WmiFilterParm '').Count | Should -Be 0
+    }
+    It '"<Query>" depends on the Windows version: <Expected>' -TestCases @(
+        @{ Query = "SELECT * FROM Win32_OperatingSystem WHERE Version LIKE '10.0.14393%'"; Expected = $true }
+        @{ Query = "select * from Win32_OperatingSystem where Caption like '%2016%'";       Expected = $true }
+        @{ Query = 'SELECT * FROM Win32_OperatingSystem WHERE BuildNumber >= 17763';        Expected = $true }
+        @{ Query = 'SELECT * FROM Win32_OperatingSystem WHERE ProductType = 3';             Expected = $false }
+        @{ Query = 'SELECT * FROM Win32_ComputerSystem WHERE Model LIKE "%VMware%"';        Expected = $false }
+        @{ Query = '';                                                                       Expected = $false }
+    ) {
+        Test-WmiFilterOsDependent $Query | Should -Be $Expected
+    }
+    Context 'Get-GroupPolicyDecision' {
+        BeforeAll { $script:GpNow = [datetime]'2026-10-07 12:00' }
+        It 'a workgroup server gets INFO only, never MANUAL - even when nothing could be read' {
+            $rows = Get-GroupPolicyDecision $false $false $false $null $script:GpNow 7
+            @($rows).Count | Should -Be 1
+            $rows[0].Status | Should -Be 'INFO'
+            $rows[0].Value | Should -Be 'Workgroup server: only local policy applies'
+        }
+        It 'a domain member with everything read: last applied is OK' {
+            $rows = Get-GroupPolicyDecision $true $true $true ($script:GpNow.AddDays(-1)) $script:GpNow 7
+            (@($rows | ForEach-Object { $_.Item + '=' + $_.Status }) -join ',') | Should -Be 'GroupPolicyLastApplied=OK'
+        }
+        It 'a domain member that cannot reach AD gets MANUAL with the reason' {
+            $rows = Get-GroupPolicyDecision $true $true $false ($script:GpNow.AddDays(-1)) $script:GpNow 7 '' 'The server is not operational.'
+            $row = @($rows | Where-Object { $_.Item -eq 'DomainLookup' })[0]
+            $row.Status | Should -Be 'MANUAL'
+            $row.Value | Should -Be 'Could not reach the domain: WMI filters and AD groups are incomplete'
+            $row.Details | Should -Be 'The server is not operational.'
+        }
+        It 'a domain member where gpresult failed gets MANUAL, not an empty list' {
+            $rows = Get-GroupPolicyDecision $true $false $true ($script:GpNow.AddDays(-1)) $script:GpNow 7 'Access is denied.'
+            @($rows | Where-Object { $_.Item -eq 'GroupPolicyScope' -and $_.Status -eq 'MANUAL' }).Count | Should -Be 1
+        }
+        It 'last applied <Days> days ago with a limit of 7 is <Status>' -TestCases @(
+            @{ Days = 7; Status = 'OK' }
+            @{ Days = 8; Status = 'WARNING' }
+        ) {
+            $rows = Get-GroupPolicyDecision $true $true $true ($script:GpNow.AddDays(-1 * $Days)) $script:GpNow 7
+            @($rows | Where-Object { $_.Item -eq 'GroupPolicyLastApplied' })[0].Status | Should -Be $Status
+        }
+        It 'a stale policy names the date' {
+            $rows = Get-GroupPolicyDecision $true $true $true ([datetime]'2026-09-01 08:30') $script:GpNow 7
+            @($rows | Where-Object { $_.Item -eq 'GroupPolicyLastApplied' })[0].Value | Should -Be 'This server has not received Group Policy since 2026-09-01 08:30 (36 days)'
+        }
+        It 'an unreadable last-applied time is a MANUAL observation' {
+            $row = @(Get-GroupPolicyDecision $true $true $true $null $script:GpNow 7)[0]
+            "$($row.Status)/$($row.Kind)" | Should -Be 'MANUAL/Observation'
+        }
+    }
+    It 'converts the registry FILETIME parts' {
+        $ft = ([datetime]'2026-10-01 06:00').ToFileTime()
+        (ConvertFrom-FileTimeValue ([int64]($ft -shr 32)) ([int64]($ft -band 0xFFFFFFFF))) | Should -Be ([datetime]'2026-10-01 06:00')
+        ConvertFrom-FileTimeValue $null 1 | Should -BeNullOrEmpty
+        ConvertFrom-FileTimeValue 0 0 | Should -BeNullOrEmpty
+    }
+    It 'the post-upgrade comparison reports lost and new GPOs and lost groups' {
+        $before = @{ Gpos = @('Default Domain Policy', 'Server Baseline'); Groups = @('CORP\Patch Ring 2') }
+        $after = @{ Gpos = @('Default Domain Policy', 'Server 2025 Baseline'); Groups = @() }
+        $d = Compare-IPUSnapshot $before $after
+        @($d | Where-Object { $_.Item -eq 'Applied GPOs missing after upgrade' })[0].Details | Should -Be 'Server Baseline'
+        @($d | Where-Object { $_.Item -eq 'GPOs newly applied after upgrade' })[0].Details | Should -Be 'Server 2025 Baseline'
+        @($d | Where-Object { $_.Item -eq 'AD groups missing after upgrade' })[0].Details | Should -Be 'CORP\Patch Ring 2'
+    }
+    It 'an older baseline without GPO lists is not compared' {
+        $d = Compare-IPUSnapshot @{} @{ Gpos = @('Default Domain Policy') }
+        @($d | Where-Object { $_.Item -like '*GPO*' }).Count | Should -Be 0
+    }
+}
+
+Describe 'Commands and links with recommendations (#79)' {
+    It 'builds the exact <Id> command' -TestCases @(
+        @{ Id = 'PendingRename'; Kind = 'Check';  Values = @{}; Expected = "Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue | Select-Object -ExpandProperty PendingFileRenameOperations" }
+        @{ Id = 'Restart';       Kind = 'Change'; Values = @{}; Expected = 'Restart-Computer' }
+        @{ Id = 'IisBackup';     Kind = 'Change'; Values = @{}; Expected = '& "$env:windir\system32\inetsrv\appcmd.exe" add backup "PreIPU"' }
+        @{ Id = 'FolderAcl';     Kind = 'Change'; Values = @{ Path = 'C:\Temp\IPU-Assessment' }; Expected = 'icacls "C:\Temp\IPU-Assessment" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F' }
+        @{ Id = 'EnableNla';     Kind = 'Change'; Values = @{}; Expected = 'Get-CimInstance -Namespace root\cimv2\TerminalServices -ClassName Win32_TSGeneralSetting -Filter "TerminalName=''RDP-tcp''" | Invoke-CimMethod -MethodName SetUserAuthenticationRequired -Arguments @{ UserAuthenticationRequired = 1 }' }
+        @{ Id = 'LbfoTeams';     Kind = 'Check';  Values = @{}; Expected = 'Get-NetLbfoTeam | Format-List Name, Status, TeamingMode, LoadBalancingAlgorithm, Members' }
+        @{ Id = 'CFreeSpace';    Kind = 'Check';  Values = @{}; Expected = 'Get-Volume -DriveLetter C | Format-List DriveLetter, FileSystemLabel, @{ n = ''SizeGB''; e = { [math]::Round($_.Size / 1GB, 1) } }, @{ n = ''FreeGB''; e = { [math]::Round($_.SizeRemaining / 1GB, 1) } }' }
+    ) {
+        $c = Get-RecommendationCommand $Id $Values
+        $c.Kind | Should -Be $Kind
+        $c.Command | Should -BeExactly $Expected
+    }
+    It 'every generated PowerShell command parses' {
+        foreach ($id in 'PendingRename', 'Restart', 'IisBackup', 'EnableNla', 'LbfoTeams', 'CFreeSpace') {
+            $errors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseInput((Get-RecommendationCommand $id).Command, [ref]$null, [ref]$errors)
+            @($errors).Count | Should -Be 0 -Because $id
+        }
+    }
+    It 'an unknown command id throws' {
+        { Get-RecommendationCommand 'Nope' } | Should -Throw '*Unknown recommendation command*'
+    }
+    It 'commands in the script come from Get-RecommendationCommand only' {
+        $text = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\src\Windows-IPU-Readiness-Assessment.ps1'))
+        [regex]::Matches($text, "-Command\s+['""]").Count | Should -Be 0
+    }
+    Context 'Add-Result' {
+        BeforeEach { $script:Results.Clear() }
+        It 'stores command, kind, link and title' {
+            Add-Result 'STORAGE' 'x' 'WARNING' 'v' -Recommendation 'r' -Command 'Get-Volume' -CommandKind 'Check' -Link 'https://learn.microsoft.com/x' -LinkTitle 'Doc'
+            $r = $script:Results[0]
+            "$($r.Command)|$($r.CommandKind)|$($r.Link)|$($r.LinkTitle)" | Should -Be 'Get-Volume|Check|https://learn.microsoft.com/x|Doc'
+        }
+        It 'leaves the fields empty when not given, and uses the URL as title when none is given' {
+            Add-Result 'STORAGE' 'x' 'WARNING' 'v'
+            Add-Result 'STORAGE' 'y' 'WARNING' 'v' -Link 'https://learn.microsoft.com/y'
+            "$($script:Results[0].Command)|$($script:Results[0].CommandKind)|$($script:Results[0].Link)" | Should -Be '||'
+            $script:Results[1].LinkTitle | Should -Be 'https://learn.microsoft.com/y'
+        }
+        It 'refuses a command without a kind and a link that is not https' {
+            { Add-Result 'STORAGE' 'x' 'WARNING' -Command 'Get-Volume' } | Should -Throw '*CommandKind*'
+            { Add-Result 'STORAGE' 'x' 'WARNING' -Link 'javascript:alert(1)' } | Should -Throw '*https*'
+            { Add-Result 'STORAGE' 'x' 'WARNING' -Link 'http://example.test' } | Should -Throw '*https*'
+        }
+    }
+    Context 'HTML' {
+        It 'shows the command encoded, labelled, with a copy button, and the link' {
+            $row = [pscustomobject]@{ Recommendation = 'Do it <now>'; Command = 'icacls "C:\R" /grant:r x'; CommandKind = 'Change'; Link = 'https://learn.microsoft.com/a?b=1&c=2'; LinkTitle = 'Doc & more' }
+            $h = New-RecommendationHtml $row
+            $h.StartsWith('Do it &lt;now&gt;') | Should -BeTrue
+            $h.Contains('<span class="ck ck-change" title="run in the change window">Change</span><code>icacls &quot;C:\R&quot; /grant:r x</code>') | Should -BeTrue
+            $h.Contains('data-cmd="icacls &quot;C:\R&quot; /grant:r x" aria-label="Copy the change command"') | Should -BeTrue
+            $h.Contains('<a class="ext" href="https://learn.microsoft.com/a?b=1&amp;c=2" target="_blank" rel="noopener noreferrer">Doc &amp; more</a>') | Should -BeTrue
+        }
+        It 'shows only the text when there is no command or link' {
+            New-RecommendationHtml ([pscustomobject]@{ Recommendation = 'Plain' }) | Should -Be 'Plain'
+        }
+        It 'the report carries the copy script and still ends as a complete document' {
+            $script:Results.Clear(); $script:CheckRuns.Clear()
+            Add-Result 'STORAGE' 'CFreeSpace' 'ACTION' 'low' -Recommendation 'Extend C:' -Command (Get-RecommendationCommand 'CFreeSpace').Command -CommandKind 'Check'
+            $html = New-IPUReportHtml -Results $script:Results.ToArray() -CheckRuns $script:CheckRuns.ToArray() -OverallStatus 'ACTION' -CompletedTime (Get-Date)
+            $html.Contains('<script type="text/javascript">document.documentElement.className+=" js"') | Should -BeTrue
+            $html | Should -Match '(?is)</html>\s*$'
+            ([regex]::Matches($html, 'class="cmd"')).Count | Should -Be 2   # decision table and chapter table
+        }
+    }
+    Context 'pattern files' {
+        It 'accepts an https Link and refuses another scheme' {
+            $ok = ConvertFrom-SiteDataJson '{ "Schema": "IPU-Patterns/1", "Backup": [ { "Label": "Contoso Backup", "App": "^Contoso Backup", "Link": "https://docs.example.test/support", "LinkTitle": "Contoso: support matrix" } ] }' 'IPU-Patterns/1'
+            $r = Merge-DetectionPatternSet $script:DetectionPatterns $ok
+            @($r.Errors).Count | Should -Be 0
+            @($r.Patterns.Backup | Where-Object { $_.Label -eq 'Contoso Backup' })[0].Link | Should -Be 'https://docs.example.test/support'
+            $bad = ConvertFrom-SiteDataJson '{ "Schema": "IPU-Patterns/1", "Backup": [ { "Label": "Contoso Backup", "App": "x", "Link": "file://share/x" } ] }' 'IPU-Patterns/1'
+            ((Merge-DetectionPatternSet $script:DetectionPatterns $bad).Errors -join ' ') | Should -Match 'Link must be an https URL'
+        }
+        It 'Find-DetectionMatch passes the link on' {
+            $apps = @([pscustomobject]@{ Name = 'TrendAI Deep Security Agent'; Version = '20.0' })
+            $m = Find-DetectionMatch $script:DetectionPatterns.EndpointProtection $apps @()
+            $m[0].Link | Should -BeLike 'https://docs.trendmicro.com/*'
+        }
+    }
+}
+
+Describe 'Save-IISConfigEvidence (#76)' {
+    BeforeAll {
+        $script:IisSource = Join-Path $TestDrive 'inetsrv-config'
+        New-Item -ItemType Directory -Path $script:IisSource | Out-Null
+        [IO.File]::WriteAllText((Join-Path $script:IisSource 'applicationHost.config'), '<configuration><system.applicationHost /></configuration>')
+        [IO.File]::WriteAllText((Join-Path $script:IisSource 'administration.config'), '<configuration />')
+        [IO.File]::WriteAllText((Join-Path $script:IisSource 'redirection.config'), '<configuration><configSections /><configurationRedirection /></configuration>')
+        [IO.File]::WriteAllText((Join-Path $script:IisSource 'notes.txt'), 'not a config file')
+        $script:IisBefore = @(Get-ChildItem -LiteralPath $script:IisSource | ForEach-Object { $_.Name + '|' + $_.Length + '|' + $_.LastWriteTimeUtc.Ticks })
+    }
+    It 'copies every .config file, hashes applicationHost.config and zips the folder' {
+        $dest = Join-Path $TestDrive 'evidence\SRV-IPU-IIS-1'
+        $null = New-Item -ItemType Directory -Path (Split-Path $dest) -Force
+        $r = Save-IISConfigEvidence -Destination $dest -SourceFolder $script:IisSource
+        ($r.Files -join ',') | Should -Be 'administration.config,applicationHost.config,redirection.config'
+        $r.Location | Should -Be ($dest + '.zip')
+        Test-Path -LiteralPath $r.Location | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $dest 'notes.txt') | Should -BeFalse
+        $r.ApplicationHostSha256 | Should -Be (Get-FileHash -LiteralPath (Join-Path $script:IisSource 'applicationHost.config') -Algorithm SHA256).Hash
+        $r.SharedConfigPath | Should -Be ''
+    }
+    It 'does not change the source folder' {
+        @(Get-ChildItem -LiteralPath $script:IisSource | ForEach-Object { $_.Name + '|' + $_.Length + '|' + $_.LastWriteTimeUtc.Ticks }) -join ';' | Should -Be ($script:IisBefore -join ';')
+    }
+    It 'reports shared configuration from redirection.config' {
+        $src = Join-Path $TestDrive 'shared-config'
+        New-Item -ItemType Directory -Path $src | Out-Null
+        [IO.File]::WriteAllText((Join-Path $src 'redirection.config'), '<configuration><configurationRedirection enabled="true" path="\\files.example.test\iisconfig" /></configuration>')
+        $r = Save-IISConfigEvidence -Destination (Join-Path $TestDrive 'shared-copy') -SourceFolder $src -Zip $false
+        $r.SharedConfigPath | Should -Be '\\files.example.test\iisconfig'
+        $r.Location | Should -Be (Join-Path $TestDrive 'shared-copy')
+    }
+    It 'throws when there is nothing to copy' {
+        $empty = Join-Path $TestDrive 'empty-config'
+        New-Item -ItemType Directory -Path $empty | Out-Null
+        { Save-IISConfigEvidence -Destination (Join-Path $TestDrive 'never') -SourceFolder $empty } | Should -Throw '*No .config files*'
+    }
+}
+
+Describe 'User Account Control (#75)' {
+    It '<Case>' -TestCases @(
+        @{ Case = 'all defaults (no values) is on, Windows default'; Lua = $null; Consent = $null; Secure = $null; Filter = $null; Expected = 'On - prompt for consent for non-Windows programs (Windows default)' }
+        @{ Case = 'EnableLUA 0 is off';                                Lua = 0;     Consent = 5;     Secure = 1;     Filter = 0;     Expected = 'Off - administrators run everything elevated without a prompt (EnableLUA=0)' }
+        @{ Case = 'elevate without prompting';                         Lua = 1;     Consent = 0;     Secure = 1;     Filter = 0;     Expected = 'On - elevate without prompting' }
+        @{ Case = 'credentials on the secure desktop';                 Lua = 1;     Consent = 1;     Secure = 0;     Filter = 0;     Expected = 'On - prompt for credentials on the secure desktop' }
+        @{ Case = 'consent on the secure desktop';                     Lua = 1;     Consent = 2;     Secure = 1;     Filter = 0;     Expected = 'On - prompt for consent on the secure desktop' }
+        @{ Case = 'credentials, secure desktop off';                   Lua = 1;     Consent = 3;     Secure = 0;     Filter = 0;     Expected = 'On - prompt for credentials, not on the secure desktop' }
+        @{ Case = 'consent';                                           Lua = 1;     Consent = 4;     Secure = 1;     Filter = 0;     Expected = 'On - prompt for consent' }
+        @{ Case = 'Admin Approval Mode for the built-in Administrator';Lua = 1;     Consent = 5;     Secure = 1;     Filter = 1;     Expected = 'On - prompt for consent for non-Windows programs (Windows default); built-in Administrator also gets prompts (Admin Approval Mode)' }
+        @{ Case = 'an unknown prompt value is named';                  Lua = 1;     Consent = 9;     Secure = 1;     Filter = 0;     Expected = 'On - unknown prompt behaviour (ConsentPromptBehaviorAdmin=9)' }
+    ) {
+        (Get-UacDecision $Lua $Consent $Secure $Filter).Text | Should -Be $Expected
+    }
+    It 'the post-upgrade comparison reports a UAC change and nothing when unchanged' {
+        $before = @{ Uac = 'On - prompt for consent' }
+        $d = Compare-IPUSnapshot $before @{ Uac = 'Off - administrators run everything elevated without a prompt (EnableLUA=0)' }
+        $row = @($d | Where-Object { $_.Item -eq 'UAC changed' })
+        $row.Count | Should -Be 1
+        $row[0].Status | Should -Be 'WARNING'
+        $row[0].Details | Should -Be 'Before: On - prompt for consent'
+        $same = Compare-IPUSnapshot $before @{ Uac = 'On - prompt for consent' }
+        @($same | Where-Object { $_.Item -eq 'UAC changed' }).Count | Should -Be 0
+    }
+    It 'an older baseline without UAC is not reported as a change' {
+        $d = Compare-IPUSnapshot @{ } @{ Uac = 'On - prompt for consent' }
+        @($d | Where-Object { $_.Item -eq 'UAC changed' }).Count | Should -Be 0
+    }
+}
+
+Describe 'Group Policy system helpers on a real Windows host (#80)' -Tag 'Integration' {
+    It 'Get-GpResultXml returns RSoP XML that the parser reads, or a clear error' -Skip:($env:OS -ne 'Windows_NT') {
+        $xml = $null; $err = $null
+        try { $xml = Get-GpResultXml } catch { $err = $_.Exception.Message }
+        if ($xml) {
+            { ConvertFrom-GpResultXml $xml } | Should -Not -Throw
+            @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Filter 'IPU-gpresult-*.xml' -ErrorAction SilentlyContinue).Count | Should -Be 0
+        } else {
+            $err | Should -Not -BeNullOrEmpty
+        }
+    }
+    It 'Get-GroupPolicyLastApplied returns a date or nothing, never throws' -Skip:($env:OS -ne 'Windows_NT') {
+        { $script:gpLast = Get-GroupPolicyLastApplied } | Should -Not -Throw
+        if ($null -ne $script:gpLast) { $script:gpLast | Should -BeOfType ([datetime]) }
+    }
+    It 'Get-AdComputerGroup and Get-WmiFilterQuery fail clearly when the host is not in a domain' -Skip:($env:OS -ne 'Windows_NT' -or $env:USERDNSDOMAIN) {
+        { Get-AdComputerGroup } | Should -Throw
+        { Get-WmiFilterQuery @('{11111111-1111-1111-1111-111111111111}') } | Should -Throw
     }
 }

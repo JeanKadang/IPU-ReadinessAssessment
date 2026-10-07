@@ -3,7 +3,7 @@
 How to run the Windows IPU readiness assessment, read its results, and troubleshoot it.
 
 **Scripts:** `src/Windows-IPU-Readiness-Assessment.ps1` (collector version 4.1.0, runs on each server) and
-`src/Merge-IPUAssessments.ps1` (version 1.0.3, combines many servers' results, runs on an admin workstation)
+`src/Merge-IPUAssessments.ps1` (version 1.0.4, combines many servers' results, runs on an admin workstation)
 **Audience:** server and change engineers preparing or verifying a Windows Server in-place upgrade.
 
 ## Contents
@@ -141,6 +141,7 @@ These are project values, not Microsoft minimums (unless noted).
 | `MinimumMemoryGB` | 8 | Below this, a `WARNING` recommends adding memory |
 | `MaxPatchAgeDays` | 60 | Warn when the last patch is older |
 | `UptimeWarningDays` | 60 | Warn on long uptime (a reboot is overdue) |
+| `GroupPolicyMaxAgeDays` | 7 | Domain members: warn when Group Policy has not applied for longer |
 | `AVMaxAgeDays` | 3 | Warn when antivirus signatures are older |
 | `CertificateWarningDays` | 90 | Warn on certificates expiring sooner |
 | `SystemPartitionMinFreeMB` | 50 | Minimum free space on the system partition |
@@ -167,6 +168,7 @@ When the budget runs out, remaining slow checks are reported as `MANUAL` (skippe
 | `LgpoExe` | `C:\Temp\Tools\LGPO.exe` | Optional. Used only for backup (`/b`) and `/parse` |
 | `PolicyEvidenceRoot` | `C:\Temp\Tools\PolBackup` | Timestamped evidence folder and ZIP go here |
 | `CreatePolicyEvidenceZip` | `$true` | Zip the evidence |
+| `EnableIISConfigEvidence` | `$true` | When IIS is installed, copy its configuration files into a restricted evidence folder and ZIP under `PolicyEvidenceRoot` (see [IIS configuration copy](#iis-configuration-copy)) |
 
 ### Output
 
@@ -369,6 +371,7 @@ Most severe on the left. The **overall status is the most severe *finding***.
 - **Cards**: counts per finding status.
 - **Counters**: the BLOCKER, ACTION, WARNING and MANUAL counters at the top are links to the rows behind them; *Checklist items* and *Checks run* link to the checklist and to *Collector coverage*.
 - **Banners**: `PARTIAL REPORT` (slow checks unfinished) and `Not fully assessed` (a check failed, ran out of time, or was not started because the time budget was used up; the results for that area may be incomplete).
+- **Commands and links**: many recommendations show the exact command for this server, labelled **Check** (read-only, safe to run any time) or **Change** (changes the server: run it in the change window, after reading it). The *Copy* button copies it; in print the command is shown as text. The script itself never runs these commands. Where the right action depends on a vendor, there is a *Read more* link to the official page instead. A setting that comes from Group Policy says so, because a local command would be overwritten: change the GPO.
 - **Not run by choice** (grey note): a check that was switched off or needs something that was not given, for example the Setup compatibility scan without installation media. The note says what to do if you want it included. It is not a problem.
 - **Findings table**: status, area, item, finding, **what to do**.
 - **Chapters** (collapsible): one per area group, listed in section 7.
@@ -445,6 +448,25 @@ mindmap
 Detection of products is data-driven (a table of names, services and filter drivers near the top of the script),
 so when a vendor renames a product you edit the table, not the logic.
 
+### IIS configuration copy
+
+When IIS is installed, the assessment copies the files in `%windir%\System32\inetsrv\config` (`applicationHost.config`,
+`administration.config`, `redirection.config`, ...) into `<PolicyEvidenceRoot>\<Computer>-IPU-IIS-<time>` and zips it.
+These are the files `appcmd add backup` saves. IIS itself is not touched. The folder gets SYSTEM and Administrators access
+only, because `applicationHost.config` can contain encrypted passwords. The report shows where the copy is and the
+SHA-256 of `applicationHost.config`.
+
+The copy is from assessment time. **Immediately before the upgrade**, also run:
+
+```
+%windir%\system32\inetsrv\appcmd.exe add backup PreIPU
+```
+
+To restore from the assessment copy: stop IIS (`iisreset /stop`), copy the files back to `%windir%\System32\inetsrv\config`,
+and start IIS again. Or copy them into a new folder under `%windir%\System32\inetsrv\backup` and run
+`appcmd restore backup <folder name>`. If the server uses **shared configuration** (`redirection.config` points to a
+share), the report says so: back up the files on that share as well.
+
 ### Standard change checklist
 
 Always listed as `MANUAL` (cannot be proven from inside the guest): backup and fallback, credentials and console
@@ -470,7 +492,7 @@ HTML. The checklist and Setup compatibility scan are skipped in Post mode.
 
 ## 9. Combining many servers: fleet overview
 
-`src/Merge-IPUAssessments.ps1` (version 1.0.3, for assessment 4.0.1 and later) reads the JSON result of every
+`src/Merge-IPUAssessments.ps1` (version 1.0.4, for assessment 4.0.1 and later) reads the JSON result of every
 server in a folder and writes **one overview** for the whole estate. It is read-only for the input files.
 
 ```mermaid
