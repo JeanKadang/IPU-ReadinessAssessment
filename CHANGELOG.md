@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- User Account Control status in plain words in the summary, the JSON facts and the snapshot; the post-upgrade comparison reports a change (#75).
+
 ### CI
 - Pull requests run the smoke test on windows-2025 only; windows-2022 runs on main, weekly and on demand. A newer push cancels the older run (#85).
 
