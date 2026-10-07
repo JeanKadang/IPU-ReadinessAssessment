@@ -22,13 +22,13 @@ commits show the wrong author.
 | Job | Runs on | What it does |
 |---|---|---|
 | `pester (Windows PowerShell 5.1)`, `pester (PowerShell 7)` | windows-2025 | All Pester tests; coverage on PowerShell 7 |
-| `smoke (<shell>, windows-2025)`, `smoke (<shell>, windows-2022)` | each Windows Server image GitHub offers | The real script end to end (Pre, Post, redacted, site data files), JSON checked against the schema |
+| `smoke (<shell>, windows-2025)`, `smoke (<shell>, windows-2022)` | windows-2025 on pull requests; both Windows Server images on pushes to `main`, the weekly run and manual runs | The real script end to end (Pre, Post, redacted, site data files), JSON checked against the schema |
 | `lint (PSScriptAnalyzer)` | windows-2025 | Fails on any warning |
 | `label` (workflow *Label pull requests*) | ubuntu-latest | Adds labels to each pull request |
 | `release` (workflow *Release*) | ubuntu-latest | Publishes a release: **Actions → Release → Run workflow** on `main` with the version (for example `4.1.0`), or push a tag `v4.1.0`. The version must match the script header and CHANGELOG |
 | `notify (scheduled run failed)` | ubuntu-latest | Only for the weekly run on `main` (Mondays): opens or updates the issue "Scheduled CI run failed" |
 
-Job names are stable, so a ruleset can require them. When GitHub retires or adds a Windows Server image, change
+The repository is private, so Actions minutes are limited and Windows minutes count double. Pull requests therefore skip the windows-2022 smoke jobs, and a newer push cancels the run still in progress on the same branch. Job names are stable, so a ruleset can require them (require only the jobs that run on pull requests). When GitHub retires or adds a Windows Server image, change
 the `smoke` matrix in `.github/workflows/ci.yml` and this table in the same pull request.
 
 ## Conventions

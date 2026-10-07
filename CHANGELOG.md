@@ -6,6 +6,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - New check `grouppolicy`: applied and filtered GPOs with the reason, a WARNING for each GPO whose WMI filter depends on the Windows version, the computer's AD groups (nested included), and when Group Policy last applied (`-GroupPolicyMaxAgeDays`, default 7). Workgroup servers show local policy only; an unreachable domain is MANUAL. The post-upgrade comparison reports GPOs and groups that changed (#80).
+- Recommendations can show the exact command (labelled Check or Change, with a copy button) and a link to the official documentation. First set: pending reboot, report folder permissions, RDP NLA (or "change the GPO" when set by policy), LBFO teams, C: free space, IIS backup, upgrade path, compatibility scan and Trend Micro products. The JSON results and the fleet findings CSV carry `Command` and `Link`; pattern files may add `Link` (#79). `Merge-IPUAssessments.ps1` 1.0.4.
+
+- When IIS is installed, its configuration files are copied into a restricted evidence folder and ZIP (`-EnableIISConfigEvidence`, default on); the report shows the location and the SHA-256 of `applicationHost.config`, and flags shared configuration (#76).
+- User Account Control status in plain words in the summary, the JSON facts and the snapshot; the post-upgrade comparison reports a change (#75).
+
+### CI
+- Pull requests run the smoke test on windows-2025 only; windows-2022 runs on main, weekly and on demand. A newer push cancels the older run (#85).
 
 ### Changed
 - Security and monitoring tools without a driver (for example Nessus, NXLog) are observations to verify after the upgrade instead of planning warnings; tools with a driver (for example Sysmon) stay warnings and name the driver (#78).

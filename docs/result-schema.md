@@ -48,6 +48,7 @@ Strings, empty or `null` when the check that sets them did not run.
 | `RecommendedMedia` | `Windows Server 2025 Standard (Desktop Experience) - en-US media` |
 | `Platform` | `Virtual (VMware) \| Manufacturer=VMware, Inc. \| ...` |
 | `DomainRole` | `Member server` |
+| `Uac` | `On - prompt for consent for non-Windows programs (Windows default)` (from 4.2.0) |
 | `SqlServer` | `MSSQLSERVER=SQL Server 2017` |
 | `Activation` | `Status=Licensed, Channel=Volume:GVLK` |
 | `CDrive` | `Size 100,00 GB, free 55,00 GB` |
@@ -65,6 +66,8 @@ Strings, empty or `null` when the check that sets them did not run.
 | `Value`, `Details` | What was found; `Details` joins several parts with ` \| ` |
 | `Recommendation` | What to do, empty when nothing is needed |
 | `Source` | Where the value came from |
+| `Command`, `CommandKind` | Optional (from 4.2.0). The exact command for the recommendation; `Check` = read-only, `Change` = run in the change window. The script only shows it, it never runs it |
+| `Link`, `LinkTitle` | Optional (from 4.2.0). An official documentation page (https) and its title |
 
 ## `CheckRuns[]`
 
@@ -91,6 +94,7 @@ Lists may be empty or `null`.
 | `Hosts` | Active hosts-file entries |
 | `Tasks` | Non-Microsoft scheduled tasks, for example `\Example\Nightly export` |
 | `Gpos`, `Groups` | Applied GPO names and the computer's AD groups (from 4.2.0; absent when they could not be read). The post-upgrade comparison reports differences |
+| `Uac` | User Account Control in plain words (from 4.2.0); the post-upgrade comparison reports a change |
 
 ## Compatibility rules
 

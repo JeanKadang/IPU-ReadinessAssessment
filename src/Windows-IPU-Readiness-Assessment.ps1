@@ -164,6 +164,10 @@ param(
     [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$LgpoExe = 'C:\Temp\Tools\LGPO.exe',
     [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$PolicyEvidenceRoot = 'C:\Temp\Tools\PolBackup',
     [bool]$CreatePolicyEvidenceZip = $true,
+    # When IIS is installed, copy its configuration files (the same files
+    # "appcmd add backup" saves) into a restricted evidence folder and ZIP
+    # under PolicyEvidenceRoot. A read-only copy; IIS itself is not touched.
+    [bool]$EnableIISConfigEvidence = $true,
 
     # Output.
     [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$ReportDirectory = 'C:\Temp\IPU-Assessment',
@@ -212,9 +216,9 @@ $script:DetectionPatterns = @{
         # Trend Micro / TrendAI: one row per product, so the report names
         # what is installed. Kernel drivers are listed under the Deep
         # Security Agent, which installs them.
-        @{ Label='Trend Micro Deep Security Agent (Server & Workload Protection)'; App='Deep Security Agent'; Service='^(ds_agent|ds_monitor|ds_notifier|Amsp)$'; Display='Deep Security'; Driver='^(tmeyes|TmKmSnsr|tmumh)$' }
+        @{ Label='Trend Micro Deep Security Agent (Server & Workload Protection)'; App='Deep Security Agent'; Service='^(ds_agent|ds_monitor|ds_notifier|Amsp)$'; Display='Deep Security'; Driver='^(tmeyes|TmKmSnsr|tmumh)$'; Link='https://docs.trendmicro.com/en-us/documentation/article/trend-vision-one-agent-platform-compatibility'; LinkTitle='Trend Micro: agent platform compatibility' }
         @{ Label='Trend Micro Apex One'; App='Apex One|OfficeScan'; Service='^(ntrtscan|tmlisten|TmCCSF|TMBMServer|TmPfw)$'; Display='Apex One|OfficeScan' }
-        @{ Label='Trend Vision One Endpoint Security agent (Endpoint Basecamp)'; App='Endpoint Basecamp|Vision One'; Service='^(Trend Micro Endpoint Basecamp|tm_netsrv)$'; Display='Endpoint Basecamp|Vision One' }
+        @{ Label='Trend Vision One Endpoint Security agent (Endpoint Basecamp)'; App='Endpoint Basecamp|Vision One'; Service='^(Trend Micro Endpoint Basecamp|tm_netsrv)$'; Display='Endpoint Basecamp|Vision One'; Link='https://docs.trendmicro.com/en-us/documentation/article/trend-vision-one-agent-platform-compatibility'; LinkTitle='Trend Micro: agent platform compatibility' }
         @{ Label='Microsoft Defender for Endpoint (EDR sensor)'; Service='^Sense$' }
         @{ Label='CrowdStrike Falcon';       App='CrowdStrike';                       Service='^(CSAgent|CSFalconService)$';  Driver='^CSAgent$' }
         @{ Label='SentinelOne';              App='SentinelOne|Sentinel Agent';         Service='^(SentinelAgent|SentinelStaticEngine)$'; Driver='^SentinelMonitor$' }
@@ -278,10 +282,10 @@ $script:ProfileSettingNames = @(
     'MinimumCFreeGB','ExtendBlockGB','MinimumMemoryGB','MaxPatchAgeDays','UptimeWarningDays','GroupPolicyMaxAgeDays','AVMaxAgeDays',
     'CertificateWarningDays','SystemPartitionMinFreeMB','RecoveryPartitionMinFreeMB',
     'RunDISMScanHealth','RunSFCVerifyOnly','DISMTimeoutMinutes','SFCTimeoutMinutes','SlowCheckBudgetMinutes','CompatScanTimeoutMinutes',
-    'EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip',
+    'EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip','EnableIISConfigEvidence',
     'WriteJson','RestrictOutputAcl','NumberCultureName'
 )
-$script:PatternFields = @('Label','App','Service','Display','Driver','Disabled')
+$script:PatternFields = @('Label','App','Service','Display','Driver','Disabled','Link','LinkTitle')
 $script:Results           = New-Object System.Collections.Generic.List[object]
 $script:CheckRuns         = New-Object System.Collections.Generic.List[object]
 $script:Checks            = New-Object System.Collections.Generic.List[object]
@@ -425,7 +429,7 @@ function Find-DetectionMatch {
         }
         if ($pattern.Driver) { $mDrv = @($Drivers | Where-Object { $_ -match $pattern.Driver }) }
         if (($mApps.Count + $mSvcs.Count + $mDrv.Count) -gt 0) {
-            $found += [pscustomobject]@{ Label=$pattern.Label; Apps=$mApps; Services=$mSvcs; Drivers=$mDrv }
+            $found += [pscustomobject]@{ Label=$pattern.Label; Apps=$mApps; Services=$mSvcs; Drivers=$mDrv; Link=[string]$pattern.Link; LinkTitle=[string]$pattern.LinkTitle }
         }
     }
     return ,$found
@@ -462,8 +466,17 @@ function Add-Result {
         [Parameter(Position=4)][object]$Details = '',
         [string]$Recommendation = '',
         [string]$Kind = '',
-        [string]$Source = ''
+        [string]$Source = '',
+        # Optional "how" and "read more" (#79). The script only shows the
+        # command; it never runs it. Check = read-only, Change = run in the
+        # change window.
+        [string]$Command = '',
+        [ValidateSet('','Check','Change')][string]$CommandKind = '',
+        [string]$Link = '',
+        [string]$LinkTitle = ''
     )
+    if ($Command -and -not $CommandKind) { throw 'Add-Result: -Command needs -CommandKind Check or Change.' }
+    if ($Link -and $Link -notmatch '^https://[^\s"<>]+$') { throw ('Add-Result: -Link must be an https URL: ' + $Link) }
     if (-not $script:AreaMap.ContainsKey($Area)) { throw ("Unknown report area '{0}'. Add it to `$script:AreaMap." -f $Area) }
     if (-not $Kind) {
         if ($script:FindingStatuses -contains $Status) { $Kind = 'Finding' } else { $Kind = 'Evidence' }
@@ -484,6 +497,10 @@ function Add-Result {
         Details        = ($detailParts -join ' | ')
         Recommendation = (ConvertTo-CleanText $Recommendation)
         Source         = (ConvertTo-CleanText $Source)
+        Command        = (ConvertTo-CleanText $Command)
+        CommandKind    = $(if ($Command) { $CommandKind } else { '' })
+        Link           = $Link
+        LinkTitle      = $(if ($Link) { $(if ($LinkTitle) { ConvertTo-CleanText $LinkTitle } else { $Link }) } else { '' })
     })
 }
 
@@ -635,6 +652,47 @@ function Get-GroupPolicyLastApplied {
     $lo = Get-RegistryValueSafe $key 'EndTimeLo'
     if (-not $hi.Exists -or -not $lo.Exists) { return $null }
     return (ConvertFrom-FileTimeValue $hi.Value $lo.Value)
+}
+
+function Save-IISConfigEvidence {
+    # Copies the IIS configuration files into a new, restricted evidence
+    # folder and zips it (#76). Read-only for IIS: nothing under inetsrv is
+    # written. applicationHost.config can hold encrypted secrets, so the
+    # folder gets the same SYSTEM/Administrators-only access as the other
+    # evidence. Throws when nothing could be copied.
+    param(
+        [Parameter(Mandatory=$true)][string]$Destination,
+        [string]$SourceFolder = (Join-Path $env:windir 'System32\inetsrv\config'),
+        [bool]$Zip = $true
+    )
+    $files = @(Get-ChildItem -LiteralPath $SourceFolder -Filter '*.config' -File -ErrorAction Stop)
+    if ($files.Count -eq 0) { throw ('No .config files found in ' + $SourceFolder) }
+    $null = Initialize-OutputFolder $Destination
+    foreach ($f in $files) { Copy-Item -LiteralPath $f.FullName -Destination $Destination -Force -ErrorAction Stop }
+    $hash = ''
+    $appHost = Join-Path $Destination 'applicationHost.config'
+    if (Test-Path -LiteralPath $appHost) {
+        try { $hash = (Get-FileHash -LiteralPath $appHost -Algorithm SHA256 -ErrorAction Stop).Hash } catch { Write-Swallowed $_ }
+    }
+    # Shared configuration: redirection.config points to the real files.
+    $shared = ''
+    $redirection = Join-Path $Destination 'redirection.config'
+    if (Test-Path -LiteralPath $redirection) {
+        try {
+            [xml]$doc = [IO.File]::ReadAllText($redirection)
+            $node = $doc.SelectSingleNode('//configurationRedirection')
+            if ($node -and [string]$node.GetAttribute('enabled') -eq 'true') { $shared = [string]$node.GetAttribute('path') }
+        } catch { Write-Swallowed $_ }
+    }
+    $location = $Destination
+    if ($Zip) {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zipPath = $Destination + '.zip'
+        if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+        [IO.Compression.ZipFile]::CreateFromDirectory($Destination, $zipPath, [IO.Compression.CompressionLevel]::Optimal, $false)
+        $location = $zipPath
+    }
+    return [pscustomobject]@{ Location = $location; Folder = $Destination; Files = @($files | ForEach-Object { $_.Name } | Sort-Object); ApplicationHostSha256 = $hash; SharedConfigPath = $shared }
 }
 
 function Get-BroadFolderReader {
@@ -1208,6 +1266,9 @@ function Compare-IPUSnapshot {
         @{ Name='Applied GPOs';      Prop='Gpos';         Status='WARNING'; Rec='These GPOs applied before the upgrade and no longer do. Check their WMI filters (often a Windows version filter) and security filtering.' },
         @{ Name='AD groups';         Prop='Groups';       Status='WARNING'; Rec='The computer was in these groups before. Check the AD group memberships (patch rings, GPO filtering, certificate enrolment).' }
     )
+    if ($Before.Uac -and $After.Uac -and [string]$Before.Uac -ne [string]$After.Uac) {
+        $diff += (& $make 'WARNING' 'UAC changed' ([string]$After.Uac) ('Before: ' + [string]$Before.Uac) 'User Account Control is set differently after the upgrade. Confirm the change is intended (usually set by Group Policy).')
+    }
     foreach ($l in $lists) {
         $b = @($Before.($l.Prop) | Where-Object { $_ })
         $a = @($After.($l.Prop) | Where-Object { $_ })
@@ -1356,6 +1417,54 @@ function ConvertFrom-FileTimeValue {
     try { return [DateTime]::FromFileTime($value) } catch { return $null }
 }
 
+# Official pages linked from recommendations (#79). Only stable pages;
+# the report text must make sense without them (servers are often offline).
+$script:DocLinks = @{
+    InPlaceUpgrade = @{ Url = 'https://learn.microsoft.com/en-us/windows-server/get-started/perform-in-place-upgrade'; Title = 'Microsoft: Perform an in-place upgrade of Windows Server' }
+    SetupOptions   = @{ Url = 'https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-command-line-options'; Title = 'Microsoft: Windows Setup command-line options (/Compat ScanOnly)' }
+    AppCmd         = @{ Url = 'https://learn.microsoft.com/en-us/iis/get-started/getting-started-with-iis/getting-started-with-appcmdexe'; Title = 'Microsoft: Getting started with AppCmd.exe (backups)' }
+    TrendAgents    = @{ Url = 'https://docs.trendmicro.com/en-us/documentation/article/trend-vision-one-agent-platform-compatibility'; Title = 'Trend Micro: agent platform compatibility' }
+}
+
+function Get-RecommendationCommand {
+    # Pure: the exact command shown with a recommendation (#79). Every
+    # command is built here, so each one has a test of its exact text.
+    # The script never runs these commands.
+    param([Parameter(Mandatory=$true)][string]$Id, [hashtable]$Values = @{})
+    switch ($Id) {
+        'PendingRename' { return [pscustomobject]@{ Kind = 'Check'; Command = "Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue | Select-Object -ExpandProperty PendingFileRenameOperations" } }
+        'Restart'       { return [pscustomobject]@{ Kind = 'Change'; Command = 'Restart-Computer' } }
+        'IisBackup'     { return [pscustomobject]@{ Kind = 'Change'; Command = '& "$env:windir\system32\inetsrv\appcmd.exe" add backup "PreIPU"' } }
+        'FolderAcl'     { return [pscustomobject]@{ Kind = 'Change'; Command = ('icacls "' + $Values.Path + '" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F') } }
+        'EnableNla'     { return [pscustomobject]@{ Kind = 'Change'; Command = 'Get-CimInstance -Namespace root\cimv2\TerminalServices -ClassName Win32_TSGeneralSetting -Filter "TerminalName=''RDP-tcp''" | Invoke-CimMethod -MethodName SetUserAuthenticationRequired -Arguments @{ UserAuthenticationRequired = 1 }' } }
+        'LbfoTeams'     { return [pscustomobject]@{ Kind = 'Check'; Command = 'Get-NetLbfoTeam | Format-List Name, Status, TeamingMode, LoadBalancingAlgorithm, Members' } }
+        'CFreeSpace'    { return [pscustomobject]@{ Kind = 'Check'; Command = 'Get-Volume -DriveLetter C | Format-List DriveLetter, FileSystemLabel, @{ n = ''SizeGB''; e = { [math]::Round($_.Size / 1GB, 1) } }, @{ n = ''FreeGB''; e = { [math]::Round($_.SizeRemaining / 1GB, 1) } }' } }
+    }
+    throw ('Unknown recommendation command: ' + $Id)
+}
+
+function Get-UacDecision {
+    # Pure: User Account Control in plain words from the registry values
+    # under HKLM\...\Policies\System (#75). Missing values mean the
+    # Windows defaults (EnableLUA 1, ConsentPromptBehaviorAdmin 5,
+    # PromptOnSecureDesktop 1, FilterAdministratorToken 0).
+    param($EnableLua, $ConsentPromptBehaviorAdmin, $PromptOnSecureDesktop, $FilterAdministratorToken)
+    $num = { param($v, [int]$Default) if ($null -eq $v -or [string]$v -eq '') { return $Default }; return [int]$v }
+    $lua = & $num $EnableLua 1
+    if ($lua -eq 0) {
+        return [pscustomobject]@{ State = 'Off'; Text = 'Off - administrators run everything elevated without a prompt (EnableLUA=0)' }
+    }
+    $consent = & $num $ConsentPromptBehaviorAdmin 5
+    $secure = & $num $PromptOnSecureDesktop 1
+    $texts = @{ 0 = 'elevate without prompting'; 1 = 'prompt for credentials on the secure desktop'; 2 = 'prompt for consent on the secure desktop'; 3 = 'prompt for credentials'; 4 = 'prompt for consent'; 5 = 'prompt for consent for non-Windows programs (Windows default)' }
+    $text = $texts[$consent]
+    if (-not $text) { $text = 'unknown prompt behaviour (ConsentPromptBehaviorAdmin=' + $consent + ')' }
+    if ($consent -ge 3 -and $consent -le 5 -and $secure -eq 0) { $text += ', not on the secure desktop' }
+    $result = 'On - ' + $text
+    if ((& $num $FilterAdministratorToken 0) -eq 1) { $result += '; built-in Administrator also gets prompts (Admin Approval Mode)' }
+    return [pscustomobject]@{ State = 'On'; Text = $result }
+}
+
 function Get-OutputFolderAccessDecision {
     # Pure: what the report says about the output folder's permissions.
     param([string]$State, [string[]]$BroadReaders = @(), [string]$Path = '')
@@ -1373,7 +1482,8 @@ function Get-OutputFolderAccessDecision {
     }
     if ($readers.Count -gt 0) {
         return [pscustomobject]@{ Status='WARNING'; Kind='Observation'
-            Text=('Existing folder readable by ' + ($readers -join ', ') + '. The reports describe the server in detail. Restrict it: icacls "' + $Path + '" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F - or delete the folder so the next run recreates it restricted.') }
+            Text=('Existing folder readable by ' + ($readers -join ', ') + '. The reports describe the server in detail. Restrict it with the command shown, or delete the folder so the next run recreates it restricted.')
+            Command=(Get-RecommendationCommand 'FolderAcl' @{ Path = $Path }).Command }
     }
     return [pscustomobject]@{ Status='INFO'; Kind='Evidence'; Text='Existing folder; its permissions were left unchanged and do not grant read access to Everyone, Authenticated Users or Users.' }
 }
@@ -1537,8 +1647,15 @@ function Merge-DetectionPatternSet {
                 catch { $errors.Add(($where + ': ' + $f + ' is not a valid regular expression: ' + $_.Exception.InnerException.Message)); $bad = $true; continue }
                 $new[$f] = $value
             }
+            foreach ($f in @('Link','LinkTitle')) {
+                if ($names -notcontains $f) { continue }
+                $value = $entry.$f
+                if ($value -isnot [string] -or -not $value.Trim()) { $errors.Add($where + ': ' + $f + ' must be a non-empty text.'); $bad = $true; continue }
+                if ($f -eq 'Link' -and $value -notmatch '^https://[^\s"<>]+$') { $errors.Add($where + ': Link must be an https URL.'); $bad = $true; continue }
+                $new[$f] = $value
+            }
             if ($bad) { continue }
-            if ($new.Count -eq 1) { $errors.Add($where + ': needs at least one of App, Service, Display, Driver.'); continue }
+            if (@($new.Keys | Where-Object { @('App','Service','Display','Driver') -contains $_ }).Count -eq 0) { $errors.Add($where + ': needs at least one of App, Service, Display, Driver.'); continue }
             if ($idx -ge 0) { $merged[$cat][$idx] = $new; $changes.Add(($cat + ': replaced "' + $label + '"')) }
             else { $merged[$cat] = @($merged[$cat]) + @($new); $changes.Add(($cat + ': added "' + $label + '"')) }
         }
@@ -1765,7 +1882,11 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
     $readers = @()
     if ($folderState -eq 'Existing') { $readers = @(Get-BroadFolderReader $ReportDirectory) }
     $access = Get-OutputFolderAccessDecision $folderState $readers $ReportDirectory
-    Add-Result 'ASSESSMENT' 'OutputFolderAccess' $access.Status $ReportDirectory $access.Text -Kind $access.Kind -Source 'Get-Acl'
+    if ($access.PSObject.Properties['Command'] -and $access.Command) {
+        Add-Result 'ASSESSMENT' 'OutputFolderAccess' $access.Status $ReportDirectory $access.Text -Kind $access.Kind -Source 'Get-Acl' -Command $access.Command -CommandKind 'Change'
+    } else {
+        Add-Result 'ASSESSMENT' 'OutputFolderAccess' $access.Status $ReportDirectory $access.Text -Kind $access.Kind -Source 'Get-Acl'
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -1787,7 +1908,7 @@ Register-Check -Id 'upgradepath' -Name 'Upgrade path, edition and media' -Script
     }
     $script:Data.IsClustered = $clustered
     $path = Get-UpgradePathDecision $source $TargetServerVersion $clustered
-    Add-Result 'UPGRADE_PATH' 'TargetUpgradePath' $path.Status $path.Text ('Target=' + (Get-ReleaseDisplayName $TargetServerVersion)) -Source 'Microsoft supported upgrade paths (installation media)'
+    Add-Result 'UPGRADE_PATH' 'TargetUpgradePath' $path.Status $path.Text ('Target=' + (Get-ReleaseDisplayName $TargetServerVersion)) -Source 'Microsoft supported upgrade paths (installation media)' -Link $script:DocLinks.InPlaceUpgrade.Url -LinkTitle $script:DocLinks.InPlaceUpgrade.Title
 
     $edition = Get-EditionDecision $cv.EditionID $cv.InstallationType $TargetServerVersion
     $script:Data.Edition = $edition
@@ -1901,9 +2022,9 @@ Register-Check -Id 'pendingreboot' -Name 'Pending reboot and uptime' -Script {
     } catch { Write-Swallowed $_ }
 
     if ($hard.Count -gt 0) {
-        Add-Result 'WINDOWS_HEALTH' 'PendingReboot' 'ACTION' ($hard -join ' | ') (@($soft) + @($renameShown)) -Recommendation 'Reboot, then re-run the assessment before starting the IPU.' -Source 'CBS, Windows Update, ComputerName, Netlogon, ConfigMgr'
+        Add-Result 'WINDOWS_HEALTH' 'PendingReboot' 'ACTION' ($hard -join ' | ') (@($soft) + @($renameShown)) -Recommendation 'Reboot, then re-run the assessment before starting the IPU.' -Source 'CBS, Windows Update, ComputerName, Netlogon, ConfigMgr' -Command (Get-RecommendationCommand 'Restart').Command -CommandKind 'Change'
     } elseif ($soft.Count -gt 0) {
-        Add-Result 'WINDOWS_HEALTH' 'PendingReboot' 'WARNING' ($soft -join ' | ') (@('Files waiting to be replaced: ') + @($renameShown)) -Recommendation 'The paths show which product left the pending rename (often AV or an agent update). Reboot in the pre-change window; if the same entries come back, ask that product''s owner.' -Source 'Session Manager'
+        Add-Result 'WINDOWS_HEALTH' 'PendingReboot' 'WARNING' ($soft -join ' | ') (@('Files waiting to be replaced: ') + @($renameShown)) -Recommendation 'The paths show which product left the pending rename (often AV or an agent update). Reboot in the pre-change window; if the same entries come back, ask that product''s owner.' -Source 'Session Manager' -Command (Get-RecommendationCommand 'PendingRename').Command -CommandKind 'Check'
     } else {
         Add-Result 'WINDOWS_HEALTH' 'PendingReboot' 'OK' 'No pending-reboot indicators detected' -Source 'CBS, Windows Update, Session Manager, ComputerName, Netlogon'
     }
@@ -1993,6 +2114,16 @@ Register-Check -Id 'domain' -Name 'Domain role and access' -Script {
     } else {
         Add-Result 'ACCESS' 'DomainMembership' 'WARNING' ('Workgroup=' + $cs.Domain) -Recommendation 'Workgroup server: confirm it is onboarded in CyberArk/PAM and that local fallback credentials work before IPU.' -Source 'Win32_ComputerSystem'
     }
+
+    # User Account Control (#75). Information, not a finding: UAC does not
+    # block an in-place upgrade.
+    $uacKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+    $uacValues = @{}
+    foreach ($n in @('EnableLUA','ConsentPromptBehaviorAdmin','PromptOnSecureDesktop','FilterAdministratorToken')) { $uacValues[$n] = (Get-RegistryValueSafe $uacKey $n).Value }
+    $uac = Get-UacDecision $uacValues.EnableLUA $uacValues.ConsentPromptBehaviorAdmin $uacValues.PromptOnSecureDesktop $uacValues.FilterAdministratorToken
+    $script:Data.UacSummary = $uac.Text
+    if ($script:Data.Snapshot) { $script:Data.Snapshot.Uac = $uac.Text }
+    Add-Result 'ACCESS' 'UAC' 'INFO' $uac.Text (@($uacValues.Keys | Sort-Object | ForEach-Object { $_ + '=' + $(if ($null -eq $uacValues[$_]) { '(default)' } else { [string]$uacValues[$_] }) }) -join ', ') -Source ($uacKey -replace '^HKLM:','HKLM')
 
     $rid500 = @(Get-CimSafe 'Win32_UserAccount' 'LocalAccount=True') | Where-Object { $_.SID -match '-500$' } | Select-Object -First 1
     if ($rid500) {
@@ -2152,7 +2283,7 @@ Register-Check -Id 'storage' -Name 'Storage' -Script {
     $script:Data.CSummary = 'Size ' + (Format-Number $sizeGB) + ' GB, free ' + (Format-Number $freeGB) + ' GB'
     if ($freeGB -lt $MinimumCFreeGB) {
         $needed = [math]::Ceiling(($MinimumCFreeGB - $freeGB) / $ExtendBlockGB) * $ExtendBlockGB
-        Add-Result 'STORAGE' 'CFreeSpace' 'ACTION' $script:Data.CSummary ('RequiredExpansionGB=' + $needed) -Recommendation ('Extend C: by at least ' + $needed + ' GB to reach the ' + $MinimumCFreeGB + ' GB free-space target.') -Source 'Win32_LogicalDisk'
+        Add-Result 'STORAGE' 'CFreeSpace' 'ACTION' $script:Data.CSummary ('RequiredExpansionGB=' + $needed) -Recommendation ('Extend C: by at least ' + $needed + ' GB to reach the ' + $MinimumCFreeGB + ' GB free-space target.') -Source 'Win32_LogicalDisk' -Command (Get-RecommendationCommand 'CFreeSpace').Command -CommandKind 'Check'
     } else {
         Add-Result 'STORAGE' 'CFreeSpace' 'OK' $script:Data.CSummary -Source 'Win32_LogicalDisk'
     }
@@ -2242,9 +2373,9 @@ Register-Check -Id 'network' -Name 'Network, teaming, hosts and routes' -Script 
         $boundToVSwitch = ($teamNic -and $vSwitchDescriptions -contains [string]$teamNic.InterfaceDescription)
         $details = @(('Mode=' + $t.TeamingMode),('LoadBalancing=' + $t.LoadBalancingAlgorithm),('Members=' + (@($t.Members) -join ',')))
         if ($boundToVSwitch) {
-            Add-Result 'NETWORK' ('LBFO team: ' + $t.Name) 'ACTION' 'LBFO team bound to a Hyper-V virtual switch' $details -Recommendation 'LBFO under a Hyper-V vSwitch is not supported on Windows Server 2022/2025. Convert to Switch Embedded Teaming (SET) as a separate, planned change before IPU.' -Source 'Get-NetLbfoTeam, Get-VMSwitch'
+            Add-Result 'NETWORK' ('LBFO team: ' + $t.Name) 'ACTION' 'LBFO team bound to a Hyper-V virtual switch' $details -Recommendation 'LBFO under a Hyper-V vSwitch is not supported on Windows Server 2022/2025. Convert to Switch Embedded Teaming (SET) as a separate, planned change before IPU.' -Source 'Get-NetLbfoTeam, Get-VMSwitch' -Command (Get-RecommendationCommand 'LbfoTeams').Command -CommandKind 'Check'
         } else {
-            Add-Result 'NETWORK' ('LBFO team: ' + $t.Name) 'ACTION' ('Status=' + $t.Status) $details -Recommendation 'Microsoft requires NIC Teaming to be disabled before IPU and re-enabled afterwards. Plan console access - the team carries the server''s IP configuration.' -Source 'Get-NetLbfoTeam'
+            Add-Result 'NETWORK' ('LBFO team: ' + $t.Name) 'ACTION' ('Status=' + $t.Status) $details -Recommendation 'Microsoft requires NIC Teaming to be disabled before IPU and re-enabled afterwards. Plan console access - the team carries the server''s IP configuration.' -Source 'Get-NetLbfoTeam' -Command (Get-RecommendationCommand 'LbfoTeams').Command -CommandKind 'Check'
         }
     }
     if ($teams.Count -eq 0) { Add-Result 'NETWORK' 'NICTeaming' 'OK' 'No LBFO team detected' -Source 'Get-NetLbfoTeam' }
@@ -2397,7 +2528,23 @@ Register-Check -Id 'workloads' -Name 'Roles and workloads' -Script {
 # ---------------------------------------------------------------------------
 Register-Check -Id 'iis' -Name 'IIS' -Script {
     if ((Get-FeatureState 'Web-Server') -ne $true) { Add-Result 'IIS' 'Web-Server' 'OK' 'Not installed' -Source 'Get-WindowsFeature'; return }
-    Add-Result 'IIS' 'Web-Server' 'WARNING' 'Installed' -Recommendation 'Back up the IIS configuration immediately before IPU (appcmd add backup) and keep site, binding and certificate documentation.' -Source 'Get-WindowsFeature'
+    Add-Result 'IIS' 'Web-Server' 'WARNING' 'Installed' -Recommendation 'Immediately before the IPU, run the appcmd.exe add backup command shown (the copy in this report is from assessment time), and keep site, binding and certificate documentation.' -Source 'Get-WindowsFeature' -Command (Get-RecommendationCommand 'IisBackup').Command -CommandKind 'Change' -Link $script:DocLinks.AppCmd.Url -LinkTitle $script:DocLinks.AppCmd.Title
+    if ($EnableIISConfigEvidence) {
+        try {
+            $dest = Join-Path $PolicyEvidenceRoot ($script:SafeComputerName + '-IPU-IIS-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+            $null = Initialize-OutputFolder $PolicyEvidenceRoot
+            $copy = Save-IISConfigEvidence -Destination $dest -Zip $CreatePolicyEvidenceZip
+            $script:Data.IISConfigEvidence = $copy.Location
+            Add-Result 'IIS' 'ConfigurationCopy' 'OK' $copy.Location @(('Files=' + ($copy.Files -join ', ')), ('applicationHost.config SHA256=' + $copy.ApplicationHostSha256)) -Recommendation 'Restore: copy the files back to %windir%\System32\inetsrv\config, or put them in a folder under inetsrv\backup and run "appcmd restore backup <folder>". See the user guide.' -Source 'inetsrv\config (copied, not changed)'
+            if ($copy.SharedConfigPath) {
+                Add-Result 'IIS' 'SharedConfiguration' 'WARNING' ('Enabled: ' + $copy.SharedConfigPath) 'The local files only point to the shared location.' -Recommendation 'Back up the shared configuration at that path as well, and confirm every server that uses it before the change.' -Kind 'Observation' -Source 'redirection.config'
+            }
+        } catch {
+            Add-Result 'IIS' 'ConfigurationCopy' 'MANUAL' 'Could not copy the IIS configuration' $_.Exception.Message -Recommendation 'Back up the IIS configuration manually before the change: appcmd add backup PreIPU, or copy %windir%\System32\inetsrv\config.' -Kind 'Finding' -Source 'inetsrv\config'
+        }
+    } else {
+        Add-Result 'IIS' 'ConfigurationCopy' 'INFO' 'Not taken (EnableIISConfigEvidence is off)' -Source 'SETTINGS'
+    }
     if (-not (Get-Module -ListAvailable WebAdministration)) { return }
     Import-Module WebAdministration
     foreach ($site in @(Get-Website)) {
@@ -2587,7 +2734,7 @@ Register-Check -Id 'antivirus' -Name 'Antivirus, EDR and security tools' -Script
         }
         $protected = $true
         $products += (Get-DetectionProductName $m)
-        Add-Result 'ANTIVIRUS' $m.Label 'WARNING' $val (Get-DetectionEvidence $m) -Recommendation ('Confirm this version supports ' + $target + ' and get the vendor''s IPU procedure. Many AV/EDR agents must be upgraded before, or paused during, Setup; their drivers are a common cause of rollback.') -Source 'Uninstall registry, Win32_Service, drivers'
+        Add-Result 'ANTIVIRUS' $m.Label 'WARNING' $val (Get-DetectionEvidence $m) -Recommendation ('Confirm this version supports ' + $target + ' and get the vendor''s IPU procedure. Many AV/EDR agents must be upgraded before, or paused during, Setup; their drivers are a common cause of rollback.') -Source 'Uninstall registry, Win32_Service, drivers' -Link $m.Link -LinkTitle $m.LinkTitle
     }
     $script:Data.EndpointProducts = $products
     if (-not $protected) {
@@ -2862,7 +3009,7 @@ Register-Check -Id 'sfc' -Name 'SFC protected file verification' -Phase 'Slow' -
 Register-Check -Id 'compatscan' -Name 'Setup compatibility scan' -Phase 'Slow' -Script {
     if ($AssessmentMode -eq 'Post') { $script:CurrentCheckMessage = 'Not applicable after the upgrade'; $script:CurrentCheckOutcome = 'Skipped'; return }
     if (-not $TargetMediaPath) {
-        Add-Result 'COMPAT_SCAN' 'SetupCompatibilityScan' 'INFO' 'Not run - no installation media given' ('Optional. To let Windows Setup check this server with Microsoft''s own compatibility rules, run again with -TargetMediaPath set to the ' + (Get-ReleaseDisplayName $TargetServerVersion) + ' ISO, or a folder or share with the installation files.') -Source 'SETTINGS'
+        Add-Result 'COMPAT_SCAN' 'SetupCompatibilityScan' 'INFO' 'Not run - no installation media given' ('Optional. To let Windows Setup check this server with Microsoft''s own compatibility rules, run again with -TargetMediaPath set to the ' + (Get-ReleaseDisplayName $TargetServerVersion) + ' ISO, or a folder or share with the installation files.') -Source 'SETTINGS' -Link $script:DocLinks.SetupOptions.Url -LinkTitle $script:DocLinks.SetupOptions.Title
         $script:CurrentCheckMessage = 'Not configured: no installation media given (-TargetMediaPath)'
         $script:CurrentCheckOutcome = 'Skipped'; return
     }
@@ -3019,7 +3166,12 @@ function Invoke-RdpPolicyAssessment {
     $nla = Get-RegistryValueSafe $tcpPath 'UserAuthentication'
     Add-Result 'RDP' 'Listener' 'INFO' ('Port=' + $port) ('NLA=' + $(if ($nla.Exists) { $nla.Value } else { 'Unknown' })) -Source 'RDP-Tcp registry'
     if ($nla.Exists -and [int]$nla.Value -eq 0) {
-        Add-Result 'RDP' 'NetworkLevelAuthentication' 'WARNING' 'Disabled' 'Not an IPU blocker - a security observation.' -Recommendation 'RDP accepts connections before the user is authenticated. Enable NLA unless a documented client requirement prevents it.' -Kind 'Observation' -Source 'RDP-Tcp UserAuthentication'
+        $nlaPolicy = Get-RegistryValueSafe $policyPath 'UserAuthentication'
+        if ($nlaPolicy.Exists) {
+            Add-Result 'RDP' 'NetworkLevelAuthentication' 'WARNING' 'Disabled' 'Not an IPU blocker - a security observation. Set by Group Policy.' -Recommendation 'RDP accepts connections before the user is authenticated. NLA is set by Group Policy: change the GPO (Require user authentication for remote connections by using Network Level Authentication), not the server.' -Kind 'Observation' -Source 'Terminal Services policy UserAuthentication'
+        } else {
+            Add-Result 'RDP' 'NetworkLevelAuthentication' 'WARNING' 'Disabled' 'Not an IPU blocker - a security observation.' -Recommendation 'RDP accepts connections before the user is authenticated. Enable NLA unless a documented client requirement prevents it.' -Kind 'Observation' -Source 'RDP-Tcp UserAuthentication' -Command (Get-RecommendationCommand 'EnableNla').Command -CommandKind 'Change'
+        }
     }
 
     $svc = @($script:Data.Services | Where-Object { $_.Name -eq 'TermService' }) | Select-Object -First 1
@@ -3167,6 +3319,24 @@ function Get-CoverageNotice {
     return [pscustomobject]@{ Problems = $problems; ByChoice = $byChoice }
 }
 
+function New-RecommendationHtml {
+    # The "What to do" cell: recommendation text, then the command (labelled
+    # Check or Change, with a copy button) and the documentation link (#79).
+    param($Row)
+    $html = ConvertTo-HtmlText $Row.Recommendation
+    if ($Row.PSObject.Properties['Command'] -and $Row.Command) {
+        $label = 'Check'; $hint = 'read-only'
+        if ($Row.CommandKind -eq 'Change') { $label = 'Change'; $hint = 'run in the change window' }
+        $cmd = ConvertTo-HtmlText $Row.Command
+        $html += '<div class="cmd"><span class="ck ck-' + $label.ToLowerInvariant() + '" title="' + $hint + '">' + $label + '</span><code>' + $cmd + '</code><button type="button" class="copy" data-cmd="' + $cmd + '" aria-label="Copy the ' + $label.ToLowerInvariant() + ' command">Copy</button></div>'
+    }
+    if ($Row.PSObject.Properties['Link'] -and $Row.Link) {
+        $title = $Row.LinkTitle; if (-not $title) { $title = $Row.Link }
+        $html += '<div class="more">Read more: <a class="ext" href="' + (ConvertTo-HtmlText $Row.Link) + '" target="_blank" rel="noopener noreferrer">' + (ConvertTo-HtmlText $title) + '</a></div>'
+    }
+    return $html
+}
+
 function New-FindingTable {
     param($Rows, [switch]$WithCheckbox, [string]$Caption = 'Findings')
     $sb = New-Object System.Text.StringBuilder
@@ -3179,7 +3349,7 @@ function New-FindingTable {
         # read the visible word "open" instead.
         if ($WithCheckbox) { [void]$sb.Append('<td class="cb"><span aria-hidden="true">&#x2610;</span> <span class="cbt">open</span></td>') }
         $finding = (@($r.Value,$r.Details) | Where-Object { $_ }) -join ' | '
-        [void]$sb.Append('<td class="nw">' + (New-StatusBadge $r.Status) + '</td><td class="nw">' + (ConvertTo-HtmlText (Get-AreaName $r.Area)) + '</td><td class="item">' + (ConvertTo-HtmlText $r.Item) + '</td><td class="txt">' + (ConvertTo-HtmlText $finding) + '</td><td class="txt">' + (ConvertTo-HtmlText $r.Recommendation) + '</td></tr>')
+        [void]$sb.Append('<td class="nw">' + (New-StatusBadge $r.Status) + '</td><td class="nw">' + (ConvertTo-HtmlText (Get-AreaName $r.Area)) + '</td><td class="item">' + (ConvertTo-HtmlText $r.Item) + '</td><td class="txt">' + (ConvertTo-HtmlText $finding) + '</td><td class="txt">' + (New-RecommendationHtml $r) + '</td></tr>')
     }
     [void]$sb.Append('</tbody></table></div>')
     return $sb.ToString()
@@ -3229,6 +3399,7 @@ function New-IPUReportHtml {
         @('Windows activation', (Get-ResultText $Results 'LICENSING' 'CurrentActivation')),
         @('Platform', (Get-ResultText $Results 'PLATFORM' 'PhysicalOrVirtual')),
         @('Domain role', $script:Data.DomainRoleText),
+        @('UAC', $script:Data.UacSummary),
         @('SQL Server', (& $factValue $script:Data.SqlSummary 'sql')),
         @('Endpoint protection', (& $factValue $epp 'antivirus')),
         @('VMware Tools', (Get-ResultText $Results 'VMWARE' 'VMwareTools')),
@@ -3248,6 +3419,7 @@ function New-IPUReportHtml {
             @('Baseline', (Get-ResultText $Results 'POST_UPGRADE' 'Baseline')),
             @('Windows activation', (Get-ResultText $Results 'LICENSING' 'CurrentActivation')),
             @('RDP access', $script:Data.RdpSummary),
+            @('UAC', $script:Data.UacSummary),
             @('C: drive', $script:Data.CSummary),
             @('Endpoint protection', (& $factValue $epp 'antivirus'))
         )
@@ -3269,6 +3441,10 @@ function New-IPUReportHtml {
 .partial{background:var(--partial-bg);border:1px solid var(--partial-line);color:var(--partial-ink);border-radius:10px;padding:12px 16px;margin:14px 0;font-weight:600}
 .cards{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin:16px 0}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;color:inherit;text-decoration:none;display:block}a.card:hover{border-color:var(--heading)}a.card:focus-visible{outline:3px solid var(--focus);outline-offset:2px}a.card b::after{content:" \2192";font-size:14px;color:var(--muted)}
+.cmd{margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;align-items:flex-start}.cmd code{flex:1 1 260px;font:12px/1.45 Consolas,'Cascadia Mono',monospace;background:var(--th-bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 6px;overflow-wrap:anywhere;white-space:pre-wrap}
+.ck{font-size:11px;font-weight:700;border-radius:4px;padding:2px 6px;border:1px solid var(--line);color:var(--ink)}.ck-change{border-color:var(--action);color:var(--action)}
+.copy{display:none;font:inherit;font-size:12px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:6px;padding:2px 8px;cursor:pointer}.js .copy{display:inline-block}.copy:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.more{margin-top:4px;font-size:12px}.more a{color:var(--heading)}
 .note{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--info);border-radius:10px;padding:12px 16px;margin:14px 0}.card b{display:block;font-size:24px;font-weight:650}.card small{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
 section,details{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:14px 0}
 section{padding:18px 20px}h2{font-size:18px;margin:0 0 6px;color:var(--heading)}.lead{color:var(--muted);margin:0 0 12px}
@@ -3283,7 +3459,7 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
 .facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 24px}.fact{border-bottom:1px solid var(--line);padding:8px 0}.fact b{display:block;color:var(--muted);font-size:12px;font-weight:600}
 .legend p{margin:6px 0}.muted{color:var(--muted)}footer{padding:16px 2px;color:var(--muted);font-size:12px}
 @media(max-width:900px){.cards{grid-template-columns:repeat(2,1fr)}.facts{grid-template-columns:1fr}}
-@media print{:root{--ink:#16202e;--muted:#5d6a79;--line:#dde3ea;--bg:#ffffff;--panel:#ffffff;--heading:#16365f;--th-bg:#eef2f7;--th-ink:#30475f;--partial-bg:#fff4d6;--partial-ink:#5c4400;--partial-line:#e6c46a}body{background:#fff;color:#16202e}.wrap{max-width:none;padding:0}details{break-inside:avoid}.scroll{overflow:visible}table{min-width:0;font-size:10px}}
+@media print{.copy{display:none!important}a.ext::after{content:" (" attr(href) ")";font-size:9px;overflow-wrap:anywhere}:root{--ink:#16202e;--muted:#5d6a79;--line:#dde3ea;--bg:#ffffff;--panel:#ffffff;--heading:#16365f;--th-bg:#eef2f7;--th-ink:#30475f;--partial-bg:#fff4d6;--partial-ink:#5c4400;--partial-line:#e6c46a}body{background:#fff;color:#16202e}.wrap{max-width:none;padding:0}details{break-inside:avoid}.scroll{overflow:visible}table{min-width:0;font-size:10px}}
 </style></head><body><div class="wrap">
 '@)
     [void]$sb.AppendLine('<div class="hero"><h1>' + (& $e $title) + '</h1>')
@@ -3369,13 +3545,17 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
             [void]$sb.AppendLine('<div class="scroll"><table><caption class="sr">' + (& $e ($chapter + ': all records')) + '</caption><thead><tr><th scope="col">Status</th><th scope="col">Area</th><th scope="col">Item</th><th scope="col">Value</th><th scope="col">Details</th><th scope="col">Recommendation</th><th scope="col">Source</th></tr></thead><tbody>')
             foreach ($r in $rows) {
                 $kindNote = ''; if ($r.Kind -eq 'Observation') { $kindNote = '<br><em class="muted">Observation</em>' }
-                [void]$sb.AppendLine('<tr><td class="nw">' + (New-StatusBadge $r.Status) + $kindNote + '</td><td class="nw">' + (& $e (Get-AreaName $r.Area)) + '</td><td class="item">' + (& $e $r.Item) + '</td><td class="txt">' + (& $e $r.Value) + '</td><td class="txt">' + (& $e $r.Details) + '</td><td class="txt">' + (& $e $r.Recommendation) + '</td><td class="txt muted">' + (& $e $r.Source) + '</td></tr>')
+                [void]$sb.AppendLine('<tr><td class="nw">' + (New-StatusBadge $r.Status) + $kindNote + '</td><td class="nw">' + (& $e (Get-AreaName $r.Area)) + '</td><td class="item">' + (& $e $r.Item) + '</td><td class="txt">' + (& $e $r.Value) + '</td><td class="txt">' + (& $e $r.Details) + '</td><td class="txt">' + (New-RecommendationHtml $r) + '</td><td class="txt muted">' + (& $e $r.Source) + '</td></tr>')
             }
             [void]$sb.AppendLine('</tbody></table></div>')
         }
         [void]$sb.AppendLine('</div></details>')
     }
-    [void]$sb.AppendLine('<footer>Collector ' + (& $e $script:CollectorVersion) + ' | ' + @($Results).Count + ' records | Read-only local assessment. It does not prove backups, credentials, licensing or application/vendor support.</footer></div></body></html>')
+    [void]$sb.AppendLine('<footer>Collector ' + (& $e $script:CollectorVersion) + ' | ' + @($Results).Count + ' records | Read-only local assessment. It does not prove backups, credentials, licensing or application/vendor support. Commands are shown, never run, by this script.</footer></div>')
+    # Copy buttons (#79). Without JavaScript the buttons stay hidden and the
+    # command text can be selected as usual.
+    [void]$sb.AppendLine('<script type="text/javascript">document.documentElement.className+=" js";document.addEventListener("click",function(e){var b=e.target;if(!b||!b.classList||!b.classList.contains("copy"))return;var t=b.getAttribute("data-cmd");var done=function(){b.textContent="Copied";setTimeout(function(){b.textContent="Copy"},1500)};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,function(){})}else{var a=document.createElement("textarea");a.value=t;document.body.appendChild(a);a.select();try{document.execCommand("copy");done()}catch(x){}document.body.removeChild(a)}});</script>')
+    [void]$sb.AppendLine('</body></html>')
     return $sb.ToString()
 }
 
@@ -3428,12 +3608,13 @@ function New-AssessmentJsonObject {
             RecommendedMedia = $script:Data.RecommendedMedia
             Platform         = (Get-ResultText $Results 'PLATFORM' 'PhysicalOrVirtual')
             DomainRole       = $script:Data.DomainRoleText
+            Uac              = $script:Data.UacSummary
             SqlServer        = $script:Data.SqlSummary
             Activation       = $script:Data.ActivationSummary
             CDrive           = $script:Data.CSummary
             CompatScan       = (Get-ResultText $Results 'COMPAT_SCAN' 'SetupCompatibilityScan')
         }
-        Results             = @($Results | Select-Object CheckId,Area,Item,Status,Kind,Value,Details,Recommendation,Source)
+        Results             = @($Results | Select-Object CheckId,Area,Item,Status,Kind,Value,Details,Recommendation,Source,Command,CommandKind,Link,LinkTitle)
         CheckRuns           = @($script:CheckRuns.ToArray() | Select-Object Id,Name,Phase,Outcome,Duration,Message)
         Snapshot            = [pscustomobject]$snapshot
     }

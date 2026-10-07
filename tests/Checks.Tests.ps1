@@ -115,6 +115,11 @@ BeforeAll {
             '<GPO><Name>Admins Only</Name><Path><Identifier ' + $t + '>{33333333-3333-3333-3333-333333333333}</Identifier></Path><Enabled>true</Enabled><IsValid>true</IsValid><FilterAllowed>true</FilterAllowed><AccessDenied>true</AccessDenied><Link><SOMPath>corp.example.test/Servers</SOMPath><AppliedOrder>0</AppliedOrder><Enabled>true</Enabled></Link></GPO>' +
             '</ComputerResults></Rsop>'
     }
+    function Save-IISConfigEvidence {
+        param([string]$Destination, [string]$SourceFolder = '', [bool]$Zip = $true)
+        if ($script:Fake.IISCopyError) { throw $script:Fake.IISCopyError }
+        return [pscustomobject]@{ Location = ($Destination + '.zip'); Folder = $Destination; Files = @('administration.config', 'applicationHost.config', 'redirection.config'); ApplicationHostSha256 = ('AB' * 32); SharedConfigPath = [string]$script:Fake.IISShared }
+    }
     function Get-LocalGroupMembersBySid { param([string]$Sid) return ,@($script:Fake.Groups[$Sid]) }
     function Read-FileTail { param([string]$Path, [int]$MaxBytes = 0) return ,@($script:Fake.CbsLines) }
     function Test-CommandAvailable { param([string]$Name) return ($script:Fake.MissingCommands -notcontains $Name) }
@@ -628,6 +633,16 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             (Get-Row 'ACCESS' 'LocalAdministratorsMember').Count | Should -Be 2
             (Get-Row 'DOMAIN_CONTROLLER' 'DomainController').Count | Should -Be 0
         }
+        It 'reports UAC in plain words, from the registry (#75)' {
+            $script:Fake.Registry['HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System|EnableLUA'] = 1
+            $script:Fake.Registry['HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System|ConsentPromptBehaviorAdmin'] = 2
+            $null = Invoke-TestCheck 'domain'
+            $row = (Get-Row 'ACCESS' 'UAC')[0]
+            $row.Status | Should -Be 'INFO'
+            $row.Value | Should -Be 'On - prompt for consent on the secure desktop'
+            $script:Data.UacSummary | Should -Be $row.Value
+            $script:Data.Snapshot.Uac | Should -Be $row.Value
+        }
         It 'a domain controller is a BLOCKER by company policy' {
             $script:Fake.Cim['Win32_ComputerSystem'].DomainRole = 5
             Reset-FakeServerKeep
@@ -884,6 +899,50 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $null = Invoke-TestCheck 'iis'
             (Get-Row 'IIS' 'Web-Server')[0].Status | Should -Be 'WARNING'
             (Get-Row 'IIS' 'Site: Default Web Site')[0].Details | Should -Match 'https:\*:443:'
+        }
+        It 'IIS installed: the configuration is copied into the evidence folder (#76)' {
+            $PolicyEvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $script:Fake.Features['Web-Server'] = $true
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'iis'
+            $row = (Get-Row 'IIS' 'ConfigurationCopy')[0]
+            $row.Status | Should -Be 'OK'
+            $row.Value | Should -BeLike '*-IPU-IIS-*.zip'
+            $row.Details | Should -Match 'applicationHost.config SHA256=(AB){32}'
+            (Get-Row 'IIS' 'SharedConfiguration').Count | Should -Be 0
+            (Get-Row 'IIS' 'Web-Server')[0].Recommendation | Should -Match 'appcmd.exe add backup'
+        }
+        It 'IIS with shared configuration is a WARNING observation (#76)' {
+            $PolicyEvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $script:Fake.Features['Web-Server'] = $true
+            $script:Fake.IISShared = '\\files.example.test\iisconfig'
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'iis'
+            $row = (Get-Row 'IIS' 'SharedConfiguration')[0]
+            $row.Status | Should -Be 'WARNING'
+            $row.Kind | Should -Be 'Observation'
+        }
+        It 'a failed copy is MANUAL, not silence (#76)' {
+            $PolicyEvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $script:Fake.Features['Web-Server'] = $true
+            $script:Fake.IISCopyError = 'Access is denied'
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'iis'
+            $row = (Get-Row 'IIS' 'ConfigurationCopy')[0]
+            $row.Status | Should -Be 'MANUAL'
+            $row.Kind | Should -Be 'Finding'
+            $row.Details | Should -Match 'Access is denied'
+        }
+        It 'switched off: no copy, and said so (#76)' {
+            $EnableIISConfigEvidence = $false
+            $script:Fake.Features['Web-Server'] = $true
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'iis'
+            (Get-Row 'IIS' 'ConfigurationCopy')[0].Status | Should -Be 'INFO'
+        }
+        It 'no IIS: nothing is copied (#76)' {
+            $null = Invoke-TestCheck 'iis'
+            (Get-Row 'IIS' 'ConfigurationCopy').Count | Should -Be 0
         }
     }
 
