@@ -90,6 +90,7 @@ Lists may be empty or `null`.
 | `IPv4`, `Dns` | IPv4 addresses and DNS servers of enabled adapters |
 | `Hosts` | Active hosts-file entries |
 | `Tasks` | Non-Microsoft scheduled tasks, for example `\Example\Nightly export` |
+| `Gpos`, `Groups` | Applied GPO names and the computer's AD groups (from 4.2.0; absent when they could not be read). The post-upgrade comparison reports differences |
 
 ## Compatibility rules
 

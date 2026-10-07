@@ -145,6 +145,7 @@ param(
     [ValidateRange(1, 4096)][int]$MinimumMemoryGB = 8,
     [ValidateRange(1, 3650)][int]$MaxPatchAgeDays = 60,
     [ValidateRange(1, 3650)][int]$UptimeWarningDays = 60,
+    [ValidateRange(1, 365)][int]$GroupPolicyMaxAgeDays = 7,
     [ValidateRange(1, 365)][int]$AVMaxAgeDays = 3,
     [ValidateRange(1, 3650)][int]$CertificateWarningDays = 90,
     [ValidateRange(1, 10240)][int]$SystemPartitionMinFreeMB = 50,
@@ -274,7 +275,7 @@ $script:CollectorVersion  = '4.1.0'
 # report folder and redaction describe one run, so they stay arguments only.
 $script:ProfileSettingNames = @(
     'TargetMediaLanguage','BlockDomainControllerIPU',
-    'MinimumCFreeGB','ExtendBlockGB','MinimumMemoryGB','MaxPatchAgeDays','UptimeWarningDays','AVMaxAgeDays',
+    'MinimumCFreeGB','ExtendBlockGB','MinimumMemoryGB','MaxPatchAgeDays','UptimeWarningDays','GroupPolicyMaxAgeDays','AVMaxAgeDays',
     'CertificateWarningDays','SystemPartitionMinFreeMB','RecoveryPartitionMinFreeMB',
     'RunDISMScanHealth','RunSFCVerifyOnly','DISMTimeoutMinutes','SFCTimeoutMinutes','SlowCheckBudgetMinutes','CompatScanTimeoutMinutes',
     'EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip',
@@ -356,6 +357,7 @@ $script:AreaMap = @{
     'NETWORK_DEPENDENCY' = @{ Name='Hosts file and static routes';Chapter='Network' }
     'ACCESS'             = @{ Name='Access and credentials';      Chapter='Access and Remote Desktop' }
     'RDP'                = @{ Name='RDP access and policy';       Chapter='Access and Remote Desktop' }
+    'GROUP_POLICY'       = @{ Name='Group Policy and AD groups';  Chapter='Access and Remote Desktop' }
     'POLICY_EVIDENCE'    = @{ Name='Policy evidence files';       Chapter='Access and Remote Desktop' }
     'IIS'                = @{ Name='IIS';                         Chapter='IIS and Remote Desktop Services' }
     'RDS'                = @{ Name='Remote Desktop Services';     Chapter='IIS and Remote Desktop Services' }
@@ -565,6 +567,74 @@ function Initialize-OutputFolder {
         Write-AssessmentLog 'WARNING' 'ACL' ('Could not restrict ' + $Path + ': ' + $_.Exception.Message)
         return 'CreatedUnrestricted'
     }
+}
+
+function Get-GpResultXml {
+    # Runs "gpresult /scope computer /x" into a temp file and returns the
+    # XML text. Throws with gpresult's own message when it fails.
+    $file = Join-Path ([IO.Path]::GetTempPath()) ('IPU-gpresult-' + [guid]::NewGuid().ToString('N') + '.xml')
+    try {
+        $r = Invoke-NativeCapture (Join-Path $env:windir 'System32\gpresult.exe') @('/scope','computer','/x',$file,'/f') 180
+        if ($r.TimedOut) { throw 'gpresult did not finish within 3 minutes' }
+        if (-not (Test-Path -LiteralPath $file)) { throw ('gpresult wrote no result (exit ' + $r.ExitCode + '): ' + (@($r.Lines) -join ' ')) }
+        return [IO.File]::ReadAllText($file)
+    } finally {
+        Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-AdComputerGroup {
+    # The computer object's security groups from AD, nested groups included
+    # (tokenGroups), read as the computer account itself - no RSAT needed.
+    $searcher = New-Object System.DirectoryServices.DirectorySearcher
+    $searcher.Filter = '(&(objectCategory=computer)(sAMAccountName=' + $env:COMPUTERNAME + '$))'
+    $searcher.ClientTimeout = [TimeSpan]::FromSeconds(30)
+    $hit = $searcher.FindOne()
+    if (-not $hit) { throw ('Computer object ' + $env:COMPUTERNAME + '$ not found in AD') }
+    $entry = $hit.GetDirectoryEntry()
+    $entry.RefreshCache([string[]]@('tokenGroups'))
+    $names = @()
+    foreach ($bytes in @($entry.Properties['tokenGroups'])) {
+        $sid = New-Object System.Security.Principal.SecurityIdentifier ([byte[]]$bytes), 0
+        try { $names += $sid.Translate([System.Security.Principal.NTAccount]).Value } catch { $names += $sid.Value }
+    }
+    return ,@($names | Sort-Object -Unique)
+}
+
+function Get-WmiFilterQuery {
+    # WMI filter name and queries for the given GPO GUIDs, from AD.
+    # Returns GUID -> @{ Name; Queries }; GPOs without a filter are absent.
+    param([string[]]$GpoGuids)
+    $result = @{}
+    $root = New-Object System.DirectoryServices.DirectoryEntry('LDAP://RootDSE')
+    $nc = [string]$root.Properties['defaultNamingContext'][0]
+    foreach ($guid in @($GpoGuids | Where-Object { $_ } | Sort-Object -Unique)) {
+        $s = New-Object System.DirectoryServices.DirectorySearcher([ADSI]('LDAP://CN=Policies,CN=System,' + $nc))
+        $s.Filter = '(&(objectClass=groupPolicyContainer)(cn=' + $guid + '))'
+        $null = $s.PropertiesToLoad.Add('gPCWQLFilter')
+        $gpo = $s.FindOne()
+        if (-not $gpo -or $gpo.Properties['gpcwqlfilter'].Count -eq 0) { continue }
+        $link = [string]$gpo.Properties['gpcwqlfilter'][0]
+        $m = [regex]::Match($link, '\{[0-9A-Fa-f-]{36}\}')
+        if (-not $m.Success) { continue }
+        $f = New-Object System.DirectoryServices.DirectorySearcher([ADSI]('LDAP://CN=SOM,CN=WMIPolicy,CN=System,' + $nc))
+        $f.Filter = '(&(objectClass=msWMI-Som)(msWMI-ID=' + $m.Value + '))'
+        foreach ($p in 'msWMI-Name','msWMI-Parm2') { $null = $f.PropertiesToLoad.Add($p) }
+        $hit = $f.FindOne()
+        if (-not $hit) { continue }
+        $result[$guid] = @{ Name = [string]$hit.Properties['mswmi-name'][0]; Queries = (ConvertFrom-WmiFilterParm ([string]$hit.Properties['mswmi-parm2'][0])) }
+    }
+    return $result
+}
+
+function Get-GroupPolicyLastApplied {
+    # Last time the computer's Group Policy core processing ran, from the
+    # registry (FILETIME as two DWORDs). $null when not recorded.
+    $key = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine\Extension-List\{00000000-0000-0000-0000-000000000000}'
+    $hi = Get-RegistryValueSafe $key 'EndTimeHi'
+    $lo = Get-RegistryValueSafe $key 'EndTimeLo'
+    if (-not $hi.Exists -or -not $lo.Exists) { return $null }
+    return (ConvertFrom-FileTimeValue $hi.Value $lo.Value)
 }
 
 function Get-BroadFolderReader {
@@ -1134,7 +1204,9 @@ function Compare-IPUSnapshot {
         @{ Name='Hosts file entries';Prop='Hosts';        Status='WARNING'; Rec='Restore the missing hosts entries if still needed.' },
         @{ Name='Applications';      Prop='Apps';         Status='WARNING'; Rec='Applications that disappeared during the upgrade must be reinstalled or confirmed obsolete by the owner.' },
         @{ Name='Windows features';  Prop='Features';     Status='WARNING'; Rec='Features removed by Setup. Confirm nothing depends on them.' },
-        @{ Name='Scheduled tasks';   Prop='Tasks';        Status='WARNING'; Rec='Re-create missing tasks and confirm their run-as credentials.' }
+        @{ Name='Scheduled tasks';   Prop='Tasks';        Status='WARNING'; Rec='Re-create missing tasks and confirm their run-as credentials.' },
+        @{ Name='Applied GPOs';      Prop='Gpos';         Status='WARNING'; Rec='These GPOs applied before the upgrade and no longer do. Check their WMI filters (often a Windows version filter) and security filtering.' },
+        @{ Name='AD groups';         Prop='Groups';       Status='WARNING'; Rec='The computer was in these groups before. Check the AD group memberships (patch rings, GPO filtering, certificate enrolment).' }
     )
     foreach ($l in $lists) {
         $b = @($Before.($l.Prop) | Where-Object { $_ })
@@ -1143,7 +1215,145 @@ function Compare-IPUSnapshot {
         $lost = @($b | Where-Object { $a -notcontains $_ } | Sort-Object -Unique)
         if ($lost.Count -gt 0) { $diff += (& $make $l.Status ($l.Name + ' missing after upgrade') ('Count=' + $lost.Count) ($lost -join ', ') $l.Rec) }
     }
+    # Group Policy can also start applying after the upgrade (#80). Only
+    # compared when the baseline has the list (4.2.0 and later).
+    if ($null -ne $Before.Gpos -and $null -ne $After.Gpos) {
+        $b = @($Before.Gpos | Where-Object { $_ }); $a = @($After.Gpos | Where-Object { $_ })
+        $new = @($a | Where-Object { $b -notcontains $_ } | Sort-Object -Unique)
+        if ($new.Count -gt 0) { $diff += (& $make 'WARNING' 'GPOs newly applied after upgrade' ('Count=' + $new.Count) ($new -join ', ') 'These GPOs did not apply before the upgrade. Confirm they are intended for this server (WMI filters on the Windows version often cause this).') }
+    }
     return ,$diff
+}
+
+function ConvertFrom-GpResultXml {
+    # Pure: parses "gpresult /scope computer /x" (RSoP XML) into the GPOs
+    # that applied, the GPOs that were filtered out with the reason, and the
+    # computer's security groups (#80). Namespace-agnostic, so it reads the
+    # output of every supported Windows release.
+    param([Parameter(Mandatory=$true)][string]$Xml)
+    $doc = New-Object System.Xml.XmlDocument
+    $doc.LoadXml($Xml)
+    $computer = $doc.SelectSingleNode("//*[local-name()='ComputerResults']")
+    if (-not $computer) { throw 'No computer results in the gpresult output.' }
+    $text = {
+        param($Node, [string]$Name)
+        $n = $Node.SelectSingleNode("*[local-name()='" + $Name + "']")
+        if ($n) { return ([string]$n.InnerText).Trim() }
+        return ''
+    }
+    $gpos = @()
+    foreach ($g in @($computer.SelectNodes("*[local-name()='GPO']"))) {
+        $name = & $text $g 'Name'
+        $guid = ''
+        $id = $g.SelectSingleNode("*[local-name()='Path']/*[local-name()='Identifier']")
+        if ($id) { $guid = ([string]$id.InnerText).Trim() }
+        $links = @()
+        $appliedLink = $false
+        foreach ($l in @($g.SelectNodes("*[local-name()='Link']"))) {
+            $som = & $text $l 'SOMPath'
+            $order = 0; [void][int]::TryParse((& $text $l 'AppliedOrder'), [ref]$order)
+            $linkOn = ((& $text $l 'Enabled') -ne 'false')
+            if ($som) { $links += $som }
+            if ($linkOn -and $order -gt 0) { $appliedLink = $true }
+        }
+        $reason = ''
+        if ((& $text $g 'AccessDenied') -eq 'true') { $reason = 'Denied (security filtering)' }
+        elseif ((& $text $g 'FilterAllowed') -eq 'false') { $reason = 'Denied (WMI filter)' }
+        elseif ((& $text $g 'Enabled') -eq 'false') { $reason = 'Disabled GPO' }
+        elseif ((& $text $g 'IsValid') -eq 'false') { $reason = 'Not valid' }
+        elseif (-not $appliedLink) { $reason = 'Not applied (link disabled or empty GPO)' }
+        $gpos += [pscustomobject]@{
+            Name = $name; Guid = $guid; Applied = (-not $reason); Reason = $reason
+            Links = $links; FilterName = (& $text $g 'FilterName')
+        }
+    }
+    $groups = @()
+    foreach ($sg in @($computer.SelectNodes("*[local-name()='SecurityGroup']"))) {
+        $n = & $text $sg 'Name'
+        if (-not $n) { $n = & $text $sg 'SID' }
+        if ($n) { $groups += $n }
+    }
+    return [pscustomobject]@{
+        Domain = (& $text $computer 'Domain'); Site = (& $text $computer 'Site')
+        Gpos = $gpos; Groups = @($groups | Sort-Object -Unique)
+    }
+}
+
+function ConvertFrom-WmiFilterParm {
+    # Pure: the queries stored in a WMI filter's msWMI-Parm2 attribute, for
+    # example "1;3;10;66;WQL;root\CIMv2;SELECT * FROM Win32_OperatingSystem
+    # WHERE Version LIKE '10.0.%';". Fields are separated by ";", and each
+    # query is preceded by its length.
+    param([string]$Parm)
+    $queries = @()
+    if (-not $Parm) { return ,$queries }
+    $parts = $Parm -split ';'
+    for ($i = 0; $i -lt $parts.Count; $i++) {
+        if ($parts[$i] -eq 'WQL' -and $i + 2 -lt $parts.Count) {
+            $queries += [pscustomobject]@{ Namespace = $parts[$i + 1]; Query = $parts[$i + 2] }
+            $i += 2
+        }
+    }
+    return ,$queries
+}
+
+function Test-WmiFilterOsDependent {
+    # Pure: true when a WMI filter selects on the Windows version, build or
+    # caption - such a filter can stop or start matching after an in-place
+    # upgrade. ProductType (server/DC) alone does not change with the upgrade.
+    param([string]$Query)
+    if (-not $Query) { return $false }
+    return ($Query -match 'Win32_OperatingSystem' -and $Query -match '\b(Version|BuildNumber|Caption|OperatingSystemSKU)\b')
+}
+
+function Get-GroupPolicyDecision {
+    # Pure: what the report says about Group Policy (#80), in three cases:
+    # workgroup (only local policy, never MANUAL), domain member with the
+    # data read, and domain member where gpresult or AD could not be read
+    # (MANUAL, never an empty list that looks clean).
+    param(
+        [bool]$PartOfDomain,
+        [bool]$GpResultRead,
+        [bool]$AdRead,
+        $LastApplied,
+        [datetime]$Now,
+        [int]$MaxAgeDays = 7,
+        [string]$GpResultError = '',
+        [string]$AdError = ''
+    )
+    $rows = @()
+    if (-not $PartOfDomain) {
+        $rows += [pscustomobject]@{ Item = 'GroupPolicyScope'; Status = 'INFO'; Kind = 'Evidence'; Value = 'Workgroup server: only local policy applies'; Details = 'No domain GPOs or AD groups apply to a workgroup server.'; Recommendation = '' }
+        return ,$rows
+    }
+    if (-not $GpResultRead) {
+        $rows += [pscustomobject]@{ Item = 'GroupPolicyScope'; Status = 'MANUAL'; Kind = 'Finding'; Value = 'Could not read the applied Group Policy (gpresult)'; Details = $GpResultError; Recommendation = 'The GPO list is missing - this is not evidence that no GPO applies. Run "gpresult /scope computer /h gp.html" as administrator and review it before the change.' }
+    }
+    if (-not $AdRead) {
+        $rows += [pscustomobject]@{ Item = 'DomainLookup'; Status = 'MANUAL'; Kind = 'Finding'; Value = 'Could not reach the domain: WMI filters and AD groups are incomplete'; Details = $AdError; Recommendation = 'Check domain connectivity from this server, then re-run. Until then, review the WMI filters of the GPOs and the computer''s groups in Active Directory manually.' }
+    }
+    if ($null -eq $LastApplied) {
+        $rows += [pscustomobject]@{ Item = 'GroupPolicyLastApplied'; Status = 'MANUAL'; Kind = 'Observation'; Value = 'Not readable'; Details = ''; Recommendation = 'Check "gpresult /r" for the last time Group Policy was applied.' }
+    } else {
+        $age = [math]::Floor(($Now - [datetime]$LastApplied).TotalDays)
+        if ($age -gt $MaxAgeDays) {
+            $rows += [pscustomobject]@{ Item = 'GroupPolicyLastApplied'; Status = 'WARNING'; Kind = 'Finding'; Value = ('This server has not received Group Policy since ' + ([datetime]$LastApplied).ToString('yyyy-MM-dd HH:mm') + ' (' + $age + ' days)'); Details = ('Limit: ' + $MaxAgeDays + ' days (GroupPolicyMaxAgeDays)'); Recommendation = 'Find out why (domain connectivity, secure channel, Group Policy errors in the System log), fix it and run "gpupdate /target:computer" before the change.' }
+        } else {
+            $rows += [pscustomobject]@{ Item = 'GroupPolicyLastApplied'; Status = 'OK'; Kind = 'Evidence'; Value = ([datetime]$LastApplied).ToString('yyyy-MM-dd HH:mm'); Details = ($age.ToString() + ' days ago'); Recommendation = '' }
+        }
+    }
+    return ,$rows
+}
+
+function ConvertFrom-FileTimeValue {
+    # Pure: a FILETIME stored as two DWORD registry values (high, low).
+    param($High, $Low)
+    if ($null -eq $High -or $null -eq $Low) { return $null }
+    # Registry DWORDs arrive as Int32 (possibly negative): mask to 32 bits.
+    $mask = [int64]4294967295
+    $value = (([int64]$High -band $mask) -shl 32) -bor ([int64]$Low -band $mask)
+    if ($value -le 0) { return $null }
+    try { return [DateTime]::FromFileTime($value) } catch { return $null }
 }
 
 function Get-OutputFolderAccessDecision {
@@ -1791,6 +2001,60 @@ Register-Check -Id 'domain' -Name 'Domain role and access' -Script {
     $admins = Get-LocalGroupMembersBySid 'S-1-5-32-544'
     foreach ($member in $admins) { Add-Result 'ACCESS' 'LocalAdministratorsMember' 'INFO' $member -Source 'Local group S-1-5-32-544' }
     if ($admins.Count -eq 0) { Add-Result 'ACCESS' 'LocalAdministratorsMember' 'MANUAL' 'No members returned' -Recommendation 'Enumerate local Administrators manually.' -Kind 'Observation' -Source 'Local group S-1-5-32-544' }
+}
+
+# ---------------------------------------------------------------------------
+Register-Check -Id 'grouppolicy' -Name 'Group Policy and AD groups' -Script {
+    # #80: which GPOs apply, which are filtered out and why, WMI filters on the
+    # Windows version (they can stop or start matching after the upgrade),
+    # the computer's AD groups, and when policy last applied.
+    $domainMember = [bool]$script:Data.CS.PartOfDomain
+    $gp = $null; $gpError = ''
+    try { $gp = ConvertFrom-GpResultXml (Get-GpResultXml) } catch { $gpError = $_.Exception.Message; Write-Swallowed $_ }
+    $groups = @(); $filters = @{}; $adError = ''; $adRead = $true
+    if ($domainMember) {
+        try {
+            $groups = @(Get-AdComputerGroup)
+            if ($gp) { $filters = Get-WmiFilterQuery @($gp.Gpos | ForEach-Object { $_.Guid }) }
+        } catch { $adRead = $false; $adError = $_.Exception.Message; Write-Swallowed $_ }
+    }
+    $last = $null
+    if ($domainMember) { $last = Get-GroupPolicyLastApplied }
+    foreach ($row in (Get-GroupPolicyDecision $domainMember ($null -ne $gp) $adRead $last (Get-Date) $GroupPolicyMaxAgeDays $gpError $adError)) {
+        Add-Result 'GROUP_POLICY' $row.Item $row.Status $row.Value $row.Details -Recommendation $row.Recommendation -Kind $row.Kind -Source 'gpresult, Active Directory, Group Policy state'
+    }
+    if ($gp) {
+        $target = Get-ReleaseDisplayName $TargetServerVersion
+        foreach ($g in @($gp.Gpos)) {
+            $state = 'Applied'; if (-not $g.Applied) { $state = $g.Reason }
+            $details = @(('Linked at ' + (@($g.Links) -join '; ')))
+            $filter = $filters[$g.Guid]
+            if ($filter) {
+                $details += ('WMI filter: ' + $filter.Name)
+                foreach ($q in @($filter.Queries)) { $details += ('Query: ' + $q.Query) }
+            } elseif ($g.FilterName) { $details += ('WMI filter: ' + $g.FilterName) }
+            $osDependent = $filter -and @($filter.Queries | Where-Object { Test-WmiFilterOsDependent $_.Query }).Count -gt 0
+            if ($osDependent) {
+                Add-Result 'GROUP_POLICY' ('GPO: ' + $g.Name) 'WARNING' ($state + ' - WMI filter depends on the Windows version') $details -Recommendation ('After the upgrade the server reports ' + $target + '. Check that this filter still matches (or still excludes) it as intended, before the change.') -Source 'gpresult, WMI filter in AD'
+            } else {
+                Add-Result 'GROUP_POLICY' ('GPO: ' + $g.Name) 'INFO' $state $details -Source 'gpresult'
+            }
+        }
+        if ($domainMember) {
+            if ($adRead) {
+                foreach ($n in $groups) { Add-Result 'GROUP_POLICY' 'ADGroup' 'INFO' $n -Source 'AD tokenGroups (nested groups included)' }
+            }
+        } else {
+            Add-Result 'GROUP_POLICY' 'ADGroup' 'INFO' 'Not applicable (workgroup)' -Source 'Win32_ComputerSystem'
+        }
+        if ($script:Data.Snapshot) {
+            $script:Data.Snapshot.Gpos = @($gp.Gpos | Where-Object { $_.Applied } | ForEach-Object { $_.Name } | Sort-Object -Unique)
+            if ($domainMember -and $adRead) { $script:Data.Snapshot.Groups = @($groups) }
+        }
+    } elseif (-not $domainMember) {
+        # Workgroup server and gpresult failed: still only local policy.
+        Add-Result 'GROUP_POLICY' 'LocalPolicy' 'MANUAL' 'Could not list the local policy (gpresult)' $gpError -Recommendation 'The local policy backup in the RDP policy evidence (LGPO) shows the settings. Or run "gpresult /scope computer /h gp.html" as administrator.' -Kind 'Observation' -Source 'gpresult'
+    }
 }
 
 # ---------------------------------------------------------------------------

@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- New check `grouppolicy`: applied and filtered GPOs with the reason, a WARNING for each GPO whose WMI filter depends on the Windows version, the computer's AD groups (nested included), and when Group Policy last applied (`-GroupPolicyMaxAgeDays`, default 7). Workgroup servers show local policy only; an unreachable domain is MANUAL. The post-upgrade comparison reports GPOs and groups that changed (#80).
+
 ### Changed
 - Security and monitoring tools without a driver (for example Nessus, NXLog) are observations to verify after the upgrade instead of planning warnings; tools with a driver (for example Sysmon) stay warnings and name the driver (#78).
 - Report header: the counters link to the rows behind them. A check skipped by choice (for example the Setup compatibility scan without installation media) is a plain-language note that says what to do, instead of the "Not fully assessed" banner, which is now only for checks that failed, ran out of time or were not started (#77).

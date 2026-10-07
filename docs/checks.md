@@ -1,6 +1,6 @@
 # Checks reference
 
-The assessment runs 31 checks, in the order below. Each check writes rows to the report under one or more
+The assessment runs 32 checks, in the order below. Each check writes rows to the report under one or more
 **areas**. A check that throws is reported as `MANUAL` in *Collector coverage* ("Check did not complete");
 the absence of findings in that area is then **not** evidence of readiness.
 
@@ -63,6 +63,7 @@ check is added without one.
 
 | Check | Looks at | Possible results |
 |---|---|---|
+| `grouppolicy` Group Policy and AD groups | `gpresult /scope computer /x`: GPOs that apply and GPOs filtered out with the reason (WMI filter, security filtering, disabled); the WMI filter queries of those GPOs and the computer's AD groups including nested groups, read from AD as the computer account; when Group Policy last applied | Workgroup server: `INFO` "only local policy applies" (never MANUAL). Domain member: `WARNING` per GPO whose WMI filter selects on the Windows version, build or caption (it can stop or start matching after the upgrade); `WARNING` Group Policy not applied for more than *GroupPolicyMaxAgeDays*; `MANUAL` when gpresult or AD could not be read (the lists are then incomplete, not empty); INFO lists |
 | `rdp` RDP access, policy and evidence | RDP enabled (policy and effective), listener and port, NLA, firewall rules, logon rights, Remote Desktop Users, drive redirection; optional evidence (gpresult, user rights, LGPO backup) zipped | `ACTION` NO-GO (RDP disabled, nothing listening, no one may log on); `MANUAL` REVIEW; `OK` GO; `WARNING` drive redirection blocked; `WARNING` observation NLA off |
 | `pki` PKI, certificates and TLS bindings | AD CS roles and CA configuration, certificates in My, Remote Desktop and WebHosting, IIS HTTPS bindings, RDP and WinRM certificates, HTTP.sys bindings | `ACTION` certification authority, IIS binding to a missing or expired certificate; `WARNING` binding certificate expiring within *CertificateWarningDays*; `WARNING` observation expired or expiring certificates |
 | `antivirus` Antivirus, EDR and security tools | Microsoft Defender status, third-party AV/EDR by product, service and driver name (one row per product, for example Trend Micro Deep Security Agent, Apex One and Vision One Endpoint Basecamp separately), Defender for Endpoint onboarding state, Nessus/NXLog/Sysmon, AppLocker, BitLocker, Secure Boot, TPM, filter drivers | `WARNING` per AV/EDR product (vendor IPU procedure; the summary names product and version); `WARNING` per security or monitoring tool with a driver (for example Sysmon), `WARNING` observation for a tool without drivers (for example Nessus, NXLog: check it runs after the upgrade); `INFO` for the built-in Defender for Endpoint sensor when it is not onboarded and not running; `MANUAL` no protection recognised; `OK` Defender current; `WARNING` BitLocker on C: (recovery key) |
@@ -89,4 +90,5 @@ pre-upgrade JSON from the same folder and reports:
 | Lost static routes or IPv4 addresses | `ACTION` |
 | Lost listening ports, DNS servers, hosts entries, applications, Windows features, scheduled tasks; services that no longer exist | `WARNING` |
 | No pre-upgrade JSON found | `MANUAL` |
+| GPOs that applied before and no longer do, GPOs that newly apply, AD groups the computer is no longer in | `WARNING` |
 | Pre-upgrade result was a partial checkpoint | `WARNING` observation |
