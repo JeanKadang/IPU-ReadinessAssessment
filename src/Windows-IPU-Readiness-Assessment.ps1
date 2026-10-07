@@ -1231,6 +1231,8 @@ function Get-RecommendationCommand {
         'CFreeSpace'    { return [pscustomobject]@{ Kind = 'Check'; Command = 'Get-Volume -DriveLetter C | Format-List DriveLetter, FileSystemLabel, @{ n = ''SizeGB''; e = { [math]::Round($_.Size / 1GB, 1) } }, @{ n = ''FreeGB''; e = { [math]::Round($_.SizeRemaining / 1GB, 1) } }' } }
     }
     throw ('Unknown recommendation command: ' + $Id)
+}
+
 function Get-UacDecision {
     # Pure: User Account Control in plain words from the registry values
     # under HKLM\...\Policies\System (#75). Missing values mean the
