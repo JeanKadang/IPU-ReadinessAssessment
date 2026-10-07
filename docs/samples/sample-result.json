@@ -295,7 +295,7 @@
     {
       "CheckId": "antivirus",
       "Area": "ANTIVIRUS",
-      "Item": "Trend Micro / TrendAI Deep Security, Apex One, Vision One",
+      "Item": "Trend Micro Deep Security Agent (Server & Workload Protection)",
       "Status": "WARNING",
       "Kind": "Finding",
       "Value": "Applications=1, Services=1 (1 running), Drivers=2",

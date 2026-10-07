@@ -208,7 +208,12 @@ $script:DetectionPatterns = @{
         @{ Label='OpenText Operations Agent';          App='^Operations-agent$|Operations Agent|OMi Agent|HP Operations'; Service='^OvCtrl$|^ovcd$|^opcagt'; Display='OpenView Ctrl|Operations Agent' }
     )
     EndpointProtection = @(
-        @{ Label='Trend Micro / TrendAI Deep Security, Apex One, Vision One'; App='Trend ?Micro|TrendAI|Deep Security|Apex One|Vision One'; Service='^(ds_agent|ds_monitor|ds_notifier|Amsp|ntrtscan|tmlisten|TMBMServer)$'; Display='Trend ?Micro|TrendAI'; Driver='^(tmeyes|TmKmSnsr|tmactmon|tmevtmgr|tmumh|tmcomm)$' }
+        # Trend Micro / TrendAI: one row per product, so the report names
+        # what is installed. Kernel drivers are listed under the Deep
+        # Security Agent, which installs them.
+        @{ Label='Trend Micro Deep Security Agent (Server & Workload Protection)'; App='Deep Security Agent'; Service='^(ds_agent|ds_monitor|ds_notifier|Amsp)$'; Display='Deep Security'; Driver='^(tmeyes|TmKmSnsr|tmumh)$' }
+        @{ Label='Trend Micro Apex One'; App='Apex One|OfficeScan'; Service='^(ntrtscan|tmlisten|TmCCSF|TMBMServer|TmPfw)$'; Display='Apex One|OfficeScan' }
+        @{ Label='Trend Vision One Endpoint Security agent (Endpoint Basecamp)'; App='Endpoint Basecamp|Vision One'; Service='^(Trend Micro Endpoint Basecamp|tm_netsrv)$'; Display='Endpoint Basecamp|Vision One' }
         @{ Label='Microsoft Defender for Endpoint (EDR sensor)'; Service='^Sense$' }
         @{ Label='CrowdStrike Falcon';       App='CrowdStrike';                       Service='^(CSAgent|CSFalconService)$';  Driver='^CSAgent$' }
         @{ Label='SentinelOne';              App='SentinelOne|Sentinel Agent';         Service='^(SentinelAgent|SentinelStaticEngine)$'; Driver='^SentinelMonitor$' }
@@ -1220,6 +1225,26 @@ function Test-HttpSysBindingBlock {
     # is not a binding. Labels stay English on localized Windows.
     param([string[]]$Lines)
     return (@($Lines | Where-Object { $_ -match '^\s*(IP:port|Hostname:port|Central Certificate Store)\s*:' }).Count -gt 0)
+}
+
+function Get-DefenderEndpointDecision {
+    # Pure: the Defender for Endpoint sensor service (Sense) is part of
+    # Windows Server 2019 and later even when the server was never
+    # onboarded. Only an onboarded or running sensor is an EDR to plan for.
+    param([string]$SenseState, $OnboardingState)
+    if ([string]$OnboardingState -eq '1') { return [pscustomobject]@{ Status='WARNING'; Active=$true; Text='Onboarded (OnboardingState=1), service ' + $SenseState } }
+    if ($SenseState -eq 'Running') { return [pscustomobject]@{ Status='WARNING'; Active=$true; Text='Sensor service running; onboarding state not readable' } }
+    $state = 'not readable'; if ($null -ne $OnboardingState -and [string]$OnboardingState -ne '') { $state = [string]$OnboardingState }
+    return [pscustomobject]@{ Status='INFO'; Active=$false; Text='Built-in sensor present, not onboarded (service ' + $SenseState + ', OnboardingState ' + $state + ')' }
+}
+
+function Get-DetectionProductName {
+    # Pure: "<Label> <version>" from the first application that matched, so
+    # the summary names the product and build that is installed.
+    param($Match)
+    $versions = @($Match.Apps | Where-Object { $_.Version } | ForEach-Object { ([string]$_.Version).Trim() } | Sort-Object -Unique)
+    if ($versions.Count -gt 0) { return ($Match.Label + ' ' + ($versions -join '/')) }
+    return [string]$Match.Label
 }
 
 function ConvertFrom-SiteDataJson {
@@ -2265,12 +2290,26 @@ Register-Check -Id 'antivirus' -Name 'Antivirus, EDR and security tools' -Script
 
     # Third-party AV/EDR by product name, service and driver.
     $epp = Find-DetectionMatch $script:DetectionPatterns.EndpointProtection $script:Data.Apps $script:Data.Services $script:Data.DriverNames
+    $products = @()
     foreach ($m in $epp) {
-        $protected = $true
         $running = @($m.Services | Where-Object { $_.State -eq 'Running' }).Count
         $val = 'Applications=' + @($m.Apps).Count + ', Services=' + @($m.Services).Count + ' (' + $running + ' running), Drivers=' + @($m.Drivers).Count
+        if ($m.Label -like 'Microsoft Defender for Endpoint*') {
+            $sense = @($m.Services | Where-Object { $_.Name -eq 'Sense' }) | Select-Object -First 1
+            $senseState = 'absent'; if ($sense) { $senseState = [string]$sense.State }
+            $onboarding = (Get-RegistryValueSafe 'HKLM:\SOFTWARE\Microsoft\Windows Advanced Threat Protection\Status' 'OnboardingState').Value
+            $d = Get-DefenderEndpointDecision $senseState $onboarding
+            if (-not $d.Active) {
+                Add-Result 'ANTIVIRUS' $m.Label 'INFO' $d.Text (Get-DetectionEvidence $m) -Source 'Win32_Service, Windows Advanced Threat Protection\Status'
+                continue
+            }
+            $val = $d.Text
+        }
+        $protected = $true
+        $products += (Get-DetectionProductName $m)
         Add-Result 'ANTIVIRUS' $m.Label 'WARNING' $val (Get-DetectionEvidence $m) -Recommendation ('Confirm this version supports ' + $target + ' and get the vendor''s IPU procedure. Many AV/EDR agents must be upgraded before, or paused during, Setup; their drivers are a common cause of rollback.') -Source 'Uninstall registry, Win32_Service, drivers'
     }
+    $script:Data.EndpointProducts = $products
     if (-not $protected) {
         Add-Result 'ANTIVIRUS' 'EndpointProtection' 'MANUAL' 'No active antivirus or EDR recognised' '' -Recommendation 'Verify endpoint protection manually. If a product is installed under an unknown name, add it to the detection patterns.' -Source 'Get-MpComputerStatus, uninstall registry, services, drivers'
     }
@@ -2865,7 +2904,10 @@ function New-IPUReportHtml {
         if ($run -and $run.Outcome -eq 'Completed') { return 'None detected' }
         return 'Not assessed'
     }
-    $epp = @($Results | Where-Object { $_.Area -eq 'ANTIVIRUS' -and ($_.Status -eq 'WARNING' -or ($_.Status -eq 'OK' -and $_.Item -like 'Microsoft Defender*')) } | ForEach-Object { $_.Item }) -join ', '
+    $eppNames = @($Results | Where-Object { $_.Area -eq 'ANTIVIRUS' -and $_.Item -eq 'Microsoft Defender Antivirus' -and ($_.Status -eq 'OK' -or $_.Status -eq 'WARNING') } | ForEach-Object { $_.Item })
+    if ($script:Data.EndpointProducts) { $eppNames += @($script:Data.EndpointProducts) }
+    else { $eppNames += @($Results | Where-Object { $_.Area -eq 'ANTIVIRUS' -and $_.Status -eq 'WARNING' -and $_.Item -ne 'Microsoft Defender Antivirus' } | ForEach-Object { $_.Item }) }
+    $epp = $eppNames -join ', '
 
     $facts = @(
         @('Current OS', (Get-ResultText $Results 'UPGRADE_PATH' 'CurrentOS')),
