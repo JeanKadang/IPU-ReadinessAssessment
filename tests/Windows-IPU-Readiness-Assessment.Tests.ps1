@@ -265,15 +265,18 @@ Describe 'HTML report' {
         $script:html | Should -Match '(?is)</html>\s*$'
     }
     It 'HTML-encodes values' {
-        $script:html | Should -Not -Match '<script>'
-        $script:html | Should -Match '&lt;script&gt;'
+        $script:html | Should -Not -Match 'Not supported <script>'
+        $script:html | Should -Match 'Not supported &lt;script&gt;'
     }
     It 'shows the partial banner and the not-assessed warning' {
         $script:html | Should -Match 'PARTIAL REPORT'
         $script:html | Should -Match 'Not fully assessed'
     }
     It 'contains no external resources' {
-        $script:html | Should -Not -Match '(src|href)="https?:'
+        # Documentation links (#79) are plain <a href>; nothing is loaded.
+        $script:html | Should -Not -Match 'src="https?:'
+        $script:html | Should -Not -Match '<link[^>]+href="https?:'
+        $script:html | Should -Not -Match '@import'
     }
 }
 
@@ -529,7 +532,8 @@ Describe 'Output folder access (#12)' {
     It 'gives the icacls command for an open existing folder, and never counts it as a finding' {
         $d = Get-OutputFolderAccessDecision 'Existing' @('Authenticated Users','Users') 'C:\Reports'
         $d.Kind | Should -Be 'Observation'
-        $d.Text | Should -Match 'icacls "C:\\Reports" /inheritance:r'
+        $d.Command | Should -Be 'icacls "C:\Reports" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F'
+        $d.Text | Should -Match 'command shown'
         $d.Text | Should -Match 'Authenticated Users, Users'
     }
 
@@ -1656,6 +1660,91 @@ Describe 'Security tools: finding only with a driver (#78)' {
             $d = Get-SecurityToolDecision $none 'Windows Server 2025'
             $d.Kind | Should -Be 'Observation'
             $d.Recommendation | Should -Match 'after the upgrade'
+        }
+    }
+}
+
+Describe 'Commands and links with recommendations (#79)' {
+    It 'builds the exact <Id> command' -TestCases @(
+        @{ Id = 'PendingRename'; Kind = 'Check';  Values = @{}; Expected = "Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue | Select-Object -ExpandProperty PendingFileRenameOperations" }
+        @{ Id = 'Restart';       Kind = 'Change'; Values = @{}; Expected = 'Restart-Computer' }
+        @{ Id = 'IisBackup';     Kind = 'Change'; Values = @{}; Expected = '& "$env:windir\system32\inetsrv\appcmd.exe" add backup "PreIPU"' }
+        @{ Id = 'FolderAcl';     Kind = 'Change'; Values = @{ Path = 'C:\Temp\IPU-Assessment' }; Expected = 'icacls "C:\Temp\IPU-Assessment" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F' }
+        @{ Id = 'EnableNla';     Kind = 'Change'; Values = @{}; Expected = 'Get-CimInstance -Namespace root\cimv2\TerminalServices -ClassName Win32_TSGeneralSetting -Filter "TerminalName=''RDP-tcp''" | Invoke-CimMethod -MethodName SetUserAuthenticationRequired -Arguments @{ UserAuthenticationRequired = 1 }' }
+        @{ Id = 'LbfoTeams';     Kind = 'Check';  Values = @{}; Expected = 'Get-NetLbfoTeam | Format-List Name, Status, TeamingMode, LoadBalancingAlgorithm, Members' }
+        @{ Id = 'CFreeSpace';    Kind = 'Check';  Values = @{}; Expected = 'Get-Volume -DriveLetter C | Format-List DriveLetter, FileSystemLabel, @{ n = ''SizeGB''; e = { [math]::Round($_.Size / 1GB, 1) } }, @{ n = ''FreeGB''; e = { [math]::Round($_.SizeRemaining / 1GB, 1) } }' }
+    ) {
+        $c = Get-RecommendationCommand $Id $Values
+        $c.Kind | Should -Be $Kind
+        $c.Command | Should -BeExactly $Expected
+    }
+    It 'every generated PowerShell command parses' {
+        foreach ($id in 'PendingRename', 'Restart', 'IisBackup', 'EnableNla', 'LbfoTeams', 'CFreeSpace') {
+            $errors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseInput((Get-RecommendationCommand $id).Command, [ref]$null, [ref]$errors)
+            @($errors).Count | Should -Be 0 -Because $id
+        }
+    }
+    It 'an unknown command id throws' {
+        { Get-RecommendationCommand 'Nope' } | Should -Throw '*Unknown recommendation command*'
+    }
+    It 'commands in the script come from Get-RecommendationCommand only' {
+        $text = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\src\Windows-IPU-Readiness-Assessment.ps1'))
+        [regex]::Matches($text, "-Command\s+['""]").Count | Should -Be 0
+    }
+    Context 'Add-Result' {
+        BeforeEach { $script:Results.Clear() }
+        It 'stores command, kind, link and title' {
+            Add-Result 'STORAGE' 'x' 'WARNING' 'v' -Recommendation 'r' -Command 'Get-Volume' -CommandKind 'Check' -Link 'https://learn.microsoft.com/x' -LinkTitle 'Doc'
+            $r = $script:Results[0]
+            "$($r.Command)|$($r.CommandKind)|$($r.Link)|$($r.LinkTitle)" | Should -Be 'Get-Volume|Check|https://learn.microsoft.com/x|Doc'
+        }
+        It 'leaves the fields empty when not given, and uses the URL as title when none is given' {
+            Add-Result 'STORAGE' 'x' 'WARNING' 'v'
+            Add-Result 'STORAGE' 'y' 'WARNING' 'v' -Link 'https://learn.microsoft.com/y'
+            "$($script:Results[0].Command)|$($script:Results[0].CommandKind)|$($script:Results[0].Link)" | Should -Be '||'
+            $script:Results[1].LinkTitle | Should -Be 'https://learn.microsoft.com/y'
+        }
+        It 'refuses a command without a kind and a link that is not https' {
+            { Add-Result 'STORAGE' 'x' 'WARNING' -Command 'Get-Volume' } | Should -Throw '*CommandKind*'
+            { Add-Result 'STORAGE' 'x' 'WARNING' -Link 'javascript:alert(1)' } | Should -Throw '*https*'
+            { Add-Result 'STORAGE' 'x' 'WARNING' -Link 'http://example.test' } | Should -Throw '*https*'
+        }
+    }
+    Context 'HTML' {
+        It 'shows the command encoded, labelled, with a copy button, and the link' {
+            $row = [pscustomobject]@{ Recommendation = 'Do it <now>'; Command = 'icacls "C:\R" /grant:r x'; CommandKind = 'Change'; Link = 'https://learn.microsoft.com/a?b=1&c=2'; LinkTitle = 'Doc & more' }
+            $h = New-RecommendationHtml $row
+            $h.StartsWith('Do it &lt;now&gt;') | Should -BeTrue
+            $h.Contains('<span class="ck ck-change" title="run in the change window">Change</span><code>icacls &quot;C:\R&quot; /grant:r x</code>') | Should -BeTrue
+            $h.Contains('data-cmd="icacls &quot;C:\R&quot; /grant:r x" aria-label="Copy the change command"') | Should -BeTrue
+            $h.Contains('<a class="ext" href="https://learn.microsoft.com/a?b=1&amp;c=2" target="_blank" rel="noopener noreferrer">Doc &amp; more</a>') | Should -BeTrue
+        }
+        It 'shows only the text when there is no command or link' {
+            New-RecommendationHtml ([pscustomobject]@{ Recommendation = 'Plain' }) | Should -Be 'Plain'
+        }
+        It 'the report carries the copy script and still ends as a complete document' {
+            $script:Results.Clear(); $script:CheckRuns.Clear()
+            Add-Result 'STORAGE' 'CFreeSpace' 'ACTION' 'low' -Recommendation 'Extend C:' -Command (Get-RecommendationCommand 'CFreeSpace').Command -CommandKind 'Check'
+            $html = New-IPUReportHtml -Results $script:Results.ToArray() -CheckRuns $script:CheckRuns.ToArray() -OverallStatus 'ACTION' -CompletedTime (Get-Date)
+            $html.Contains('<script type="text/javascript">document.documentElement.className+=" js"') | Should -BeTrue
+            $html | Should -Match '(?is)</html>\s*$'
+            ([regex]::Matches($html, 'class="cmd"')).Count | Should -Be 2   # decision table and chapter table
+        }
+    }
+    Context 'pattern files' {
+        It 'accepts an https Link and refuses another scheme' {
+            $ok = ConvertFrom-SiteDataJson '{ "Schema": "IPU-Patterns/1", "Backup": [ { "Label": "Contoso Backup", "App": "^Contoso Backup", "Link": "https://docs.example.test/support", "LinkTitle": "Contoso: support matrix" } ] }' 'IPU-Patterns/1'
+            $r = Merge-DetectionPatternSet $script:DetectionPatterns $ok
+            @($r.Errors).Count | Should -Be 0
+            @($r.Patterns.Backup | Where-Object { $_.Label -eq 'Contoso Backup' })[0].Link | Should -Be 'https://docs.example.test/support'
+            $bad = ConvertFrom-SiteDataJson '{ "Schema": "IPU-Patterns/1", "Backup": [ { "Label": "Contoso Backup", "App": "x", "Link": "file://share/x" } ] }' 'IPU-Patterns/1'
+            ((Merge-DetectionPatternSet $script:DetectionPatterns $bad).Errors -join ' ') | Should -Match 'Link must be an https URL'
+        }
+        It 'Find-DetectionMatch passes the link on' {
+            $apps = @([pscustomobject]@{ Name = 'TrendAI Deep Security Agent'; Version = '20.0' })
+            $m = Find-DetectionMatch $script:DetectionPatterns.EndpointProtection $apps @()
+            $m[0].Link | Should -BeLike 'https://docs.trendmicro.com/*'
         }
     }
 }

@@ -1,7 +1,7 @@
 <#
 ===============================================================================
  SCRIPT NAME : Merge-IPUAssessments.ps1
- VERSION     : 1.0.3 (for Windows-IPU-Readiness-Assessment 4.0.1+, released with 4.1.0)
+ VERSION     : 1.0.4 (for Windows-IPU-Readiness-Assessment 4.0.1+)
  PURPOSE     : Combine the JSON results of many servers into one overview.
  RUNS ON     : Any Windows machine with Windows PowerShell 5.1 or PowerShell 7
                (an admin workstation or jump host - NOT on the assessed servers).
@@ -101,7 +101,7 @@ foreach ($f in $files) {
     foreach ($x in @($r.Results | Where-Object { $_.Kind -eq 'Finding' -and $_.Status -in @('BLOCKER','ACTION','WARNING','MANUAL') })) {
         $findings.Add([pscustomobject][ordered]@{
             ComputerName = $r.ComputerName; Mode = $r.Mode; Status = $x.Status; Area = $x.Area; Item = $x.Item
-            Value = $x.Value; Details = $x.Details; Recommendation = $x.Recommendation; SourceFile = $f.Name
+            Value = $x.Value; Details = $x.Details; Recommendation = $x.Recommendation; Command = [string]$x.Command; Link = [string]$x.Link; SourceFile = $f.Name
         })
     }
 }
