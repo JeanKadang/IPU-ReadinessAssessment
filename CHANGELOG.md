@@ -4,6 +4,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-10-07
+
+Improvements from the first live run of 4.1.0. `Merge-IPUAssessments.ps1` 1.0.4 ships with it.
+
 ### Security
 - The `agents` check is named "Management agents (OpenText)"; a test keeps company and host names out of the repository now that it is public (#90).
 
@@ -92,5 +96,6 @@ Restructure of the 3.x script (released as a script file only).
 
 Local Group Policy backup and RDP readiness. Superseded by 4.0.0.
 
-[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.1.0...HEAD
+[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.2.0...HEAD
+[4.2.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.2.0
 [4.1.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.1.0
