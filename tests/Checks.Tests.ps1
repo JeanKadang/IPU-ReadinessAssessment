@@ -547,6 +547,16 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             (Get-Row 'ACCESS' 'LocalAdministratorsMember').Count | Should -Be 2
             (Get-Row 'DOMAIN_CONTROLLER' 'DomainController').Count | Should -Be 0
         }
+        It 'reports UAC in plain words, from the registry (#75)' {
+            $script:Fake.Registry['HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System|EnableLUA'] = 1
+            $script:Fake.Registry['HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System|ConsentPromptBehaviorAdmin'] = 2
+            $null = Invoke-TestCheck 'domain'
+            $row = (Get-Row 'ACCESS' 'UAC')[0]
+            $row.Status | Should -Be 'INFO'
+            $row.Value | Should -Be 'On - prompt for consent on the secure desktop'
+            $script:Data.UacSummary | Should -Be $row.Value
+            $script:Data.Snapshot.Uac | Should -Be $row.Value
+        }
         It 'a domain controller is a BLOCKER by company policy' {
             $script:Fake.Cim['Win32_ComputerSystem'].DomainRole = 5
             Reset-FakeServerKeep
