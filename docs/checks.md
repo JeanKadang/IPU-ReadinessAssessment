@@ -34,7 +34,7 @@ check is added without one.
 
 | Check | Looks at | Possible results |
 |---|---|---|
-| `domain` Domain role and access | Domain role, secure channel, built-in Administrator (RID 500), local Administrators members | `BLOCKER` domain controller (company policy, *BlockDomainControllerIPU*); `ACTION` broken secure channel; `MANUAL` secure channel not testable; `WARNING` workgroup server |
+| `domain` Domain role and access | Domain role, secure channel, built-in Administrator (RID 500), local Administrators members, User Account Control (shown in the summary; INFO, UAC does not block an upgrade) | `BLOCKER` domain controller (company policy, *BlockDomainControllerIPU*); `ACTION` broken secure channel; `MANUAL` secure channel not testable; `WARNING` workgroup server |
 | `exchange` Exchange Server | Exchange services and setup registration | `BLOCKER` Exchange server role (in-place OS upgrade is not supported by Microsoft); `ACTION` only setup registration found (probably management tools) |
 | `sql` SQL Server | Database Engine, Reporting Services and Analysis Services instances and versions | `BLOCKER` SQL version not supported on the target (for example SQL Server 2017 on 2025; the text names a target that supports it); `OK`; `MANUAL` version not found |
 | `workloads` Roles and workloads | Installed roles, application workloads from the detection patterns (SharePoint, Oracle, SAP, Citrix, Java, Tomcat, ...), features removed or deprecated in the target | `WARNING` per workload or role that needs its owner; `ACTION` a feature removed in the target (for example SMTP Server, PowerShell 2.0 on 2025); `WARNING` observation for deprecated features; `MANUAL` when roles cannot be listed |
@@ -89,4 +89,5 @@ pre-upgrade JSON from the same folder and reports:
 | Lost static routes or IPv4 addresses | `ACTION` |
 | Lost listening ports, DNS servers, hosts entries, applications, Windows features, scheduled tasks; services that no longer exist | `WARNING` |
 | No pre-upgrade JSON found | `MANUAL` |
+| User Account Control set differently than before | `WARNING` |
 | Pre-upgrade result was a partial checkpoint | `WARNING` observation |

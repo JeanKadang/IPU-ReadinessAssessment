@@ -1181,6 +1181,9 @@ function Compare-IPUSnapshot {
         @{ Name='Windows features';  Prop='Features';     Status='WARNING'; Rec='Features removed by Setup. Confirm nothing depends on them.' },
         @{ Name='Scheduled tasks';   Prop='Tasks';        Status='WARNING'; Rec='Re-create missing tasks and confirm their run-as credentials.' }
     )
+    if ($Before.Uac -and $After.Uac -and [string]$Before.Uac -ne [string]$After.Uac) {
+        $diff += (& $make 'WARNING' 'UAC changed' ([string]$After.Uac) ('Before: ' + [string]$Before.Uac) 'User Account Control is set differently after the upgrade. Confirm the change is intended (usually set by Group Policy).')
+    }
     foreach ($l in $lists) {
         $b = @($Before.($l.Prop) | Where-Object { $_ })
         $a = @($After.($l.Prop) | Where-Object { $_ })
@@ -1189,6 +1192,28 @@ function Compare-IPUSnapshot {
         if ($lost.Count -gt 0) { $diff += (& $make $l.Status ($l.Name + ' missing after upgrade') ('Count=' + $lost.Count) ($lost -join ', ') $l.Rec) }
     }
     return ,$diff
+}
+
+function Get-UacDecision {
+    # Pure: User Account Control in plain words from the registry values
+    # under HKLM\...\Policies\System (#75). Missing values mean the
+    # Windows defaults (EnableLUA 1, ConsentPromptBehaviorAdmin 5,
+    # PromptOnSecureDesktop 1, FilterAdministratorToken 0).
+    param($EnableLua, $ConsentPromptBehaviorAdmin, $PromptOnSecureDesktop, $FilterAdministratorToken)
+    $num = { param($v, [int]$Default) if ($null -eq $v -or [string]$v -eq '') { return $Default }; return [int]$v }
+    $lua = & $num $EnableLua 1
+    if ($lua -eq 0) {
+        return [pscustomobject]@{ State = 'Off'; Text = 'Off - administrators run everything elevated without a prompt (EnableLUA=0)' }
+    }
+    $consent = & $num $ConsentPromptBehaviorAdmin 5
+    $secure = & $num $PromptOnSecureDesktop 1
+    $texts = @{ 0 = 'elevate without prompting'; 1 = 'prompt for credentials on the secure desktop'; 2 = 'prompt for consent on the secure desktop'; 3 = 'prompt for credentials'; 4 = 'prompt for consent'; 5 = 'prompt for consent for non-Windows programs (Windows default)' }
+    $text = $texts[$consent]
+    if (-not $text) { $text = 'unknown prompt behaviour (ConsentPromptBehaviorAdmin=' + $consent + ')' }
+    if ($consent -ge 3 -and $consent -le 5 -and $secure -eq 0) { $text += ', not on the secure desktop' }
+    $result = 'On - ' + $text
+    if ((& $num $FilterAdministratorToken 0) -eq 1) { $result += '; built-in Administrator also gets prompts (Admin Approval Mode)' }
+    return [pscustomobject]@{ State = 'On'; Text = $result }
 }
 
 function Get-OutputFolderAccessDecision {
@@ -1828,6 +1853,16 @@ Register-Check -Id 'domain' -Name 'Domain role and access' -Script {
     } else {
         Add-Result 'ACCESS' 'DomainMembership' 'WARNING' ('Workgroup=' + $cs.Domain) -Recommendation 'Workgroup server: confirm it is onboarded in CyberArk/PAM and that local fallback credentials work before IPU.' -Source 'Win32_ComputerSystem'
     }
+
+    # User Account Control (#75). Information, not a finding: UAC does not
+    # block an in-place upgrade.
+    $uacKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+    $uacValues = @{}
+    foreach ($n in @('EnableLUA','ConsentPromptBehaviorAdmin','PromptOnSecureDesktop','FilterAdministratorToken')) { $uacValues[$n] = (Get-RegistryValueSafe $uacKey $n).Value }
+    $uac = Get-UacDecision $uacValues.EnableLUA $uacValues.ConsentPromptBehaviorAdmin $uacValues.PromptOnSecureDesktop $uacValues.FilterAdministratorToken
+    $script:Data.UacSummary = $uac.Text
+    if ($script:Data.Snapshot) { $script:Data.Snapshot.Uac = $uac.Text }
+    Add-Result 'ACCESS' 'UAC' 'INFO' $uac.Text (@($uacValues.Keys | Sort-Object | ForEach-Object { $_ + '=' + $(if ($null -eq $uacValues[$_]) { '(default)' } else { [string]$uacValues[$_] }) }) -join ', ') -Source ($uacKey -replace '^HKLM:','HKLM')
 
     $rid500 = @(Get-CimSafe 'Win32_UserAccount' 'LocalAccount=True') | Where-Object { $_.SID -match '-500$' } | Select-Object -First 1
     if ($rid500) {
@@ -3026,6 +3061,7 @@ function New-IPUReportHtml {
         @('Windows activation', (Get-ResultText $Results 'LICENSING' 'CurrentActivation')),
         @('Platform', (Get-ResultText $Results 'PLATFORM' 'PhysicalOrVirtual')),
         @('Domain role', $script:Data.DomainRoleText),
+        @('UAC', $script:Data.UacSummary),
         @('SQL Server', (& $factValue $script:Data.SqlSummary 'sql')),
         @('Endpoint protection', (& $factValue $epp 'antivirus')),
         @('VMware Tools', (Get-ResultText $Results 'VMWARE' 'VMwareTools')),
@@ -3045,6 +3081,7 @@ function New-IPUReportHtml {
             @('Baseline', (Get-ResultText $Results 'POST_UPGRADE' 'Baseline')),
             @('Windows activation', (Get-ResultText $Results 'LICENSING' 'CurrentActivation')),
             @('RDP access', $script:Data.RdpSummary),
+            @('UAC', $script:Data.UacSummary),
             @('C: drive', $script:Data.CSummary),
             @('Endpoint protection', (& $factValue $epp 'antivirus'))
         )
@@ -3225,6 +3262,7 @@ function New-AssessmentJsonObject {
             RecommendedMedia = $script:Data.RecommendedMedia
             Platform         = (Get-ResultText $Results 'PLATFORM' 'PhysicalOrVirtual')
             DomainRole       = $script:Data.DomainRoleText
+            Uac              = $script:Data.UacSummary
             SqlServer        = $script:Data.SqlSummary
             Activation       = $script:Data.ActivationSummary
             CDrive           = $script:Data.CSummary

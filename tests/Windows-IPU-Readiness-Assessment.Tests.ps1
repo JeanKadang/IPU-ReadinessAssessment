@@ -1696,5 +1696,32 @@ Describe 'Save-IISConfigEvidence (#76)' {
         $empty = Join-Path $TestDrive 'empty-config'
         New-Item -ItemType Directory -Path $empty | Out-Null
         { Save-IISConfigEvidence -Destination (Join-Path $TestDrive 'never') -SourceFolder $empty } | Should -Throw '*No .config files*'
+Describe 'User Account Control (#75)' {
+    It '<Case>' -TestCases @(
+        @{ Case = 'all defaults (no values) is on, Windows default'; Lua = $null; Consent = $null; Secure = $null; Filter = $null; Expected = 'On - prompt for consent for non-Windows programs (Windows default)' }
+        @{ Case = 'EnableLUA 0 is off';                                Lua = 0;     Consent = 5;     Secure = 1;     Filter = 0;     Expected = 'Off - administrators run everything elevated without a prompt (EnableLUA=0)' }
+        @{ Case = 'elevate without prompting';                         Lua = 1;     Consent = 0;     Secure = 1;     Filter = 0;     Expected = 'On - elevate without prompting' }
+        @{ Case = 'credentials on the secure desktop';                 Lua = 1;     Consent = 1;     Secure = 0;     Filter = 0;     Expected = 'On - prompt for credentials on the secure desktop' }
+        @{ Case = 'consent on the secure desktop';                     Lua = 1;     Consent = 2;     Secure = 1;     Filter = 0;     Expected = 'On - prompt for consent on the secure desktop' }
+        @{ Case = 'credentials, secure desktop off';                   Lua = 1;     Consent = 3;     Secure = 0;     Filter = 0;     Expected = 'On - prompt for credentials, not on the secure desktop' }
+        @{ Case = 'consent';                                           Lua = 1;     Consent = 4;     Secure = 1;     Filter = 0;     Expected = 'On - prompt for consent' }
+        @{ Case = 'Admin Approval Mode for the built-in Administrator';Lua = 1;     Consent = 5;     Secure = 1;     Filter = 1;     Expected = 'On - prompt for consent for non-Windows programs (Windows default); built-in Administrator also gets prompts (Admin Approval Mode)' }
+        @{ Case = 'an unknown prompt value is named';                  Lua = 1;     Consent = 9;     Secure = 1;     Filter = 0;     Expected = 'On - unknown prompt behaviour (ConsentPromptBehaviorAdmin=9)' }
+    ) {
+        (Get-UacDecision $Lua $Consent $Secure $Filter).Text | Should -Be $Expected
+    }
+    It 'the post-upgrade comparison reports a UAC change and nothing when unchanged' {
+        $before = @{ Uac = 'On - prompt for consent' }
+        $d = Compare-IPUSnapshot $before @{ Uac = 'Off - administrators run everything elevated without a prompt (EnableLUA=0)' }
+        $row = @($d | Where-Object { $_.Item -eq 'UAC changed' })
+        $row.Count | Should -Be 1
+        $row[0].Status | Should -Be 'WARNING'
+        $row[0].Details | Should -Be 'Before: On - prompt for consent'
+        $same = Compare-IPUSnapshot $before @{ Uac = 'On - prompt for consent' }
+        @($same | Where-Object { $_.Item -eq 'UAC changed' }).Count | Should -Be 0
+    }
+    It 'an older baseline without UAC is not reported as a change' {
+        $d = Compare-IPUSnapshot @{ } @{ Uac = 'On - prompt for consent' }
+        @($d | Where-Object { $_.Item -eq 'UAC changed' }).Count | Should -Be 0
     }
 }

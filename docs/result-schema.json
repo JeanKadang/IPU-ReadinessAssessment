@@ -38,6 +38,7 @@
         "RecommendedMedia": { "$ref": "#/definitions/text" },
         "Platform": { "$ref": "#/definitions/text" },
         "DomainRole": { "$ref": "#/definitions/text" },
+        "Uac": { "$ref": "#/definitions/text" },
         "SqlServer": { "$ref": "#/definitions/text" },
         "Activation": { "$ref": "#/definitions/text" },
         "CDrive": { "$ref": "#/definitions/text" },
@@ -106,7 +107,8 @@
         "IPv4": { "$ref": "#/definitions/stringList" },
         "Dns": { "$ref": "#/definitions/stringList" },
         "Hosts": { "$ref": "#/definitions/stringList" },
-        "Tasks": { "$ref": "#/definitions/stringList" }
+        "Tasks": { "$ref": "#/definitions/stringList" },
+        "Uac": { "$ref": "#/definitions/text" }
       }
     }
   },
