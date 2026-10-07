@@ -287,6 +287,7 @@ $script:Checks            = New-Object System.Collections.Generic.List[object]
 $script:Data              = @{}
 $script:CurrentCheckId    = 'core'
 $script:CurrentCheckOutcome = $null
+$script:CurrentCheckMessage = $null
 $script:LogWriteFailures  = 0
 $script:SlowSecondsLeft   = 0
 $script:CollectionStarted = Get-Date
@@ -499,6 +500,7 @@ function Invoke-Check {
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $script:CurrentCheckId = $Check.Id
     $script:CurrentCheckOutcome = $null
+    $script:CurrentCheckMessage = $null
     $outcome = 'Completed'
     $message = ''
     Write-AssessmentLog 'INFO' $Check.Id 'Started.'
@@ -509,6 +511,7 @@ function Invoke-Check {
         $ErrorActionPreference = 'Stop'
         $null = & $Check.Script
         if ($script:CurrentCheckOutcome) { $outcome = $script:CurrentCheckOutcome }
+        if ($script:CurrentCheckMessage) { $message = $script:CurrentCheckMessage }
     } catch {
         $outcome = 'Failed'
         $message = $_.Exception.GetType().Name + ': ' + $_.Exception.Message
@@ -2531,6 +2534,7 @@ Register-Check -Id 'checklist' -Name 'Standard change checklist' -Script {
 Register-Check -Id 'dism' -Name 'DISM component store scan' -Phase 'Slow' -Script {
     if (-not $RunDISMScanHealth) {
         Add-Result 'WINDOWS_HEALTH' 'DISM ScanHealth' 'MANUAL' 'Skipped by configuration' -Recommendation 'Run the read-only scan before final IPU approval.'
+        $script:CurrentCheckMessage = 'Not configured: switched off with -RunDISMScanHealth $false'
         $script:CurrentCheckOutcome = 'Skipped'; return
     }
     $timeout = [math]::Min($DISMTimeoutMinutes * 60, $script:SlowSecondsLeft)
@@ -2552,6 +2556,7 @@ Register-Check -Id 'dism' -Name 'DISM component store scan' -Phase 'Slow' -Scrip
 Register-Check -Id 'sfc' -Name 'SFC protected file verification' -Phase 'Slow' -Script {
     if (-not $RunSFCVerifyOnly) {
         Add-Result 'WINDOWS_HEALTH' 'SFC VerifyOnly' 'MANUAL' 'Skipped by configuration' -Recommendation 'Run the read-only verification before final IPU approval.'
+        $script:CurrentCheckMessage = 'Not configured: switched off with -RunSFCVerifyOnly $false'
         $script:CurrentCheckOutcome = 'Skipped'; return
     }
     $timeout = [math]::Min($SFCTimeoutMinutes * 60, $script:SlowSecondsLeft)
@@ -2577,9 +2582,10 @@ Register-Check -Id 'sfc' -Name 'SFC protected file verification' -Phase 'Slow' -
 }
 
 Register-Check -Id 'compatscan' -Name 'Setup compatibility scan' -Phase 'Slow' -Script {
-    if ($AssessmentMode -eq 'Post') { $script:CurrentCheckOutcome = 'Skipped'; return }
+    if ($AssessmentMode -eq 'Post') { $script:CurrentCheckMessage = 'Not applicable after the upgrade'; $script:CurrentCheckOutcome = 'Skipped'; return }
     if (-not $TargetMediaPath) {
-        Add-Result 'COMPAT_SCAN' 'SetupCompatibilityScan' 'INFO' 'Not run - no TargetMediaPath configured' 'Set TargetMediaPath to the target media (folder, share or .iso) to let Windows Setup check this server with Microsoft''s own compatibility rules.' -Source 'SETTINGS'
+        Add-Result 'COMPAT_SCAN' 'SetupCompatibilityScan' 'INFO' 'Not run - no installation media given' ('Optional. To let Windows Setup check this server with Microsoft''s own compatibility rules, run again with -TargetMediaPath set to the ' + (Get-ReleaseDisplayName $TargetServerVersion) + ' ISO, or a folder or share with the installation files.') -Source 'SETTINGS'
+        $script:CurrentCheckMessage = 'Not configured: no installation media given (-TargetMediaPath)'
         $script:CurrentCheckOutcome = 'Skipped'; return
     }
     $timeout = [math]::Min($CompatScanTimeoutMinutes * 60, $script:SlowSecondsLeft)
@@ -2855,6 +2861,34 @@ function Get-ResultText {
     return (@($r.Value,$r.Details) | Where-Object { $_ }) -join ' | '
 }
 
+function Get-CoverageNotice {
+    # Pure: splits the checks that did not complete into problems (failed,
+    # timed out, or skipped because the time budget ran out - their areas are
+    # incomplete) and checks not run by choice (switched off, no media,
+    # not applicable), each with a plain-language sentence.
+    param([object[]]$CheckRuns, [string]$Target = 'the target release')
+    $problems = @(); $byChoice = @()
+    foreach ($run in @($CheckRuns)) {
+        if ($run.Outcome -eq 'Completed') { continue }
+        $msg = [string]$run.Message
+        if ($run.Outcome -eq 'Skipped' -and $msg -like 'Not applicable*') { continue }
+        if ($run.Outcome -eq 'Skipped' -and $msg -like 'Not configured*') {
+            if ($run.Id -eq 'compatscan') {
+                $byChoice += ('Microsoft''s own upgrade check (Setup compatibility scan) was not run, because no ' + $Target + ' installation media was given. This is optional: to include it, run the assessment again with -TargetMediaPath set to the ISO, or a folder or share with the installation files.')
+            } else {
+                $byChoice += ($run.Name + ' was switched off for this run (' + ($msg -replace '^Not configured:\s*','') + '). Run it before the final go/no-go.')
+            }
+            continue
+        }
+        $why = 'did not finish'
+        if ($run.Outcome -eq 'Failed') { $why = 'stopped with an error' }
+        elseif ($run.Outcome -eq 'TimedOut') { $why = 'ran out of time' }
+        elseif ($run.Outcome -eq 'Skipped') { $why = 'was not started, the time budget was used up' }
+        $problems += ($run.Name + ' ' + $why)
+    }
+    return [pscustomobject]@{ Problems = $problems; ByChoice = $byChoice }
+}
+
 function New-FindingTable {
     param($Rows, [switch]$WithCheckbox, [string]$Caption = 'Findings')
     $sb = New-Object System.Text.StringBuilder
@@ -2889,7 +2923,7 @@ function New-IPUReportHtml {
     $decision = @($findings | Where-Object { $_.Status -in @('BLOCKER','ACTION') } | Sort-Object @{Expression={Get-StatusRank $_.Status}},Area,Item)
     $planning = @($findings | Where-Object { $_.Status -in @('WARNING','MANUAL') } | Sort-Object @{Expression={Get-StatusRank $_.Status}},Area,Item)
     $checklist = @($Results | Where-Object { $_.Kind -eq 'Checklist' })
-    $problemRuns = @($CheckRuns | Where-Object { $_.Outcome -ne 'Completed' })
+    $coverage = Get-CoverageNotice $CheckRuns (Get-ReleaseDisplayName $TargetServerVersion)
     $duration = Format-Duration ($CompletedTime - $script:CollectionStarted)
     $target = Get-ReleaseDisplayName $TargetServerVersion
     $isPost = ($AssessmentMode -eq 'Post')
@@ -2956,7 +2990,8 @@ function New-IPUReportHtml {
 .verdict{margin-top:12px;font-size:16px}.verdict .badge{font-size:14px;padding:5px 12px}
 .partial{background:var(--partial-bg);border:1px solid var(--partial-line);color:var(--partial-ink);border-radius:10px;padding:12px 16px;margin:14px 0;font-weight:600}
 .cards{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin:16px 0}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}.card b{display:block;font-size:24px;font-weight:650}.card small{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;color:inherit;text-decoration:none;display:block}a.card:hover{border-color:var(--heading)}a.card:focus-visible{outline:3px solid var(--focus);outline-offset:2px}a.card b::after{content:" \2192";font-size:14px;color:var(--muted)}
+.note{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--info);border-radius:10px;padding:12px 16px;margin:14px 0}.card b{display:block;font-size:24px;font-weight:650}.card small{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
 section,details{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:14px 0}
 section{padding:18px 20px}h2{font-size:18px;margin:0 0 6px;color:var(--heading)}.lead{color:var(--muted);margin:0 0 12px}
 summary{cursor:pointer;font-size:16px;font-weight:600;color:var(--heading);padding:14px 20px}summary:focus-visible{outline:3px solid var(--focus);outline-offset:2px;border-radius:8px}details>div{padding:0 20px 18px}
@@ -2983,15 +3018,24 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
     if ($script:LogWriteFailures -gt 0) {
         [void]$sb.AppendLine('<div class="partial">The collector log is incomplete: ' + $script:LogWriteFailures + ' line(s) could not be written to ' + (& $e $script:LogPath) + '.</div>')
     }
-    if ($problemRuns.Count -gt 0) {
-        $names = @($problemRuns | ForEach-Object { $_.Name + ' (' + $_.Outcome + ')' }) -join ', '
-        [void]$sb.AppendLine('<div class="partial">Not fully assessed: ' + (& $e $names) + '. See Collector coverage.</div>')
+    if (@($coverage.Problems).Count -gt 0) {
+        [void]$sb.AppendLine('<div class="partial">Not fully assessed: ' + (& $e (@($coverage.Problems) -join '; ')) + '. The results for these areas may be incomplete - absence of findings there is not evidence of readiness. Details: <a href="#coverage">Collector coverage</a>.</div>')
     }
+    foreach ($note in @($coverage.ByChoice)) { [void]$sb.AppendLine('<div class="note"><strong>Not run by choice:</strong> ' + (& $e $note) + '</div>') }
 
+    # Counter cards link to the rows behind them (#77); a zero is not a link.
+    $cardTarget = @{ BLOCKER = 'decision'; ACTION = 'decision'; WARNING = 'planning'; MANUAL = 'planning' }
+    $card = {
+        param([string]$Label, $Count, [string]$Anchor, [string]$What)
+        if ($Anchor -and [int]("0" + ([string]$Count -replace '\s.*$','')) -gt 0) {
+            return ('<a class="card" href="#' + $Anchor + '" aria-label="' + (& $e ([string]$Count + ' ' + $What + ' - go to the list')) + '"><small>' + (& $e $Label) + '</small><b>' + (& $e ([string]$Count)) + '</b></a>')
+        }
+        return ('<div class="card"><small>' + (& $e $Label) + '</small><b>' + (& $e ([string]$Count)) + '</b></div>')
+    }
     [void]$sb.AppendLine('<div class="cards">')
-    foreach ($s in $script:FindingStatuses) { [void]$sb.AppendLine('<div class="card"><small>' + $s + '</small><b>' + $counts[$s] + '</b></div>') }
-    [void]$sb.AppendLine('<div class="card"><small>Checklist items</small><b>' + $checklist.Count + '</b></div>')
-    [void]$sb.AppendLine('<div class="card"><small>Checks run</small><b>' + @($CheckRuns | Where-Object { $_.Outcome -eq 'Completed' }).Count + ' / ' + @($CheckRuns).Count + '</b></div></div>')
+    foreach ($s in $script:FindingStatuses) { [void]$sb.AppendLine((& $card $s $counts[$s] $cardTarget[$s] ($s + ' findings'))) }
+    [void]$sb.AppendLine((& $card 'Checklist items' $checklist.Count 'checklist' 'checklist items'))
+    [void]$sb.AppendLine((& $card 'Checks run' (([string]@($CheckRuns | Where-Object { $_.Outcome -eq 'Completed' }).Count) + ' / ' + @($CheckRuns).Count) 'coverage' 'checks completed') + '</div>')
 
     [void]$sb.AppendLine('<section><h2>Summary</h2><div class="facts">')
     foreach ($f in $facts) {
@@ -3000,18 +3044,18 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
     }
     [void]$sb.AppendLine('</div></section>')
 
-    if ($isPost) { [void]$sb.AppendLine('<section><h2>Must be resolved</h2><p class="lead">Problems found after the upgrade, including what changed compared with the pre-upgrade snapshot.</p>') }
-    else { [void]$sb.AppendLine('<section><h2>IPU decision - must be resolved</h2><p class="lead">BLOCKER: this server cannot follow the standard IPU path as configured. ACTION: must be fixed or investigated before the change.</p>') }
+    if ($isPost) { [void]$sb.AppendLine('<section id="decision"><h2>Must be resolved</h2><p class="lead">Problems found after the upgrade, including what changed compared with the pre-upgrade snapshot.</p>') }
+    else { [void]$sb.AppendLine('<section id="decision"><h2>IPU decision - must be resolved</h2><p class="lead">BLOCKER: this server cannot follow the standard IPU path as configured. ACTION: must be fixed or investigated before the change.</p>') }
     if ($decision.Count -eq 0) { [void]$sb.AppendLine('<p>No BLOCKER or ACTION findings.</p>') } else { [void]$sb.AppendLine((New-FindingTable $decision -WithCheckbox -Caption 'Findings that must be resolved')) }
     [void]$sb.AppendLine('</section>')
 
-    if ($isPost) { [void]$sb.AppendLine('<section><h2>Verify</h2><p class="lead">WARNING: check that this is expected. MANUAL: needs a human or external check.</p>') }
-    else { [void]$sb.AppendLine('<section><h2>IPU planning - validate before the change</h2><p class="lead">WARNING: risk to plan for. MANUAL: needs a human or external check.</p>') }
+    if ($isPost) { [void]$sb.AppendLine('<section id="planning"><h2>Verify</h2><p class="lead">WARNING: check that this is expected. MANUAL: needs a human or external check.</p>') }
+    else { [void]$sb.AppendLine('<section id="planning"><h2>IPU planning - validate before the change</h2><p class="lead">WARNING: risk to plan for. MANUAL: needs a human or external check.</p>') }
     if ($planning.Count -eq 0) { [void]$sb.AppendLine('<p>No planning findings.</p>') } else { [void]$sb.AppendLine((New-FindingTable $planning -WithCheckbox -Caption 'Findings to validate before the change')) }
     [void]$sb.AppendLine('</section>')
 
     if ($checklist.Count -gt 0) {
-        [void]$sb.AppendLine('<section><h2>Standard change checklist</h2><p class="lead">Required for every IPU. These do not affect the overall status.</p>')
+        [void]$sb.AppendLine('<section id="checklist"><h2>Standard change checklist</h2><p class="lead">Required for every IPU. These do not affect the overall status.</p>')
         [void]$sb.AppendLine((New-FindingTable $checklist -WithCheckbox -Caption 'Standard change checklist'))
         [void]$sb.AppendLine('</section>')
     }
@@ -3029,7 +3073,12 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
         if ($rows.Count -eq 0 -and $chapter -ne 'Assessment and Collector') { continue }
         $open = ''
         if (@($rows | Where-Object { $_.Kind -eq 'Finding' -and $_.Status -in @('BLOCKER','ACTION') }).Count -gt 0) { $open = ' open' }
-        [void]$sb.AppendLine('<details' + $open + '><summary>' + (& $e $chapter) + ' (' + $rows.Count + ')</summary><div>')
+        $chapterId = ''
+        if ($chapter -eq 'Assessment and Collector') {
+            $chapterId = ' id="coverage"'
+            if (@($coverage.Problems).Count -gt 0) { $open = ' open' }
+        }
+        [void]$sb.AppendLine('<details' + $chapterId + $open + '><summary>' + (& $e $chapter) + ' (' + $rows.Count + ')</summary><div>')
         if ($chapter -eq 'Assessment and Collector') {
             [void]$sb.AppendLine('<h2>Collector coverage</h2><div class="scroll"><table><caption class="sr">Collector coverage: outcome of every check</caption><thead><tr><th scope="col">Check</th><th scope="col">Phase</th><th scope="col">Outcome</th><th scope="col">Duration</th><th scope="col">Message</th></tr></thead><tbody>')
             foreach ($run in $CheckRuns) {

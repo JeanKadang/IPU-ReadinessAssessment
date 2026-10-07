@@ -1579,3 +1579,67 @@ Describe 'Endpoint protection products (#74)' {
         $d.Active | Should -Be $Active
     }
 }
+
+Describe 'Report header: linked counters and plain coverage notes (#77)' {
+    BeforeAll {
+        function New-Run([string]$Id, [string]$Name, [string]$Outcome, [string]$Message = '') {
+            [pscustomobject]@{ Id = $Id; Name = $Name; Phase = 'Slow'; Outcome = $Outcome; Duration = '00:00:00'; Seconds = 0; Message = $Message }
+        }
+    }
+    It 'a scan skipped for lack of media is a note, not a problem' {
+        $n = Get-CoverageNotice @((New-Run 'compatscan' 'Setup compatibility scan' 'Skipped' 'Not configured: no installation media given (-TargetMediaPath)')) 'Windows Server 2025'
+        @($n.Problems).Count | Should -Be 0
+        @($n.ByChoice).Count | Should -Be 1
+        $n.ByChoice[0] | Should -Match 'no Windows Server 2025 installation media was given'
+        $n.ByChoice[0] | Should -Match '-TargetMediaPath'
+    }
+    It 'a check switched off is a note that says to run it before go/no-go' {
+        $n = Get-CoverageNotice @((New-Run 'dism' 'DISM component store scan' 'Skipped' 'Not configured: switched off with -RunDISMScanHealth $false'))
+        $n.ByChoice[0] | Should -Be 'DISM component store scan was switched off for this run (switched off with -RunDISMScanHealth $false). Run it before the final go/no-go.'
+    }
+    It 'a check that does not apply (Post mode) is not mentioned' {
+        $n = Get-CoverageNotice @((New-Run 'compatscan' 'Setup compatibility scan' 'Skipped' 'Not applicable after the upgrade'))
+        @($n.Problems).Count + @($n.ByChoice).Count | Should -Be 0
+    }
+    It '<Outcome> is a problem: "<Text>"' -TestCases @(
+        @{ Outcome = 'Failed';   Message = 'IOException: x';      Text = 'Storage stopped with an error' }
+        @{ Outcome = 'TimedOut'; Message = '';                    Text = 'Storage ran out of time' }
+        @{ Outcome = 'Skipped';  Message = 'Time budget used up'; Text = 'Storage was not started, the time budget was used up' }
+    ) {
+        $n = Get-CoverageNotice @((New-Run 'storage' 'Storage' $Outcome $Message))
+        $n.Problems | Should -Be @($Text)
+        @($n.ByChoice).Count | Should -Be 0
+    }
+    Context 'generated HTML' {
+        BeforeAll {
+            $script:Results.Clear(); $script:CheckRuns.Clear()
+            Add-Result 'STORAGE' 'PartitionAfterC' 'WARNING' 'Yes'
+            Add-Result 'CHECKLIST' 'Backup and fallback' 'MANUAL' 'x' -Kind 'Checklist'
+            $script:CheckRuns.Add((New-Run 'storage' 'Storage' 'Completed'))
+            $script:CheckRuns.Add((New-Run 'compatscan' 'Setup compatibility scan' 'Skipped' 'Not configured: no installation media given (-TargetMediaPath)'))
+            $TargetServerVersion = '2025'
+            $script:HeaderHtml = New-IPUReportHtml -Results $script:Results.ToArray() -CheckRuns $script:CheckRuns.ToArray() -OverallStatus 'WARNING' -CompletedTime (Get-Date)
+        }
+        It 'shows no "Not fully assessed" banner when a check was only skipped by choice' {
+            $script:HeaderHtml | Should -Not -Match 'Not fully assessed'
+            $script:HeaderHtml | Should -Match '<div class="note"><strong>Not run by choice:</strong> Microsoft&#39;s own upgrade check'
+        }
+        It 'links a non-zero counter to its section and leaves a zero counter plain' {
+            $script:HeaderHtml | Should -Match '<a class="card" href="#planning" aria-label="1 WARNING findings - go to the list">'
+            $script:HeaderHtml | Should -Match '<div class="card"><small>BLOCKER</small><b>0</b></div>'
+            $script:HeaderHtml | Should -Match '<a class="card" href="#checklist"'
+            $script:HeaderHtml | Should -Match '<a class="card" href="#coverage"'
+        }
+        It 'every link target exists' {
+            foreach ($m in [regex]::Matches($script:HeaderHtml, 'href="#([a-z]+)"')) {
+                $script:HeaderHtml | Should -Match ('id="' + $m.Groups[1].Value + '"')
+            }
+        }
+        It 'a failed check gives the banner and opens the coverage section' {
+            $runs = @($script:CheckRuns.ToArray()) + @(New-Run 'iis' 'IIS' 'Failed' 'boom')
+            $html = New-IPUReportHtml -Results $script:Results.ToArray() -CheckRuns $runs -OverallStatus 'MANUAL' -CompletedTime (Get-Date)
+            $html | Should -Match 'Not fully assessed: IIS stopped with an error'
+            $html | Should -Match '<details id="coverage" open>'
+        }
+    }
+}
