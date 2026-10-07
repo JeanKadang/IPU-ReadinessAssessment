@@ -1659,3 +1659,18 @@ Describe 'Security tools: finding only with a driver (#78)' {
         }
     }
 }
+
+Describe 'No company or host names in the repository (#90)' {
+    It 'tracked files do not contain the names removed when the repository became public' {
+        # The names are stored encoded so this test does not reintroduce them.
+        $names = @('QWV2ZW4=', 'QUVWTldPU1RTVA==') | ForEach-Object { [Text.Encoding]::ASCII.GetString([Convert]::FromBase64String($_)) }
+        $root = Join-Path $PSScriptRoot '..'
+        $files = Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' -and $_.Extension -in @('.ps1', '.psd1', '.md', '.json', '.yml', '.yaml', '.html', '.txt') }
+        $hits = @()
+        foreach ($f in $files) {
+            $text = [IO.File]::ReadAllText($f.FullName)
+            foreach ($n in $names) { if ($text.IndexOf($n, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $hits += $f.Name } }
+        }
+        $hits | Should -BeNullOrEmpty
+    }
+}

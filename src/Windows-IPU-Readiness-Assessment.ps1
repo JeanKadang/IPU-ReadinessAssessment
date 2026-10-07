@@ -2255,7 +2255,7 @@ Register-Check -Id 'pki' -Name 'PKI, certificates and TLS bindings' -Script {
 }
 
 # ---------------------------------------------------------------------------
-Register-Check -Id 'agents' -Name 'Management agents (Aeven/OpenText)' -Script {
+Register-Check -Id 'agents' -Name 'Management agents (OpenText)' -Script {
     $matches_ = Find-DetectionMatch $script:DetectionPatterns.Agents $script:Data.Apps $script:Data.Services
     foreach ($pattern in $script:DetectionPatterns.Agents) {
         $m = @($matches_ | Where-Object { $_.Label -eq $pattern.Label }) | Select-Object -First 1
