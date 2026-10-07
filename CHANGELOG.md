@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Report header: the counters link to the rows behind them. A check skipped by choice (for example the Setup compatibility scan without installation media) is a plain-language note that says what to do, instead of the "Not fully assessed" banner, which is now only for checks that failed, ran out of time or were not started (#77).
+
 ### Fixed
 - Endpoint protection names the installed product: Trend Micro Deep Security Agent, Apex One and Vision One Endpoint Basecamp are separate rows, and the summary shows product and version. The built-in Defender for Endpoint sensor is no longer a WARNING when it is not onboarded and not running (#74).
 

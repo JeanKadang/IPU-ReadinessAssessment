@@ -367,7 +367,9 @@ Most severe on the left. The **overall status is the most severe *finding***.
 
 - **Hero**: computer, target, times, collector version, overall badge.
 - **Cards**: counts per finding status.
-- **Banners**: `PARTIAL REPORT` (slow checks unfinished) and `Not fully assessed` (a check failed or was skipped).
+- **Counters**: the BLOCKER, ACTION, WARNING and MANUAL counters at the top are links to the rows behind them; *Checklist items* and *Checks run* link to the checklist and to *Collector coverage*.
+- **Banners**: `PARTIAL REPORT` (slow checks unfinished) and `Not fully assessed` (a check failed, ran out of time, or was not started because the time budget was used up; the results for that area may be incomplete).
+- **Not run by choice** (grey note): a check that was switched off or needs something that was not given, for example the Setup compatibility scan without installation media. The note says what to do if you want it included. It is not a problem.
 - **Findings table**: status, area, item, finding, **what to do**.
 - **Chapters** (collapsible): one per area group, listed in section 7.
 - **Collector coverage**: every check, its outcome and duration. Read this before trusting an empty area.
@@ -576,7 +578,7 @@ access to the output folder.
 | Fleet overview lists a file under "Files not read" | Corrupt JSON, or not an `IPU-Assessment/1` result | Re-collect the file from the server; check the collector version is 4.0.1 or later |
 | Fleet CSV opens as one column in Excel | Regional list separator differs from `;` | Re-run with `-Delimiter ','` |
 | Report says `PARTIAL REPORT` | Slow checks had not finished (job stopped or timed out) | Raise the SA job timeout above the budget (section 10) and re-run |
-| `Not fully assessed: <check> (Failed)` | A check hit an unexpected error | See `.log` for the message and line number; review that area manually |
+| `Not fully assessed: <check> stopped with an error` | A check hit an unexpected error | See `.log` for the message and line number; review that area manually |
 | `Skipped - slow-check time budget used up` | DISM and SFC consumed the shared budget | Run manually, or raise `SlowCheckBudgetMinutes` and the job timeout |
 | Application or SQL results look wrong | 32-bit PowerShell host without relaunch | Run from 64-bit PowerShell; the report flags this |
 | No before/after comparison | Pre-upgrade JSON missing | Restore `<Computer>-IPU-Assessment.json` into the same folder |
