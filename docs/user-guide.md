@@ -3,7 +3,7 @@
 How to run the Windows IPU readiness assessment, read its results, and troubleshoot it.
 
 **Scripts:** `src/Windows-IPU-Readiness-Assessment.ps1` (collector version 4.1.0, runs on each server) and
-`src/Merge-IPUAssessments.ps1` (version 1.0.3, combines many servers' results, runs on an admin workstation)
+`src/Merge-IPUAssessments.ps1` (version 1.0.4, combines many servers' results, runs on an admin workstation)
 **Audience:** server and change engineers preparing or verifying a Windows Server in-place upgrade.
 
 ## Contents
@@ -369,6 +369,7 @@ Most severe on the left. The **overall status is the most severe *finding***.
 - **Cards**: counts per finding status.
 - **Counters**: the BLOCKER, ACTION, WARNING and MANUAL counters at the top are links to the rows behind them; *Checklist items* and *Checks run* link to the checklist and to *Collector coverage*.
 - **Banners**: `PARTIAL REPORT` (slow checks unfinished) and `Not fully assessed` (a check failed, ran out of time, or was not started because the time budget was used up; the results for that area may be incomplete).
+- **Commands and links**: many recommendations show the exact command for this server, labelled **Check** (read-only, safe to run any time) or **Change** (changes the server: run it in the change window, after reading it). The *Copy* button copies it; in print the command is shown as text. The script itself never runs these commands. Where the right action depends on a vendor, there is a *Read more* link to the official page instead. A setting that comes from Group Policy says so, because a local command would be overwritten: change the GPO.
 - **Not run by choice** (grey note): a check that was switched off or needs something that was not given, for example the Setup compatibility scan without installation media. The note says what to do if you want it included. It is not a problem.
 - **Findings table**: status, area, item, finding, **what to do**.
 - **Chapters** (collapsible): one per area group, listed in section 7.
@@ -470,7 +471,7 @@ HTML. The checklist and Setup compatibility scan are skipped in Post mode.
 
 ## 9. Combining many servers: fleet overview
 
-`src/Merge-IPUAssessments.ps1` (version 1.0.3, for assessment 4.0.1 and later) reads the JSON result of every
+`src/Merge-IPUAssessments.ps1` (version 1.0.4, for assessment 4.0.1 and later) reads the JSON result of every
 server in a folder and writes **one overview** for the whole estate. It is read-only for the input files.
 
 ```mermaid

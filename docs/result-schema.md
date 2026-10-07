@@ -65,6 +65,8 @@ Strings, empty or `null` when the check that sets them did not run.
 | `Value`, `Details` | What was found; `Details` joins several parts with ` \| ` |
 | `Recommendation` | What to do, empty when nothing is needed |
 | `Source` | Where the value came from |
+| `Command`, `CommandKind` | Optional (from 4.2.0). The exact command for the recommendation; `Check` = read-only, `Change` = run in the change window. The script only shows it, it never runs it |
+| `Link`, `LinkTitle` | Optional (from 4.2.0). An official documentation page (https) and its title |
 
 ## `CheckRuns[]`
 

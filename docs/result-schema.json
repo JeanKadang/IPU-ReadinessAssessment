@@ -59,7 +59,11 @@
           "Value": { "type": "string" },
           "Details": { "type": "string" },
           "Recommendation": { "type": "string" },
-          "Source": { "type": "string" }
+          "Source": { "type": "string" },
+          "Command": { "type": "string", "description": "Exact command for the recommendation, shown but never run by the script (from 4.2.0). Empty when there is none." },
+          "CommandKind": { "enum": ["", "Check", "Change"], "description": "Check = read-only; Change = run in the change window (from 4.2.0)." },
+          "Link": { "type": "string", "pattern": "^(https://.*)?$", "description": "Official documentation page (from 4.2.0)." },
+          "LinkTitle": { "type": "string" }
         },
         "additionalProperties": false
       }

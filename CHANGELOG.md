@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Recommendations can show the exact command (labelled Check or Change, with a copy button) and a link to the official documentation. First set: pending reboot, report folder permissions, RDP NLA (or "change the GPO" when set by policy), LBFO teams, C: free space, IIS backup, upgrade path, compatibility scan and Trend Micro products. The JSON results and the fleet findings CSV carry `Command` and `Link`; pattern files may add `Link` (#79). `Merge-IPUAssessments.ps1` 1.0.4.
+
 ### Changed
 - Security and monitoring tools without a driver (for example Nessus, NXLog) are observations to verify after the upgrade instead of planning warnings; tools with a driver (for example Sysmon) stay warnings and name the driver (#78).
 - Report header: the counters link to the rows behind them. A check skipped by choice (for example the Setup compatibility scan without installation media) is a plain-language note that says what to do, instead of the "Not fully assessed" banner, which is now only for checks that failed, ran out of time or were not started (#77).
