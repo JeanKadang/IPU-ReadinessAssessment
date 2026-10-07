@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Endpoint protection names the installed product: Trend Micro Deep Security Agent, Apex One and Vision One Endpoint Basecamp are separate rows, and the summary shows product and version. The built-in Defender for Endpoint sensor is no longer a WARNING when it is not onboarded and not running (#74).
+
 ## [4.1.0] - 2026-10-06
 
 First tagged release. `Merge-IPUAssessments.ps1` 1.0.3 ships with it.

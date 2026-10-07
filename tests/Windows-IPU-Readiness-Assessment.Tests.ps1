@@ -301,7 +301,7 @@ Describe 'Detection patterns - synthetic server with renamed security products' 
     }
     It 'recognises a renamed Trend product (TrendAI)' {
         $m = Find-DetectionMatch $script:DetectionPatterns.EndpointProtection $script:synApps $script:synServices $script:synDrivers
-        @($m | ForEach-Object Label) | Should -Contain 'Trend Micro / TrendAI Deep Security, Apex One, Vision One'
+        @($m | ForEach-Object Label) | Should -Contain 'Trend Micro Deep Security Agent (Server & Workload Protection)'
     }
     It 'recognises the Defender for Endpoint sensor' {
         $m = Find-DetectionMatch $script:DetectionPatterns.EndpointProtection $script:synApps $script:synServices $script:synDrivers
@@ -337,7 +337,9 @@ Describe 'Detection patterns - one fixture per vendor row (#17)' {
             'OpenText Server Automation Agent'   = @{ App = 'SA Agent' }
             'OpenText Universal Discovery Agent' = @{ App = 'Universal Discovery Agent (x86)' }
             'OpenText Operations Agent'          = @{ App = 'Operations-agent' }
-            'Trend Micro / TrendAI Deep Security, Apex One, Vision One' = @{ App = 'Trend Micro Apex One Security Agent' }
+            'Trend Micro Deep Security Agent (Server & Workload Protection)' = @{ App = 'TrendAI Deep Security Agent' }
+            'Trend Micro Apex One' = @{ App = 'Trend Micro Apex One Security Agent' }
+            'Trend Vision One Endpoint Security agent (Endpoint Basecamp)' = @{ App = 'Trend Micro Endpoint Basecamp' }
             'Microsoft Defender for Endpoint (EDR sensor)' = @{ Service = 'Sense' }
             'CrowdStrike Falcon'                 = @{ App = 'CrowdStrike Windows Sensor' }
             'SentinelOne'                        = @{ App = 'Sentinel Agent' }
@@ -1544,5 +1546,36 @@ Describe 'Registry and local account helpers (#33)' -Tag 'Integration' {
     It 'Get-LocalGroupMembersBySid returns an empty list for an unknown group' -Skip:($env:OS -ne 'Windows_NT') {
         $members = Get-LocalGroupMembersBySid 'S-1-5-32-999'
         $members.Count | Should -Be 0
+    }
+}
+
+Describe 'Endpoint protection products (#74)' {
+    It 'names each Trend product separately (test-server evidence: Deep Security Agent plus Endpoint Basecamp, no Apex One)' {
+        $apps = @([pscustomobject]@{ Name = 'TrendAI Deep Security Agent'; Version = '20.0.32902' })
+        $services = @('tm_netsrv', 'Trend Micro Endpoint Basecamp', 'ds_agent', 'ds_monitor', 'ds_notifier', 'Amsp') | ForEach-Object { [pscustomobject]@{ Name = $_; DisplayName = $_; State = 'Running' } }
+        $m = Find-DetectionMatch $script:DetectionPatterns.EndpointProtection $apps $services @('tmeyes', 'TmKmSnsr', 'TMUMH')
+        (@($m | ForEach-Object Label) | Sort-Object) -join ' | ' | Should -Be 'Trend Micro Deep Security Agent (Server & Workload Protection) | Trend Vision One Endpoint Security agent (Endpoint Basecamp)'
+        $dsa = @($m | Where-Object { $_.Label -like 'Trend Micro Deep Security*' })[0]
+        @($dsa.Services).Count | Should -Be 4
+        @($dsa.Drivers).Count | Should -Be 3
+        Get-DetectionProductName $dsa | Should -Be 'Trend Micro Deep Security Agent (Server & Workload Protection) 20.0.32902'
+    }
+    It 'still recognises Apex One by its services' {
+        $services = @('ntrtscan', 'tmlisten') | ForEach-Object { [pscustomobject]@{ Name = $_; DisplayName = $_; State = 'Running' } }
+        $m = Find-DetectionMatch $script:DetectionPatterns.EndpointProtection @() $services
+        (@($m | ForEach-Object Label) -join ',') | Should -Be 'Trend Micro Apex One'
+    }
+    It 'a product without a version is named by its label' {
+        Get-DetectionProductName ([pscustomobject]@{ Label = 'Sysmon'; Apps = @() }) | Should -Be 'Sysmon'
+    }
+    It 'Defender for Endpoint: <Case> is <Status>' -TestCases @(
+        @{ Case = 'stopped and not onboarded';           Sense = 'Stopped'; Onboarding = $null; Status = 'INFO';    Active = $false }
+        @{ Case = 'stopped, OnboardingState 0';          Sense = 'Stopped'; Onboarding = 0;     Status = 'INFO';    Active = $false }
+        @{ Case = 'onboarded (OnboardingState 1)';       Sense = 'Stopped'; Onboarding = 1;     Status = 'WARNING'; Active = $true }
+        @{ Case = 'running, state not readable';         Sense = 'Running'; Onboarding = $null; Status = 'WARNING'; Active = $true }
+    ) {
+        $d = Get-DefenderEndpointDecision $Sense $Onboarding
+        $d.Status | Should -Be $Status
+        $d.Active | Should -Be $Active
     }
 }

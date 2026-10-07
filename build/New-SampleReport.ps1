@@ -99,7 +99,7 @@ $script:Data.PolicyEvidence = 'C:\Temp\Tools\PolBackup\SRV-APP01-IPU-Policy-2026
 Add-Result 'RDP' 'RDPAccessReadiness' 'OK' 'GO' 'No local RDP blocker detected' -Recommendation 'Upstream firewalls, PAM and credentials are outside this check.'
 Add-Run 'rdp' 'RDP access, policy and evidence' 'Fast' '00:01:00'
 Set-Check 'antivirus'
-Add-Result 'ANTIVIRUS' 'Trend Micro / TrendAI Deep Security, Apex One, Vision One' 'WARNING' 'Applications=1, Services=1 (1 running), Drivers=2' @('Trend Micro Deep Security Agent 20.0', 'Service ds_agent (Running)', 'Drivers TmKmSnsr,tmeyes') -Recommendation 'Confirm this version supports Windows Server 2025 and get the vendor''s IPU procedure. Many AV/EDR agents must be upgraded before, or paused during, Setup; their drivers are a common cause of rollback.'
+Add-Result 'ANTIVIRUS' 'Trend Micro Deep Security Agent (Server & Workload Protection)' 'WARNING' 'Applications=1, Services=1 (1 running), Drivers=2' @('Trend Micro Deep Security Agent 20.0', 'Service ds_agent (Running)', 'Drivers TmKmSnsr,tmeyes') -Recommendation 'Confirm this version supports Windows Server 2025 and get the vendor''s IPU procedure. Many AV/EDR agents must be upgraded before, or paused during, Setup; their drivers are a common cause of rollback.'
 Add-Result 'SECURITY' 'Tenable Nessus agent' 'WARNING' 'Applications=1, Services=1, Drivers=0' 'Nessus Agent (x64) 11.2' -Recommendation 'Confirm Windows Server 2025 support and that it will not block Setup.'
 Add-Run 'antivirus' 'Antivirus, EDR and security tools'
 Set-Check 'backup'

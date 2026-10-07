@@ -883,7 +883,7 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
         It 'Defender, a third-party EDR and security tools' {
             (Invoke-TestCheck 'antivirus').Outcome | Should -Be 'Completed'
             (Get-Row 'ANTIVIRUS' 'Microsoft Defender Antivirus')[0].Status | Should -Be 'OK'
-            (Get-Row 'ANTIVIRUS' 'Trend Micro / TrendAI Deep Security, Apex One, Vision One')[0].Status | Should -Be 'WARNING'
+            (Get-Row 'ANTIVIRUS' 'Trend Micro Deep Security Agent (Server & Workload Protection)')[0].Status | Should -Be 'WARNING'
             (Get-Row 'SECURITY' 'Tenable Nessus agent')[0].Status | Should -Be 'WARNING'
             (Get-Row 'ANTIVIRUS' 'EndpointProtection').Count | Should -Be 0
             (Get-Row 'SECURITY' 'FileSystemFilterDrivers')[0].Details | Should -Match 'tmeyes'
@@ -900,6 +900,26 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $script:Fake.Mp = $null
             $null = Invoke-TestCheck 'antivirus'
             (Get-Row 'ANTIVIRUS' 'Microsoft Defender Antivirus')[0].Details | Should -Match 'Status not readable'
+        }
+        It 'lists the installed products with their version for the summary (#74)' {
+            $null = Invoke-TestCheck 'antivirus'
+            $script:Data.EndpointProducts | Should -Contain 'Trend Micro Deep Security Agent (Server & Workload Protection) 20.0'
+        }
+        It 'an unused built-in Defender for Endpoint sensor is INFO, not a warning (#74)' {
+            $script:Fake.Cim['Win32_Service'] = @($script:Fake.Cim['Win32_Service']) + @(New-FakeService 'Sense' 'Stopped' 'Manual' 'Windows Defender Advanced Threat Protection Service')
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'antivirus'
+            $row = (Get-Row 'ANTIVIRUS' 'Microsoft Defender for Endpoint (EDR sensor)')[0]
+            $row.Status | Should -Be 'INFO'
+            $row.Value | Should -Match 'not onboarded'
+            ($script:Data.EndpointProducts -join ',') | Should -Not -Match 'Defender for Endpoint'
+        }
+        It 'an onboarded Defender for Endpoint sensor is a WARNING (#74)' {
+            $script:Fake.Cim['Win32_Service'] = @($script:Fake.Cim['Win32_Service']) + @(New-FakeService 'Sense' 'Running' 'Auto' 'Windows Defender Advanced Threat Protection Service')
+            $script:Fake.Registry['HKLM:\SOFTWARE\Microsoft\Windows Advanced Threat Protection\Status|OnboardingState'] = 1
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'antivirus'
+            (Get-Row 'ANTIVIRUS' 'Microsoft Defender for Endpoint (EDR sensor)')[0].Status | Should -Be 'WARNING'
         }
         It 'BitLocker on C: is a WARNING' {
             $script:Fake.BitLocker = [pscustomobject]@{ ProtectionStatus = 'On'; EncryptionMethod = 'XtsAes256' }
