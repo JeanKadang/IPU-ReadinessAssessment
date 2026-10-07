@@ -1696,6 +1696,9 @@ Describe 'Save-IISConfigEvidence (#76)' {
         $empty = Join-Path $TestDrive 'empty-config'
         New-Item -ItemType Directory -Path $empty | Out-Null
         { Save-IISConfigEvidence -Destination (Join-Path $TestDrive 'never') -SourceFolder $empty } | Should -Throw '*No .config files*'
+    }
+}
+
 Describe 'User Account Control (#75)' {
     It '<Case>' -TestCases @(
         @{ Case = 'all defaults (no values) is on, Windows default'; Lua = $null; Consent = $null; Secure = $null; Filter = $null; Expected = 'On - prompt for consent for non-Windows programs (Windows default)' }
