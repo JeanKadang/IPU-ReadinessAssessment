@@ -167,6 +167,7 @@ When the budget runs out, remaining slow checks are reported as `MANUAL` (skippe
 | `LgpoExe` | `C:\Temp\Tools\LGPO.exe` | Optional. Used only for backup (`/b`) and `/parse` |
 | `PolicyEvidenceRoot` | `C:\Temp\Tools\PolBackup` | Timestamped evidence folder and ZIP go here |
 | `CreatePolicyEvidenceZip` | `$true` | Zip the evidence |
+| `EnableIISConfigEvidence` | `$true` | When IIS is installed, copy its configuration files into a restricted evidence folder and ZIP under `PolicyEvidenceRoot` (see [IIS configuration copy](#iis-configuration-copy)) |
 
 ### Output
 
@@ -445,6 +446,25 @@ mindmap
 
 Detection of products is data-driven (a table of names, services and filter drivers near the top of the script),
 so when a vendor renames a product you edit the table, not the logic.
+
+### IIS configuration copy
+
+When IIS is installed, the assessment copies the files in `%windir%\System32\inetsrv\config` (`applicationHost.config`,
+`administration.config`, `redirection.config`, ...) into `<PolicyEvidenceRoot>\<Computer>-IPU-IIS-<time>` and zips it.
+These are the files `appcmd add backup` saves. IIS itself is not touched. The folder gets SYSTEM and Administrators access
+only, because `applicationHost.config` can contain encrypted passwords. The report shows where the copy is and the
+SHA-256 of `applicationHost.config`.
+
+The copy is from assessment time. **Immediately before the upgrade**, also run:
+
+```
+%windir%\system32\inetsrv\appcmd.exe add backup PreIPU
+```
+
+To restore from the assessment copy: stop IIS (`iisreset /stop`), copy the files back to `%windir%\System32\inetsrv\config`,
+and start IIS again. Or copy them into a new folder under `%windir%\System32\inetsrv\backup` and run
+`appcmd restore backup <folder name>`. If the server uses **shared configuration** (`redirection.config` points to a
+share), the report says so: back up the files on that share as well.
 
 ### Standard change checklist
 

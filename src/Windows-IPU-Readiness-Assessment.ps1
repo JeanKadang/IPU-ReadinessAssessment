@@ -163,6 +163,10 @@ param(
     [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$LgpoExe = 'C:\Temp\Tools\LGPO.exe',
     [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$PolicyEvidenceRoot = 'C:\Temp\Tools\PolBackup',
     [bool]$CreatePolicyEvidenceZip = $true,
+    # When IIS is installed, copy its configuration files (the same files
+    # "appcmd add backup" saves) into a restricted evidence folder and ZIP
+    # under PolicyEvidenceRoot. A read-only copy; IIS itself is not touched.
+    [bool]$EnableIISConfigEvidence = $true,
 
     # Output.
     [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$ReportDirectory = 'C:\Temp\IPU-Assessment',
@@ -277,7 +281,7 @@ $script:ProfileSettingNames = @(
     'MinimumCFreeGB','ExtendBlockGB','MinimumMemoryGB','MaxPatchAgeDays','UptimeWarningDays','AVMaxAgeDays',
     'CertificateWarningDays','SystemPartitionMinFreeMB','RecoveryPartitionMinFreeMB',
     'RunDISMScanHealth','RunSFCVerifyOnly','DISMTimeoutMinutes','SFCTimeoutMinutes','SlowCheckBudgetMinutes','CompatScanTimeoutMinutes',
-    'EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip',
+    'EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip','EnableIISConfigEvidence',
     'WriteJson','RestrictOutputAcl','NumberCultureName'
 )
 $script:PatternFields = @('Label','App','Service','Display','Driver','Disabled','Link','LinkTitle')
@@ -578,6 +582,47 @@ function Initialize-OutputFolder {
         Write-AssessmentLog 'WARNING' 'ACL' ('Could not restrict ' + $Path + ': ' + $_.Exception.Message)
         return 'CreatedUnrestricted'
     }
+}
+
+function Save-IISConfigEvidence {
+    # Copies the IIS configuration files into a new, restricted evidence
+    # folder and zips it (#76). Read-only for IIS: nothing under inetsrv is
+    # written. applicationHost.config can hold encrypted secrets, so the
+    # folder gets the same SYSTEM/Administrators-only access as the other
+    # evidence. Throws when nothing could be copied.
+    param(
+        [Parameter(Mandatory=$true)][string]$Destination,
+        [string]$SourceFolder = (Join-Path $env:windir 'System32\inetsrv\config'),
+        [bool]$Zip = $true
+    )
+    $files = @(Get-ChildItem -LiteralPath $SourceFolder -Filter '*.config' -File -ErrorAction Stop)
+    if ($files.Count -eq 0) { throw ('No .config files found in ' + $SourceFolder) }
+    $null = Initialize-OutputFolder $Destination
+    foreach ($f in $files) { Copy-Item -LiteralPath $f.FullName -Destination $Destination -Force -ErrorAction Stop }
+    $hash = ''
+    $appHost = Join-Path $Destination 'applicationHost.config'
+    if (Test-Path -LiteralPath $appHost) {
+        try { $hash = (Get-FileHash -LiteralPath $appHost -Algorithm SHA256 -ErrorAction Stop).Hash } catch { Write-Swallowed $_ }
+    }
+    # Shared configuration: redirection.config points to the real files.
+    $shared = ''
+    $redirection = Join-Path $Destination 'redirection.config'
+    if (Test-Path -LiteralPath $redirection) {
+        try {
+            [xml]$doc = [IO.File]::ReadAllText($redirection)
+            $node = $doc.SelectSingleNode('//configurationRedirection')
+            if ($node -and [string]$node.GetAttribute('enabled') -eq 'true') { $shared = [string]$node.GetAttribute('path') }
+        } catch { Write-Swallowed $_ }
+    }
+    $location = $Destination
+    if ($Zip) {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zipPath = $Destination + '.zip'
+        if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+        [IO.Compression.ZipFile]::CreateFromDirectory($Destination, $zipPath, [IO.Compression.CompressionLevel]::Optimal, $false)
+        $location = $zipPath
+    }
+    return [pscustomobject]@{ Location = $location; Folder = $Destination; Files = @($files | ForEach-Object { $_.Name } | Sort-Object); ApplicationHostSha256 = $hash; SharedConfigPath = $shared }
 }
 
 function Get-BroadFolderReader {
@@ -1149,6 +1194,9 @@ function Compare-IPUSnapshot {
         @{ Name='Windows features';  Prop='Features';     Status='WARNING'; Rec='Features removed by Setup. Confirm nothing depends on them.' },
         @{ Name='Scheduled tasks';   Prop='Tasks';        Status='WARNING'; Rec='Re-create missing tasks and confirm their run-as credentials.' }
     )
+    if ($Before.Uac -and $After.Uac -and [string]$Before.Uac -ne [string]$After.Uac) {
+        $diff += (& $make 'WARNING' 'UAC changed' ([string]$After.Uac) ('Before: ' + [string]$Before.Uac) 'User Account Control is set differently after the upgrade. Confirm the change is intended (usually set by Group Policy).')
+    }
     foreach ($l in $lists) {
         $b = @($Before.($l.Prop) | Where-Object { $_ })
         $a = @($After.($l.Prop) | Where-Object { $_ })
@@ -1183,6 +1231,26 @@ function Get-RecommendationCommand {
         'CFreeSpace'    { return [pscustomobject]@{ Kind = 'Check'; Command = 'Get-Volume -DriveLetter C | Format-List DriveLetter, FileSystemLabel, @{ n = ''SizeGB''; e = { [math]::Round($_.Size / 1GB, 1) } }, @{ n = ''FreeGB''; e = { [math]::Round($_.SizeRemaining / 1GB, 1) } }' } }
     }
     throw ('Unknown recommendation command: ' + $Id)
+function Get-UacDecision {
+    # Pure: User Account Control in plain words from the registry values
+    # under HKLM\...\Policies\System (#75). Missing values mean the
+    # Windows defaults (EnableLUA 1, ConsentPromptBehaviorAdmin 5,
+    # PromptOnSecureDesktop 1, FilterAdministratorToken 0).
+    param($EnableLua, $ConsentPromptBehaviorAdmin, $PromptOnSecureDesktop, $FilterAdministratorToken)
+    $num = { param($v, [int]$Default) if ($null -eq $v -or [string]$v -eq '') { return $Default }; return [int]$v }
+    $lua = & $num $EnableLua 1
+    if ($lua -eq 0) {
+        return [pscustomobject]@{ State = 'Off'; Text = 'Off - administrators run everything elevated without a prompt (EnableLUA=0)' }
+    }
+    $consent = & $num $ConsentPromptBehaviorAdmin 5
+    $secure = & $num $PromptOnSecureDesktop 1
+    $texts = @{ 0 = 'elevate without prompting'; 1 = 'prompt for credentials on the secure desktop'; 2 = 'prompt for consent on the secure desktop'; 3 = 'prompt for credentials'; 4 = 'prompt for consent'; 5 = 'prompt for consent for non-Windows programs (Windows default)' }
+    $text = $texts[$consent]
+    if (-not $text) { $text = 'unknown prompt behaviour (ConsentPromptBehaviorAdmin=' + $consent + ')' }
+    if ($consent -ge 3 -and $consent -le 5 -and $secure -eq 0) { $text += ', not on the secure desktop' }
+    $result = 'On - ' + $text
+    if ((& $num $FilterAdministratorToken 0) -eq 1) { $result += '; built-in Administrator also gets prompts (Admin Approval Mode)' }
+    return [pscustomobject]@{ State = 'On'; Text = $result }
 }
 
 function Get-OutputFolderAccessDecision {
@@ -1835,6 +1903,16 @@ Register-Check -Id 'domain' -Name 'Domain role and access' -Script {
         Add-Result 'ACCESS' 'DomainMembership' 'WARNING' ('Workgroup=' + $cs.Domain) -Recommendation 'Workgroup server: confirm it is onboarded in CyberArk/PAM and that local fallback credentials work before IPU.' -Source 'Win32_ComputerSystem'
     }
 
+    # User Account Control (#75). Information, not a finding: UAC does not
+    # block an in-place upgrade.
+    $uacKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+    $uacValues = @{}
+    foreach ($n in @('EnableLUA','ConsentPromptBehaviorAdmin','PromptOnSecureDesktop','FilterAdministratorToken')) { $uacValues[$n] = (Get-RegistryValueSafe $uacKey $n).Value }
+    $uac = Get-UacDecision $uacValues.EnableLUA $uacValues.ConsentPromptBehaviorAdmin $uacValues.PromptOnSecureDesktop $uacValues.FilterAdministratorToken
+    $script:Data.UacSummary = $uac.Text
+    if ($script:Data.Snapshot) { $script:Data.Snapshot.Uac = $uac.Text }
+    Add-Result 'ACCESS' 'UAC' 'INFO' $uac.Text (@($uacValues.Keys | Sort-Object | ForEach-Object { $_ + '=' + $(if ($null -eq $uacValues[$_]) { '(default)' } else { [string]$uacValues[$_] }) }) -join ', ') -Source ($uacKey -replace '^HKLM:','HKLM')
+
     $rid500 = @(Get-CimSafe 'Win32_UserAccount' 'LocalAccount=True') | Where-Object { $_.SID -match '-500$' } | Select-Object -First 1
     if ($rid500) {
         Add-Result 'ACCESS' 'BuiltInAdministrator' 'INFO' ('Name=' + $rid500.Name) @(('Disabled=' + $rid500.Disabled),('SID=' + $rid500.SID)) -Recommendation 'Record the (possibly renamed) built-in Administrator and confirm PAM/console fallback.' -Source 'Win32_UserAccount'
@@ -2184,7 +2262,23 @@ Register-Check -Id 'workloads' -Name 'Roles and workloads' -Script {
 # ---------------------------------------------------------------------------
 Register-Check -Id 'iis' -Name 'IIS' -Script {
     if ((Get-FeatureState 'Web-Server') -ne $true) { Add-Result 'IIS' 'Web-Server' 'OK' 'Not installed' -Source 'Get-WindowsFeature'; return }
-    Add-Result 'IIS' 'Web-Server' 'WARNING' 'Installed' -Recommendation 'Back up the IIS configuration immediately before IPU (appcmd add backup) and keep site, binding and certificate documentation.' -Source 'Get-WindowsFeature' -Command (Get-RecommendationCommand 'IisBackup').Command -CommandKind 'Change' -Link $script:DocLinks.AppCmd.Url -LinkTitle $script:DocLinks.AppCmd.Title
+    Add-Result 'IIS' 'Web-Server' 'WARNING' 'Installed' -Recommendation 'Immediately before the IPU, run the appcmd.exe add backup command shown (the copy in this report is from assessment time), and keep site, binding and certificate documentation.' -Source 'Get-WindowsFeature' -Command (Get-RecommendationCommand 'IisBackup').Command -CommandKind 'Change' -Link $script:DocLinks.AppCmd.Url -LinkTitle $script:DocLinks.AppCmd.Title
+    if ($EnableIISConfigEvidence) {
+        try {
+            $dest = Join-Path $PolicyEvidenceRoot ($script:SafeComputerName + '-IPU-IIS-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+            $null = Initialize-OutputFolder $PolicyEvidenceRoot
+            $copy = Save-IISConfigEvidence -Destination $dest -Zip $CreatePolicyEvidenceZip
+            $script:Data.IISConfigEvidence = $copy.Location
+            Add-Result 'IIS' 'ConfigurationCopy' 'OK' $copy.Location @(('Files=' + ($copy.Files -join ', ')), ('applicationHost.config SHA256=' + $copy.ApplicationHostSha256)) -Recommendation 'Restore: copy the files back to %windir%\System32\inetsrv\config, or put them in a folder under inetsrv\backup and run "appcmd restore backup <folder>". See the user guide.' -Source 'inetsrv\config (copied, not changed)'
+            if ($copy.SharedConfigPath) {
+                Add-Result 'IIS' 'SharedConfiguration' 'WARNING' ('Enabled: ' + $copy.SharedConfigPath) 'The local files only point to the shared location.' -Recommendation 'Back up the shared configuration at that path as well, and confirm every server that uses it before the change.' -Kind 'Observation' -Source 'redirection.config'
+            }
+        } catch {
+            Add-Result 'IIS' 'ConfigurationCopy' 'MANUAL' 'Could not copy the IIS configuration' $_.Exception.Message -Recommendation 'Back up the IIS configuration manually before the change: appcmd add backup PreIPU, or copy %windir%\System32\inetsrv\config.' -Kind 'Finding' -Source 'inetsrv\config'
+        }
+    } else {
+        Add-Result 'IIS' 'ConfigurationCopy' 'INFO' 'Not taken (EnableIISConfigEvidence is off)' -Source 'SETTINGS'
+    }
     if (-not (Get-Module -ListAvailable WebAdministration)) { return }
     Import-Module WebAdministration
     foreach ($site in @(Get-Website)) {
@@ -3039,6 +3133,7 @@ function New-IPUReportHtml {
         @('Windows activation', (Get-ResultText $Results 'LICENSING' 'CurrentActivation')),
         @('Platform', (Get-ResultText $Results 'PLATFORM' 'PhysicalOrVirtual')),
         @('Domain role', $script:Data.DomainRoleText),
+        @('UAC', $script:Data.UacSummary),
         @('SQL Server', (& $factValue $script:Data.SqlSummary 'sql')),
         @('Endpoint protection', (& $factValue $epp 'antivirus')),
         @('VMware Tools', (Get-ResultText $Results 'VMWARE' 'VMwareTools')),
@@ -3058,6 +3153,7 @@ function New-IPUReportHtml {
             @('Baseline', (Get-ResultText $Results 'POST_UPGRADE' 'Baseline')),
             @('Windows activation', (Get-ResultText $Results 'LICENSING' 'CurrentActivation')),
             @('RDP access', $script:Data.RdpSummary),
+            @('UAC', $script:Data.UacSummary),
             @('C: drive', $script:Data.CSummary),
             @('Endpoint protection', (& $factValue $epp 'antivirus'))
         )
@@ -3246,6 +3342,7 @@ function New-AssessmentJsonObject {
             RecommendedMedia = $script:Data.RecommendedMedia
             Platform         = (Get-ResultText $Results 'PLATFORM' 'PhysicalOrVirtual')
             DomainRole       = $script:Data.DomainRoleText
+            Uac              = $script:Data.UacSummary
             SqlServer        = $script:Data.SqlSummary
             Activation       = $script:Data.ActivationSummary
             CDrive           = $script:Data.CSummary

@@ -48,6 +48,7 @@ Strings, empty or `null` when the check that sets them did not run.
 | `RecommendedMedia` | `Windows Server 2025 Standard (Desktop Experience) - en-US media` |
 | `Platform` | `Virtual (VMware) \| Manufacturer=VMware, Inc. \| ...` |
 | `DomainRole` | `Member server` |
+| `Uac` | `On - prompt for consent for non-Windows programs (Windows default)` (from 4.2.0) |
 | `SqlServer` | `MSSQLSERVER=SQL Server 2017` |
 | `Activation` | `Status=Licensed, Channel=Volume:GVLK` |
 | `CDrive` | `Size 100,00 GB, free 55,00 GB` |
@@ -92,6 +93,7 @@ Lists may be empty or `null`.
 | `IPv4`, `Dns` | IPv4 addresses and DNS servers of enabled adapters |
 | `Hosts` | Active hosts-file entries |
 | `Tasks` | Non-Microsoft scheduled tasks, for example `\Example\Nightly export` |
+| `Uac` | User Account Control in plain words (from 4.2.0); the post-upgrade comparison reports a change |
 
 ## Compatibility rules
 
