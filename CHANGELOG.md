@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- New check `fileshares`: shared folders with path, description and share permissions (default administrative shares left out); a share missing after the upgrade is an ACTION in the post-upgrade comparison (#95).
+
+### Added
 - `-RedactExisting <folder or report>` writes redacted copies of existing reports in seconds, without collecting anything; the originals are not changed (#101).
 
 ### Security

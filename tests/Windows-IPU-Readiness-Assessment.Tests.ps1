@@ -2126,3 +2126,12 @@ Describe 'Redact existing reports (#101)' {
         (@($l | ForEach-Object { $_.Kind + '=' + $_.Value }) -join '; ') | Should -Be 'ACCOUNT=CORP\adm-jdoe; ACCOUNT=svc_app@corp.example.test; GPO=Web Lockdown; NAME=VM only'
     }
 }
+
+Describe 'File shares in the post-upgrade comparison (#95)' {
+    It 'a share missing after the upgrade is an ACTION' {
+        $d = Compare-IPUSnapshot @{ Shares = @('Data', 'Scans') } @{ Shares = @('Data') }
+        $row = @($d | Where-Object { $_.Item -eq 'File shares missing after upgrade' })[0]
+        $row.Status | Should -Be 'ACTION'
+        $row.Details | Should -Be 'Scans'
+    }
+}

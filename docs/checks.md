@@ -1,6 +1,6 @@
 # Checks reference
 
-The assessment runs 32 checks, in the order below. Each check writes rows to the report under one or more
+The assessment runs 33 checks, in the order below. Each check writes rows to the report under one or more
 **areas**. A check that throws is reported as `MANUAL` in *Collector coverage* ("Check did not complete");
 the absence of findings in that area is then **not** evidence of readiness.
 
@@ -38,6 +38,7 @@ check is added without one.
 | `exchange` Exchange Server | Exchange services and setup registration | `BLOCKER` Exchange server role (in-place OS upgrade is not supported by Microsoft); `ACTION` only setup registration found (probably management tools) |
 | `sql` SQL Server | Database Engine, Reporting Services and Analysis Services instances and versions | `BLOCKER` SQL version not supported on the target (for example SQL Server 2017 on 2025; the text names a target that supports it); `OK`; `MANUAL` version not found |
 | `workloads` Roles and workloads | Installed roles, application workloads from the detection patterns (SharePoint, Oracle, SAP, Citrix, Java, Tomcat, ...), features removed or deprecated in the target | `WARNING` per workload or role that needs its owner; `ACTION` a feature removed in the target (for example SMTP Server, PowerShell 2.0 on 2025); `WARNING` observation for deprecated features; `MANUAL` when roles cannot be listed |
+| `fileshares` File shares | SMB shares (`Get-SmbShare`) with path, description and share permissions (`Get-SmbShareAccess`); default administrative shares are left out, `print$` only with the Print Server role | `WARNING` when folders are shared (test access after the upgrade, keep the list); `INFO` no shares; `MANUAL` observation when the role is installed but the SmbShare cmdlets are missing |
 | `iis` IIS | Web Server role, sites and bindings; copies the IIS configuration files into the evidence folder (*EnableIISConfigEvidence*) | `WARNING` IIS installed (run `appcmd add backup` right before the change); `OK` configuration copied (path and SHA-256); `MANUAL` copy failed; `WARNING` observation shared configuration; `OK` not installed |
 | `rds` Remote Desktop Services roles | Session Host and Licensing roles, licensing mode and servers | `ACTION` session host or licensing server; `OK` |
 
@@ -90,6 +91,7 @@ pre-upgrade JSON from the same folder and reports:
 | Lost static routes or IPv4 addresses | `ACTION` |
 | Lost listening ports, DNS servers, hosts entries, applications, Windows features, scheduled tasks; services that no longer exist | `WARNING` |
 | No pre-upgrade JSON found | `MANUAL` |
+| File shares that existed before and no longer do | `ACTION` |
 | GPOs that applied before and no longer do, GPOs that newly apply, AD groups the computer is no longer in | `WARNING` |
 | User Account Control set differently than before | `WARNING` |
 | Pre-upgrade result was a partial checkpoint | `WARNING` observation |

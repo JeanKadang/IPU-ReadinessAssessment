@@ -113,6 +113,7 @@
         "Hosts": { "$ref": "#/definitions/stringList" },
         "Tasks": { "$ref": "#/definitions/stringList" },
         "Gpos": { "$ref": "#/definitions/stringList" },
+        "Shares": { "$ref": "#/definitions/stringList" },
         "Groups": { "$ref": "#/definitions/stringList" },
         "Uac": { "$ref": "#/definitions/text" }
       }

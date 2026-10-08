@@ -102,7 +102,7 @@ flowchart LR
 Options (`-OutputFolder`, `-Mode Pre|Post|All`, `-Delimiter`) are in the [user guide](docs/user-guide.md#9-combining-many-servers-fleet-overview).
 
 Full parameter reference, status meanings, SA usage and troubleshooting: **[User guide](docs/user-guide.md)**.
-What each of the 32 checks looks at and can report: **[Checks reference](docs/checks.md)**. What a report looks like: [sample report](docs/samples/sample-report.html) (fictional server).
+What each of the 33 checks looks at and can report: **[Checks reference](docs/checks.md)**. What a report looks like: [sample report](docs/samples/sample-report.html) (fictional server).
 
 ## Reading the result
 
