@@ -131,4 +131,5 @@ jobs:
             dist/Windows-IPU-Readiness-Assessment.ps1 dist/Merge-IPUAssessments.ps1
       - name: Dry run summary
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
-        run: echo "Dry run for $TAG on $GITHUB_SHA: every check passed, nothing was published." | tee -a "$GITHUB_STEP_SUMMARY"
+        run: |
+          echo "Dry run for $TAG on $GITHUB_SHA - every check passed, nothing was published." | tee -a "$GITHUB_STEP_SUMMARY"
