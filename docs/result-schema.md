@@ -49,6 +49,7 @@ Strings, empty or `null` when the check that sets them did not run.
 | `Platform` | `Virtual (VMware) \| Manufacturer=VMware, Inc. \| ...` |
 | `DomainRole` | `Member server` |
 | `Uac` | `On - prompt for consent for non-Windows programs (Windows default)` (from 4.2.0) |
+| `AdLocation` | `corp.example.test/Servers/Web` (from 4.3.0; `Not applicable (workgroup)` for a workgroup server) |
 | `SqlServer` | `MSSQLSERVER=SQL Server 2017` |
 | `Activation` | `Status=Licensed, Channel=Volume:GVLK` |
 | `CDrive` | `Size 100,00 GB, free 55,00 GB` |
@@ -93,6 +94,7 @@ Lists may be empty or `null`.
 | `IPv4`, `Dns` | IPv4 addresses and DNS servers of enabled adapters |
 | `Hosts` | Active hosts-file entries |
 | `Tasks` | Non-Microsoft scheduled tasks, for example `\Example\Nightly export` |
+| `Ou` | The computer object's distinguished name in AD (from 4.3.0); the post-upgrade comparison reports a move |
 | `Shares` | Names of shared folders (from 4.3.0); the post-upgrade comparison reports shares that are gone |
 | `Gpos`, `Groups` | Applied GPO names and the computer's AD groups (from 4.2.0; absent when they could not be read). The post-upgrade comparison reports differences |
 | `Uac` | User Account Control in plain words (from 4.2.0); the post-upgrade comparison reports a change |

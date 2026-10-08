@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- The computer object's OU path in AD, in the summary ("AD location (OU)"), the Group Policy section and the JSON; the post-upgrade comparison reports a moved computer object (#99).
+
+### Added
 - New check `fileshares`: shared folders with path, description and share permissions (default administrative shares left out); a share missing after the upgrade is an ACTION in the post-upgrade comparison (#95).
 
 ### Added
