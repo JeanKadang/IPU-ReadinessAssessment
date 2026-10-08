@@ -4,27 +4,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Changed
-- Report chapters open when they hold a finding to act on (WARNING and MANUAL too, not only BLOCKER and ACTION); a line explains the rule, *Expand all* / *Collapse all* buttons were added, and printing includes closed chapters (#97).
-- A server that is not in a domain is called "Workgroup server (standalone)" with its workgroup name, instead of "Standalone server" (#98).
-- "Status meaning" is shown right after the Summary, before the tables that use the statuses (#96).
+## [4.3.0] - 2026-10-08
 
-### Added
-- The source OS end of extended support: an INFO row while supported, a WARNING observation (with a note on Extended Security Updates) once it has ended, and the patch-level row says why updates are old on an out-of-support source (#102).
-- The *Target licensing* checklist item now says what the target release needs for the current activation channel (KMS client, MAK, AVMA, OEM, retail), instead of always showing the KMS host (#102).
-- The computer object's OU path in AD, in the summary ("AD location (OU)"), the Group Policy section and the JSON; the post-upgrade comparison reports a moved computer object (#99).
-
-### Added
-- New check `fileshares`: shared folders with path, description and share permissions (default administrative shares left out); a share missing after the upgrade is an ACTION in the post-upgrade comparison (#95).
-
-### Added
-- `-RedactExisting <folder or report>` writes redacted copies of existing reports in seconds, without collecting anything; the originals are not changed (#101).
-
-### Security
-- Redaction now also replaces host names in any domain (except documentation and vendor sites), the bare names of service and scheduled-task accounts, GPO and WMI filter names, OU names in Group Policy link paths and `DC=` components. A live run had shown these in a redacted report. The smoke test checks the redacted output for leftover host and account names (#100).
+Findings and requests from a live run on Windows Server 2012 R2 (Windows PowerShell 4.0).
 
 ### Added
 - Prerequisites check before anything is collected: PowerShell 4.0 or later, .NET Framework 4.5 or later and administrator rights. If one is missing, the run stops with a clear `FAILED` SA line and report text naming what is missing and what to do; a missing optional module is a MANUAL row naming the affected checks. CI checks `src/` against Windows Server 2012 R2 / Windows PowerShell 4.0 (#94).
+- New check `fileshares`: shared folders with path, description and share permissions (default administrative shares left out); a share missing after the upgrade is an ACTION in the post-upgrade comparison (#95).
+- The computer object's OU path in AD, in the summary ("AD location (OU)"), the Group Policy section and the JSON; the post-upgrade comparison reports a moved computer object (#99).
+- `-RedactExisting <folder or report>` writes redacted copies of existing reports in seconds, without collecting anything; the originals are not changed (#101).
+- The source OS end of extended support: an INFO row while supported, a WARNING observation (with a note on Extended Security Updates) once it has ended, and the patch-level row says why updates are old on an out-of-support source (#102).
+- The *Target licensing* checklist item now says what the target release needs for the current activation channel (KMS client, MAK, AVMA, OEM, retail), instead of always showing the KMS host (#102).
+
+### Changed
+- "Status meaning" is shown right after the Summary, before the tables that use the statuses (#96).
+- Report chapters open when they hold a finding to act on (WARNING and MANUAL too, not only BLOCKER and ACTION); a line explains the rule, *Expand all* / *Collapse all* buttons were added, and printing includes closed chapters (#97).
+- A server that is not in a domain is called "Workgroup server (standalone)" with its workgroup name, instead of "Standalone server" (#98).
+
+### Security
+- Redaction now also replaces host names in any domain (except documentation and vendor sites), the bare names of service and scheduled-task accounts, GPO and WMI filter names, OU names in Group Policy link paths and `DC=` components. A live run had shown these in a redacted report. The smoke test checks the redacted output for leftover host and account names (#100).
 
 ## [4.2.0] - 2026-10-07
 
@@ -118,6 +116,7 @@ Restructure of the 3.x script (released as a script file only).
 
 Local Group Policy backup and RDP readiness. Superseded by 4.0.0.
 
-[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.2.0...HEAD
+[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.3.0...HEAD
+[4.3.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.3.0
 [4.2.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.2.0
 [4.1.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.1.0
