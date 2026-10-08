@@ -68,7 +68,7 @@ stateDiagram-v2
 | Item | Requirement |
 |---|---|
 | OS | Windows Server 2012 R2 or later (source) |
-| PowerShell | Windows PowerShell 4.0 or later (the script has `#requires -Version 4.0`). Windows Server 2012 R2's own 4.0 is enough; CI checks every change against it |
+| PowerShell | Windows PowerShell 4.0 or later (the script has `#requires -Version 4.0`). Windows Server 2012 R2's own 4.0 is enough. CI checks every change statically against the 2012 R2 / PowerShell 4.0 command and syntax profile; it has no PowerShell 4.0 runner |
 | .NET Framework | 4.5 or later (2012 R2 with Windows PowerShell 4.0 always has it; 4.8 recommended) |
 | Rights | Administrator. Normally runs as the SA Agent (LocalSystem) |
 | Disk | Writable output folder (default `C:\Temp\IPU-Assessment`) |
@@ -79,7 +79,7 @@ A 32-bit PowerShell host on 64-bit Windows is handled: the script relaunches its
 because the 32-bit view would give wrong registry and file results. If it cannot relaunch (no file path), it continues
 and flags it in the report.
 
-**Prerequisites check.** Before collecting anything, the script checks PowerShell 4.0 or later, .NET Framework 4.5 or later, and administrator rights. If one is missing, it stops at once, and the SA result line says `FAILED` with exactly what is missing and what to do. For example: `Missing: Administrator rights. Run the script elevated (Run as administrator), or as SYSTEM through OpenText SA.` The report contains the same text. If an optional PowerShell module is missing (Storage, NetAdapter, NetTCPIP, ScheduledTasks, ServerManager, Dism), the run continues, and a `MANUAL` row names the module and the checks it affects.
+**Prerequisites check.** Before collecting anything, the script checks PowerShell 4.0 or later, .NET Framework 4.5 or later, and administrator rights. If one is missing, it stops at once, and the SA result line says `FAILED` with exactly what is missing and what to do. For example: `Missing: Administrator rights. Run the script elevated (Run as administrator), or as SYSTEM through OpenText SA.` The report contains the same text. If an optional PowerShell module is missing (ServerManager, Storage, NetAdapter, NetTCPIP, ScheduledTasks, Dism, SmbShare), the run continues, and a `MANUAL` row names the module and the checks it affects.
 
 ## 3. Running the assessment
 
@@ -329,9 +329,10 @@ What changes with redaction:
 
 ### JSON shape
 
-Schema id `IPU-Assessment/1`. Top-level keys: `CollectorVersion`, `ComputerName`, `Mode`, `TargetServerVersion`,
-`Started`, `Completed`, `Partial`, `Overall`, `Counts`, `Facts`, `Results`, `CheckRuns`, `Snapshot`.
-`Results[]` has `CheckId, Area, Item, Status, Kind, Value, Details, Recommendation, Source`.
+Schema id `IPU-Assessment/1`. Top-level keys: `Schema`, `CollectorVersion`, `ComputerName`, `Mode`,
+`TargetServerVersion`, `Started`, `Completed`, `Partial`, `Redacted`, `Overall`, `Counts`, `Facts`, `Results`,
+`CheckRuns`, `Snapshot`. `Results[]` has `CheckId, Area, Item, Status, Kind, Value, Details, Recommendation,
+Source, Command, CommandKind, Link, LinkTitle`.
 `Snapshot` is what the post-upgrade run compares against. The fleet overview script (section 9) reads the same
 files and accepts only `Schema` = `IPU-Assessment/1`. Every field is described in
 [result-schema.md](result-schema.md); the formal JSON Schema is [result-schema.json](result-schema.json), and
@@ -383,13 +384,13 @@ Most severe on the left. The **overall status is the most severe *finding***.
 
 - **Hero**: computer, target, times, collector version, overall badge.
 - **Cards**: counts per finding status.
-- **Chapters**: a chapter opens by itself when it holds a finding to act on (BLOCKER, ACTION, WARNING or MANUAL). The others hold inventory and evidence and start closed. Use *Expand all* / *Collapse all* above the chapters. Printing or saving as PDF includes every chapter.
+- **Summary**: the key facts, among them current OS and target, upgrade path and installation image, activation, platform, domain role (or workgroup), AD location (OU), UAC, SQL Server, endpoint protection, RDP access and C: drive. It is followed directly by **Status meaning**, which explains each status before the tables use them.
+- **Chapters** (collapsible, one per area group, listed in section 7): a chapter opens by itself when it holds a finding to act on (BLOCKER, ACTION, WARNING or MANUAL). The others hold inventory and evidence and start closed. Use *Expand all* / *Collapse all* above the chapters. Printing or saving as PDF includes every chapter.
 - **Counters**: the BLOCKER, ACTION, WARNING and MANUAL counters at the top are links to the rows behind them; *Checklist items* and *Checks run* link to the checklist and to *Collector coverage*.
 - **Banners**: `PARTIAL REPORT` (slow checks unfinished) and `Not fully assessed` (a check failed, ran out of time, or was not started because the time budget was used up; the results for that area may be incomplete).
 - **Commands and links**: many recommendations show the exact command for this server, labelled **Check** (read-only, safe to run any time) or **Change** (changes the server: run it in the change window, after reading it). The *Copy* button copies it; in print the command is shown as text. The script itself never runs these commands. Where the right action depends on a vendor, there is a *Read more* link to the official page instead. A setting that comes from Group Policy says so, because a local command would be overwritten: change the GPO.
 - **Not run by choice** (grey note): a check that was switched off or needs something that was not given, for example the Setup compatibility scan without installation media. The note says what to do if you want it included. It is not a problem.
 - **Findings table**: status, area, item, finding, **what to do**.
-- **Chapters** (collapsible): one per area group, listed in section 7.
 - **Collector coverage**: every check, its outcome and duration. Read this before trusting an empty area.
 
 > If a check shows `Failed` or `Skipped`, an empty section is **not** evidence of readiness. Review it by hand.
@@ -427,8 +428,10 @@ mindmap
       IIS
       Remote Desktop Services
       Failover clustering
-      Domain role
+      File shares
     Security and access
+      Domain role and access
+      Group Policy and AD groups
       RDP access and policy
       PKI certificates TLS bindings
       Antivirus EDR security tools
@@ -445,13 +448,13 @@ mindmap
 
 | Chapter in the report | Covers |
 |---|---|
-| Upgrade Path, Licensing and Windows Health | Supported path, edition and media image, activation and KMS, DISM, SFC, Setup scan, upgrade history |
-| Workloads and Applications | Exchange, SQL Server, domain role, roles and features, installed applications, removed or deprecated features |
+| Upgrade Path, Licensing and Windows Health | Supported path, edition and media image, source end of support, activation and what the target needs for the current activation channel, pending reboot, patch level, DISM, SFC, Setup scan, upgrade history |
+| Workloads and Applications | Exchange, SQL Server, domain controller, roles and features, file shares, installed applications, removed or deprecated features |
 | Hardware and Virtualization | Physical or virtual, VMware Tools and vSphere versions, non-Microsoft drivers, CPU and memory |
 | Storage | Volumes, free space, system and recovery partitions |
 | Clustering | Failover cluster membership |
 | Network | Adapters and teaming, hosts file, static routes, listening ports |
-| Access and Remote Desktop | RDP and NLA, local policy evidence |
+| Access and Remote Desktop | Domain or workgroup membership, secure channel, UAC, local administrators, Group Policy (applied and filtered GPOs, OS-dependent WMI filters, last applied), the computer's AD groups and OU path, RDP and NLA, local policy evidence |
 | IIS and Remote Desktop Services | IIS, RDS roles |
 | PKI and Certificates | CA role, certificates and TLS bindings |
 | Security and Antivirus | AV and EDR (Defender, TrendAI/Deep Security, CrowdStrike, SentinelOne, ...), Sysmon, other tools |
@@ -498,7 +501,10 @@ Run on the same server, with the same `ReportDirectory`, after the upgrade:
 It reads `<Computer>-IPU-Assessment.json` from the pre-upgrade run and reports:
 
 - whether the server reached the target release (`ACTION` if it did not, with the Setup log locations to read),
-- differences in services, ports, routes, IP and DNS settings, hosts entries, applications, features and tasks.
+- differences in services (automatic services no longer running, services gone), listening ports, static routes,
+  IPv4 addresses, DNS servers, hosts entries, applications, Windows features, scheduled tasks, applied GPOs,
+  file shares and the computer's AD groups,
+- a computer object that moved to another OU, and a changed UAC setting.
 
 If the pre-upgrade JSON is missing, you get a `MANUAL` finding and must compare by hand with the pre-upgrade
 HTML. The checklist and Setup compatibility scan are skipped in Post mode.
@@ -555,8 +561,8 @@ The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`
 | File | Contents |
 |---|---|
 | `IPU-Fleet-Overview.html` | Cards with overall counts, a **Servers (worst first)** table, the **most common BLOCKER/ACTION items** across the fleet with which servers have them, and a list of any files it could not read |
-| `IPU-Fleet-Servers.csv` | One row per server and mode: `ComputerName`, `Mode`, `Overall`, `Blocker`, `Action`, `Warning`, `Manual`, `Target`, `CurrentOS`, `UpgradePath`, `InstallationMedia`, `Platform`, `DomainRole`, `SqlServer`, `CompatScan`, `CDrive`, `Activation`, `TopIssues`, `NotAssessed`, `Partial`, `Completed`, `CollectorVersion`, `SourceFile` |
-| `IPU-Fleet-Findings.csv` | One row per BLOCKER, ACTION, WARNING or MANUAL finding: `ComputerName`, `Mode`, `Status`, `Area`, `Item`, `Value`, `Details`, `Recommendation`. Filter and pivot it in Excel |
+| `IPU-Fleet-Servers.csv` | One row per server and mode: `ComputerName`, `Mode`, `Overall`, `Blocker`, `Action`, `Warning`, `Manual`, `Target`, `CurrentOS`, `UpgradePath`, `InstallationMedia`, `Platform`, `DomainRole`, `SqlServer`, `CompatScan`, `CDrive`, `Activation`, `TopIssues`, `NotAssessed`, `Partial`, `Redacted`, `Completed`, `CollectorVersion`, `SourceFile` |
+| `IPU-Fleet-Findings.csv` | One row per BLOCKER, ACTION, WARNING or MANUAL finding: `ComputerName`, `Mode`, `Status`, `Area`, `Item`, `Value`, `Details`, `Recommendation`, `Command`, `Link`, `SourceFile`. Filter and pivot it in Excel |
 
 ### How it decides
 
@@ -610,6 +616,8 @@ access to the output folder.
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| SA line `FAILED` with `Missing: ...`, nothing collected | A prerequisite is missing: PowerShell 4.0, .NET Framework 4.5 or administrator rights (section 2) | Do what the message says (for example run elevated, or install .NET Framework 4.8) and run again |
+| `MANUAL` row *Prerequisites* naming a module | An optional PowerShell module is missing | Install the feature that provides it, or review the named area by hand |
 | `... is not digitally signed` | Machine enforces signed scripts | Sign the script, or `powershell -ExecutionPolicy Bypass -File` for that process only |
 | Fleet overview: `No ... files found` | Wrong `InputFolder`, or the files were renamed | Files must end in `-IPU-Assessment.json` or `-IPU-PostUpgrade.json` |
 | Fleet overview lists a file under "Files not read" | Corrupt JSON, or not an `IPU-Assessment/1` result | Re-collect the file from the server; check the collector version is 4.0.1 or later |
@@ -631,8 +639,22 @@ Log lines are `Timestamp;Level;Phase;Message`. Each check logs `Started` and `Fi
 Invoke-Pester .\tests -Output Detailed
 ```
 
-Requires Pester 5. The tests load the script in library mode by setting `IPU_ASSESSMENT_LIBRARY_ONLY=1`, so
-functions are defined but nothing is collected and nothing on the machine is touched. They cover the decision
-rules (upgrade path, edition, SQL and VMware support, DISM/SFC/VSS verdicts), the result model, HTML and JSON
-output and the post-upgrade comparison. The collection code inside each check is not yet covered; see
-[the repository review](review/audit-review-Claude.md).
+Requires Pester 5 (CI uses 5.7.1) on Windows. The tests load the script in library mode by setting
+`IPU_ASSESSMENT_LIBRARY_ONLY=1`, so functions are defined but nothing is collected from the machine.
+
+| File | Covers |
+|---|---|
+| `tests/Windows-IPU-Readiness-Assessment.Tests.ps1` | Decision rules (upgrade path, edition, lifecycle, licensing, SQL and VMware support, DISM/SFC/VSS verdicts, Group Policy, UAC), result model, HTML and JSON output, redaction, site data files, prerequisites, post-upgrade comparison, version consistency |
+| `tests/Checks.Tests.ps1` | Every check body, run against a simulated server (stand-ins for CIM, registry, native tools and cmdlets); also that `docs/checks.md` lists every check and that the sample result matches the JSON Schema |
+| `tests/Merge-IPUAssessments.Tests.ps1` | The fleet overview, CSV formula protection, redacted results |
+
+Run the full suite in an **elevated** session, as CI does. Some tests create folders limited to SYSTEM and
+Administrators; an unelevated session cannot use them, and the tests after them fail. Tests tagged
+`Integration` start real processes and read the real registry, local accounts and Group Policy; skip them with:
+
+```powershell
+Invoke-Pester .\tests -Output Detailed -ExcludeTagFilter Integration
+```
+
+CI also runs PSScriptAnalyzer (`build/Invoke-CiLint.ps1`) and an end-to-end smoke test of the real script
+(`build/Invoke-SmokeTest.ps1`); see [CONTRIBUTING.md](../CONTRIBUTING.md#what-ci-runs).
