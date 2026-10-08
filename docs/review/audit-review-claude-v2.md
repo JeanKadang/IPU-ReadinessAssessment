@@ -639,7 +639,7 @@ from finding to issue; it will not be kept in sync.
 |---|---|---|
 | N-5 | Secret scanning, private vulnerability reporting, Dependabot alerts and security updates enabled; code scanning default setup for workflows added | `gh api repos/{owner}/{repo}` → `security_and_analysis`; `private-vulnerability-reporting` → `enabled: true` |
 | N-5 | Ruleset `main`: PR required (no approval required, reviews are guidance), required checks `pester (*)`, `smoke (*, windows-2025)`, `lint (PSScriptAnalyzer)`; no force-push or deletion | `gh api repos/{owner}/{repo}/rules/branches/main` |
-| N-5 | **Still open:** secret scanning push protection | Settings → Code security |
+| N-5 | Secret scanning push protection enabled. Validity checks are not available on this plan (the setting does not persist) | `security_and_analysis.secret_scanning_push_protection` → `enabled` |
 | N-22 | `CODE_OF_CONDUCT.md` added | Commit `3e96b6d` |
 
 ### Findings to issues
