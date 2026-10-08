@@ -5,6 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### CI
+- A failed CI run for a push to `main` now opens or updates an issue "CI failed on main", with the commit. Until now only the weekly run did, so `main` stayed red unnoticed on two merges in a row (#123).
 - The smoke test's redaction leak check failed on Windows Server 2022 although nothing leaked. A built-in Microsoft scheduled task there runs as an account named like an ordinary word, which matched product names such as "Windows Installer". The check now looks only for the accounts the script collects (service logon accounts and non-Microsoft task accounts). When a real leak is found, it reports the source and the report rows that hold it, with the name masked (#114).
 
 ## [4.3.0] - 2026-10-08
