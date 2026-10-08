@@ -27,7 +27,7 @@ Evidence labels: **CONFIRMED** = verified by running something or reading live s
 7. [Roadmap](#7-roadmap)
 8. [Decisions needed from the maintainers](#8-decisions-needed-from-the-maintainers)
 9. [Deliberately not recommended](#9-deliberately-not-recommended)
-10. [Next step](#10-next-step)
+10. [Follow-up](#10-follow-up-2026-10-08)
 
 ---
 
@@ -627,10 +627,55 @@ Repository settings (N-5) are not code changes; do them directly and record them
 
 ---
 
-## 10. Next step
+## 10. Follow-up (2026-10-08)
 
-Nothing in this review has been filed yet. Following the repo's workflow:
+The findings were filed the same day, after the maintainer confirmed the plan (more than 10 issues, so the
+confirmation gate applied). From here on **the issues are the source of truth**. This table is a one-time map
+from finding to issue; it will not be kept in sync.
 
-1. **N-1** as an issue now (P1, `bug`, `security-hardening`), since `main` is red.
-2. The remaining P1 items (N-2 to N-6) plus N-10: about 6 issues, under the 10-issue confirmation gate.
-3. P2 and P3 items after the maintainers have read this review and confirmed the milestones in §7.
+### Repository settings changed directly
+
+| Finding | Change | Evidence |
+|---|---|---|
+| N-5 | Secret scanning, private vulnerability reporting, Dependabot alerts and security updates enabled; code scanning default setup for workflows added | `gh api repos/{owner}/{repo}` → `security_and_analysis`; `private-vulnerability-reporting` → `enabled: true` |
+| N-5 | Ruleset `main`: PR required (no approval required, reviews are guidance), required checks `pester (*)`, `smoke (*, windows-2025)`, `lint (PSScriptAnalyzer)`; no force-push or deletion | `gh api repos/{owner}/{repo}/rules/branches/main` |
+| N-5 | **Still open:** secret scanning push protection | Settings → Code security |
+| N-22 | `CODE_OF_CONDUCT.md` added | Commit `3e96b6d` |
+
+### Findings to issues
+
+| Finding | Issue | Milestone |
+|---|---|---|
+| N-1 Redaction leak on windows-2022 | #114 | 4.3.1 |
+| N-2 Release not gated on CI | #121 | 4.3.1 |
+| N-3 PRs skip windows-2022 smoke | #122 (blocked by #114) | 4.3.1 |
+| N-4 Red push to `main` notifies nobody | #123 | 4.3.1 |
+| N-6 `SECURITY.md` wrong; N-10 for AGENTS.md and CONTRIBUTING.md | #117 (PR #120) | 4.3.1 |
+| N-10 README and user guide stale | #118 (PR #119) | 4.3.1 |
+| This review | #115 (PR #116) | 4.3.1 |
+| N-7 Redaction fixture suite | #124 | 4.4.0 |
+| N-8 ADR 0001 revisit | #125 (`decision-needed`) | 4.4.0 |
+| N-9 Tests fail unelevated | #126 | 4.4.0 |
+| N-11 Coverage floor | #127 | 4.4.0 |
+| N-12 Merge output permissions | #128 | 4.4.0 |
+| N-14 Skills vendored twice | #129 | 4.4.0 |
+| N-15 PowerShell 4.0 runtime check | #130 | 4.4.0 |
+| N-16 Site-specific defaults | #131 (`decision-needed`) | 4.4.0 |
+| N-17 Fact verification dates | #132 | 4.4.0 |
+| N-18, N-19, N-22 Templates, labeler, contact links | #133 | Future |
+| N-20 Build provenance | #134 | Future |
+| N-21 Release zip contents | #135 | Future |
+| N-23 Native argument quoting | #136 | Future |
+| N-24 Large functions | #137 | Future |
+| N-25 Merge counts a server twice | #138 | Future |
+| N-26, N-27 Culture validation, folder creation | #139 | Future |
+| N-28 Local CI command | #140 | Future |
+| Found while filing: CI module install has no retry | #141 | Future |
+
+### Not filed, on purpose
+
+| Finding | Why |
+|---|---|
+| N-13 Issue hygiene (#90, #14) | Owner decisions, not work items: record the git-history decision on #90 and close it; decide on a signing certificate for #14 (see §8) |
+| N-29 Repository description | A settings change, no code |
+| Security-sensitive items | Handled privately under `SECURITY.md` |
