@@ -5,8 +5,12 @@ name: Release
 #   - push a tag vX.Y.Z, or
 #   - Actions > Release > Run workflow on main with the version (X.Y.Z);
 #     the workflow then creates the tag vX.Y.Z on that commit itself.
-# The version must match the script header and CHANGELOG. CI must already be
-# green on the commit (releases are only made from main after a merge).
+# The version must match the script header and CHANGELOG. The CI run for the
+# push of this commit to main must have succeeded: the workflow waits for it
+# while it is running and refuses to publish when it failed, was cancelled or
+# does not exist (#121). v4.3.0 was published from a red commit before this.
+# A dry run (workflow_dispatch with dry_run) does every check and builds the
+# files, but publishes nothing and may start from any ref.
 on:
   push:
     tags: ['v*.*.*']
@@ -16,6 +20,10 @@ on:
         description: 'Version to release, for example 4.1.0 (must match the script)'
         required: true
         type: string
+      dry_run:
+        description: 'Check everything and build the files, but publish nothing (any ref)'
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -25,14 +33,16 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read   # to read the CI run of this commit
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check the tag against the script version
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = 'workflow_dispatch' ]; then
-            if [ "$GITHUB_REF_NAME" != 'main' ]; then echo "::error::Run the release from main."; exit 1; fi
+            if [ "$GITHUB_REF_NAME" != 'main' ] && [ "$DRY_RUN" != 'true' ]; then echo "::error::Run the release from main."; exit 1; fi
             version="$INPUT_VERSION"
           else
             version="${GITHUB_REF_NAME#v}"
@@ -48,6 +58,42 @@ jobs:
           grep -q "^## \[$version\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no section for $version."; exit 1; }
           echo "VERSION=$version" >> "$GITHUB_ENV"
           echo "TAG=v$version" >> "$GITHUB_ENV"
+      - name: Require a green CI run on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # The CI run for the push of this commit to main. Pull request runs
+          # are for other commits (the PR head), so only push runs count.
+          # Waits while CI runs (up to 45 minutes) and for a run that has not
+          # appeared yet (up to 5 minutes); refuses anything but success.
+          started=$SECONDS
+          while :; do
+            run=$(gh run list --workflow ci.yml --commit "$GITHUB_SHA" --event push --limit 1 --json databaseId,status,conclusion,url --jq '.[0] // empty')
+            if [ -z "$run" ]; then
+              if [ $((SECONDS - started)) -lt 300 ]; then echo "No CI run for $GITHUB_SHA yet, waiting..."; sleep 20; continue; fi
+              echo "::error::No CI run for the push of commit $GITHUB_SHA to main. Release only a commit that ran CI on main."
+              exit 1
+            fi
+            status=$(echo "$run" | jq -r .status)
+            conclusion=$(echo "$run" | jq -r '.conclusion // ""')
+            url=$(echo "$run" | jq -r .url)
+            if [ "$status" = 'completed' ]; then
+              if [ "$conclusion" = 'success' ]; then
+                echo "CI run is green: $url"
+                echo "CI for $GITHUB_SHA: green ($url)" >> "$GITHUB_STEP_SUMMARY"
+                break
+              fi
+              echo "::error::CI for commit $GITHUB_SHA ended with '$conclusion', not 'success': $url. Fix it on main first."
+              exit 1
+            fi
+            if [ $((SECONDS - started)) -ge 2700 ]; then
+              echo "::error::CI for commit $GITHUB_SHA is still '$status' after 45 minutes: $url"
+              exit 1
+            fi
+            echo "CI is $status, waiting ($url)..."
+            sleep 30
+          done
       - name: Build the zip and hashes
         run: |
           name="IPU-ReadinessAssessment-$VERSION"
@@ -75,6 +121,7 @@ jobs:
             echo '```'
           } >> dist/notes.md
       - name: Publish the release
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -82,3 +129,6 @@ jobs:
           gh release create "$TAG" "$where" --title "$TAG" --notes-file dist/notes.md \
             "dist/IPU-ReadinessAssessment-$VERSION.zip" dist/SHA256SUMS.txt \
             dist/Windows-IPU-Readiness-Assessment.ps1 dist/Merge-IPUAssessments.ps1
+      - name: Dry run summary
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: echo "Dry run for $TAG on $GITHUB_SHA: every check passed, nothing was published." | tee -a "$GITHUB_STEP_SUMMARY"
