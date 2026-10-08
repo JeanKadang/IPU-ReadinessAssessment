@@ -463,6 +463,21 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             (Get-Row 'UPGRADE_PATH' 'RecommendedInstallationImage')[0].Value | Should -Be 'Windows Server 2025 Standard (Desktop Experience) - en-US media'
             (Get-Row 'UPGRADE_PATH' 'BootFromVHD').Count | Should -Be 0
             $script:Data.SourceRelease | Should -Be '2016'
+            $life = (Get-Row 'UPGRADE_PATH' 'SourceEndOfSupport')[0]
+            $life.Status | Should -Be 'INFO'
+            $life.Value | Should -Match 'supported until 2027-01-12'
+        }
+        It 'a 2012 R2 source is out of support: WARNING observation, not a finding (#102)' {
+            $script:Fake.Cim['Win32_OperatingSystem'].BuildNumber = '9600'
+            $script:Fake.Cim['Win32_OperatingSystem'].Caption = 'Microsoft Windows Server 2012 R2 Standard'
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'upgradepath'
+            $life = (Get-Row 'UPGRADE_PATH' 'SourceEndOfSupport')[0]
+            $life.Status | Should -Be 'WARNING'
+            $life.Kind | Should -Be 'Observation'
+            $life.Value | Should -Match 'out of support since 2023-10-10'
+            $life.Recommendation | Should -Match 'Extended Security Updates'
+            $script:Data.SourceSupport.Ended | Should -BeTrue
         }
         It 'a different media language is a BLOCKER' {
             $script:Fake.Registry['HKLM:\SYSTEM\CurrentControlSet\Control\Nls\Language|InstallLanguage'] = '0406'
@@ -555,7 +570,18 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
         It 'old updates are a WARNING' {
             $script:Fake.HotFixes = @([pscustomobject]@{ HotFixID = 'KB4000001'; InstalledOn = (Get-Date).AddDays(-200) })
             $null = Invoke-TestCheck 'patchlevel'
-            (Get-Row 'WINDOWS_HEALTH' 'LatestUpdate')[0].Status | Should -Be 'WARNING'
+            $r = (Get-Row 'WINDOWS_HEALTH' 'LatestUpdate')[0]
+            $r.Status | Should -Be 'WARNING'
+            ($r.Recommendation -match 'out of support') | Should -BeFalse
+        }
+        It 'old updates on an out-of-support source say why (#102)' {
+            $script:Fake.HotFixes = @([pscustomobject]@{ HotFixID = 'KB4000001'; InstalledOn = (Get-Date).AddDays(-900) })
+            $script:Data.SourceSupport = Get-SupportLifecycleDecision '2012R2' (Get-Date)
+            $null = Invoke-TestCheck 'patchlevel'
+            $r = (Get-Row 'WINDOWS_HEALTH' 'LatestUpdate')[0]
+            $r.Status | Should -Be 'WARNING'
+            $r.Recommendation | Should -Match 'out of support since 2023-10-10'
+            ($r.Details -join ' ') | Should -Match 'SourceOutOfSupportSince=2023-10-10'
         }
         It 'no dated history is MANUAL' {
             $script:Fake.HotFixes = @()
@@ -1242,6 +1268,24 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             (Invoke-TestCheck 'checklist').Outcome | Should -Be 'Completed'
             @($script:Results | Where-Object { $_.Kind -eq 'Checklist' }).Count | Should -Be 6
             (Get-Row 'CHECKLIST' 'Backup and fallback')[0].Recommendation | Should -Match 'VMware'
+        }
+        It 'target licensing follows the activation channel found by the licensing check (#102)' {
+            $null = Invoke-TestCheck 'licensing'
+            $script:Data.ActivationKind | Should -Be 'KMS'
+            $null = Invoke-TestCheck 'checklist'
+            $r = (Get-Row 'CHECKLIST' 'Target licensing')[0]
+            $r.Value | Should -Match 'KMS client \(GVLK\)'
+            $r.Recommendation | Should -Match 'CSVLK'
+        }
+        It 'a MAK server is told it needs a MAK for the target, not about KMS (#102)' {
+            $script:Fake.Licensing[0].ProductKeyChannel = 'Volume:MAK'
+            $script:Fake.Licensing[0].Description = 'Windows(R) Operating System, VOLUME_MAK channel'
+            $null = Invoke-TestCheck 'licensing'
+            $null = Invoke-TestCheck 'checklist'
+            $r = (Get-Row 'CHECKLIST' 'Target licensing')[0]
+            $r.Value | Should -Be 'MAK (Multiple Activation Key)'
+            $r.Recommendation | Should -Match 'Windows Server 2025 MAK'
+            ($r.Value -match 'KMS') | Should -BeFalse
         }
     }
 

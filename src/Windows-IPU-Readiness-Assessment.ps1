@@ -1102,6 +1102,62 @@ function Get-WindowsServerRelease {
     return ''
 }
 
+# End of extended support per source release (Microsoft Lifecycle, fixed
+# policy). Support runs through the listed day.
+$script:ReleaseEndOfSupport = @{
+    '2012'   = '2023-10-10'
+    '2012R2' = '2023-10-10'
+    '2016'   = '2027-01-12'
+    '2019'   = '2029-01-09'
+    '2022'   = '2031-10-14'
+    '2025'   = '2034-11-14'
+}
+
+function Get-SupportLifecycleDecision {
+    # Pure: release + today -> INFO while supported, WARNING once extended
+    # support has ended (the day after the end date). An unknown release is
+    # INFO here; the upgrade path row already reports it as MANUAL.
+    param([string]$Release, [datetime]$Today)
+    $name = Get-ReleaseDisplayName $Release
+    if (-not $Release -or -not $script:ReleaseEndOfSupport.ContainsKey($Release)) {
+        return [pscustomobject]@{ Status='INFO'; Ended=$false; EndDate=''; Value='End of support not known for this release'; Text='Check the Microsoft Lifecycle page for this release.' }
+    }
+    $end = [datetime]::ParseExact($script:ReleaseEndOfSupport[$Release], 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+    $endText = $end.ToString('yyyy-MM-dd')
+    if ($Today.Date -gt $end) {
+        return [pscustomobject]@{ Status='WARNING'; Ended=$true; EndDate=$endText; Value=($name + ': out of support since ' + $endText)
+            Text='Microsoft no longer ships security updates for this release unless Extended Security Updates (ESU, for example through Azure Arc) are in place. This is why the newest update can be old, and it adds urgency to the upgrade.' }
+    }
+    $days = [int][math]::Floor(($end - $Today.Date).TotalDays)
+    return [pscustomobject]@{ Status='INFO'; Ended=$false; EndDate=$endText; Value=($name + ': supported until ' + $endText + ' (' + $days + ' days)'); Text='' }
+}
+
+function Get-ActivationChannelKind {
+    # Pure: SoftwareLicensingProduct channel/description -> KMS, MAK, AVMA, OEM, Retail or Unknown.
+    param([string]$Channel, [string]$Description)
+    $all = $Channel + ' ' + $Description
+    if ($all -match 'VIRTUAL_MACHINE_ACTIVATION|AVMA') { return 'AVMA' }
+    if ($all -match 'GVLK|KMSCLIENT|KMS client') { return 'KMS' }
+    if ($all -match 'MAK') { return 'MAK' }
+    if ($all -match 'OEM') { return 'OEM' }
+    if ($all -match 'Retail') { return 'Retail' }
+    return 'Unknown'
+}
+
+function Get-TargetLicensingDecision {
+    # Pure: activation channel kind -> checklist value and what the target release needs.
+    param([string]$Kind, [string]$KmsEndpoint, [string]$Target)
+    $t = Get-ReleaseDisplayName $Target
+    switch ($Kind) {
+        'KMS'    { return [pscustomobject]@{ Value=('KMS client (GVLK), KMS: ' + $KmsEndpoint); Text=('Confirm the KMS host or Active Directory-based activation holds a host key (CSVLK) that activates ' + $t + '. Setup installs the ' + $t + ' GVLK; activation follows once the host can serve it.') } }
+        'MAK'    { return [pscustomobject]@{ Value='MAK (Multiple Activation Key)'; Text=('The current MAK does not activate ' + $t + '. Have a ' + $t + ' MAK with free activations ready (or switch to KMS/ADBA), and activate right after the upgrade.') } }
+        'AVMA'   { return [pscustomobject]@{ Value='AVMA (Automatic Virtual Machine Activation)'; Text=('The Hyper-V host must run Datacenter at a release that can activate ' + $t + ' guests (host release at least the guest release). Use the ' + $t + ' AVMA key after the upgrade.') } }
+        'OEM'    { return [pscustomobject]@{ Value='OEM licence'; Text=('An OEM licence is tied to the original hardware and release. A ' + $t + ' licence and key (volume or retail) are needed.') } }
+        'Retail' { return [pscustomobject]@{ Value='Retail licence'; Text=('A retail ' + $t + ' licence and key for the same edition are needed.') } }
+    }
+    return [pscustomobject]@{ Value=('Channel not determined, KMS: ' + $KmsEndpoint); Text=('Confirm licence entitlement for ' + $t + ' and that the KMS host/ADBA, MAK or AVMA host can activate it.') }
+}
+
 function Get-UpgradePathDecision {
     param([string]$Source, [string]$Target, [bool]$Clustered = $false)
     $make = { param($s,$t) [pscustomobject]@{ Status=$s; Text=$t } }
@@ -1539,6 +1595,7 @@ function ConvertFrom-FileTimeValue {
 # Official pages linked from recommendations (#79). Only stable pages;
 # the report text must make sense without them (servers are often offline).
 $script:DocLinks = @{
+    Lifecycle      = @{ Url = 'https://learn.microsoft.com/en-us/lifecycle/products/?terms=windows%20server'; Title = 'Microsoft Lifecycle: Windows Server' }
     InPlaceUpgrade = @{ Url = 'https://learn.microsoft.com/en-us/windows-server/get-started/perform-in-place-upgrade'; Title = 'Microsoft: Perform an in-place upgrade of Windows Server' }
     SetupOptions   = @{ Url = 'https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-command-line-options'; Title = 'Microsoft: Windows Setup command-line options (/Compat ScanOnly)' }
     AppCmd         = @{ Url = 'https://learn.microsoft.com/en-us/iis/get-started/getting-started-with-iis/getting-started-with-appcmdexe'; Title = 'Microsoft: Getting started with AppCmd.exe (backups)' }
@@ -2091,6 +2148,10 @@ Register-Check -Id 'upgradepath' -Name 'Upgrade path, edition and media' -Script
     $source = Get-WindowsServerRelease $os.BuildNumber $os.Caption
     $script:Data.SourceRelease = $source
     Add-Result 'UPGRADE_PATH' 'CurrentOS' 'INFO' $os.Caption @(('Build=' + $buildText),('Release=' + (Get-ReleaseDisplayName $source)),('Architecture=' + $os.OSArchitecture)) -Source 'Win32_OperatingSystem'
+    $life = Get-SupportLifecycleDecision $source (Get-Date)
+    $script:Data.SourceSupport = $life
+    $lifeKind = ''; if ($life.Status -eq 'WARNING') { $lifeKind = 'Observation' }
+    Add-Result 'UPGRADE_PATH' 'SourceEndOfSupport' $life.Status $life.Value ('EndOfExtendedSupport=' + $life.EndDate) -Recommendation $life.Text -Kind $lifeKind -Source 'Microsoft Lifecycle (fixed dates in the script)' -Link $script:DocLinks.Lifecycle.Url -LinkTitle $script:DocLinks.Lifecycle.Title
 
     # The cluster check runs later; read membership here directly so the path
     # decision already knows about it.
@@ -2178,6 +2239,7 @@ Register-Check -Id 'licensing' -Name 'Windows activation' -Script {
         if ($d -match 'VOLUME_KMSCLIENT') { $channel = 'Volume:GVLK (KMS client)' } elseif ($d -match 'VOLUME_MAK') { $channel = 'Volume:MAK' } elseif ($d -match 'OEM') { $channel = 'OEM' } elseif ($d -match 'RETAIL') { $channel = 'Retail' } else { $channel = 'Unknown' }
     }
     $summary = 'Status=' + $state + ', Channel=' + $channel
+    $script:Data.ActivationKind = Get-ActivationChannelKind $channel ([string]$primary.Description)
     $script:Data.ActivationSummary = $summary
     $details = @(('PartialProductKey=' + $primary.PartialProductKey),('KMS=' + $kms))
     if ([int]$primary.LicenseStatus -eq 1) {
@@ -2244,8 +2306,14 @@ Register-Check -Id 'patchlevel' -Name 'Patch level' -Script {
     }
     $age = [math]::Floor(((Get-Date) - $latest.Date).TotalDays)
     $value = 'LatestInstalled=' + $latest.Date.ToString('yyyy-MM-dd') + ' (' + $latest.Id + ')'
+    $patchDetails = @('AgeDays=' + $age)
+    $patchAdvice = 'Install the latest cumulative update before IPU; Setup and Dynamic Update are most reliable on a current source OS.'
+    if ($script:Data.SourceSupport -and $script:Data.SourceSupport.Ended) {
+        $patchDetails += ('SourceOutOfSupportSince=' + $script:Data.SourceSupport.EndDate)
+        $patchAdvice += ' The source OS is out of support since ' + $script:Data.SourceSupport.EndDate + ', so without ESU no newer updates exist; install the last available ones.'
+    }
     if ($age -gt $MaxPatchAgeDays) {
-        Add-Result 'WINDOWS_HEALTH' 'LatestUpdate' 'WARNING' $value ('AgeDays=' + $age) -Recommendation 'Install the latest cumulative update before IPU; Setup and Dynamic Update are most reliable on a current source OS.' -Source 'Get-HotFix'
+        Add-Result 'WINDOWS_HEALTH' 'LatestUpdate' 'WARNING' $value $patchDetails -Recommendation $patchAdvice -Source 'Get-HotFix'
     } else {
         Add-Result 'WINDOWS_HEALTH' 'LatestUpdate' 'OK' $value ('AgeDays=' + $age) -Source 'Get-HotFix'
     }
@@ -3198,7 +3266,8 @@ Register-Check -Id 'checklist' -Name 'Standard change checklist' -Script {
     if ($isVM) { $fallback = 'Confirm a recent successful backup externally, snapshot eligibility (' + $script:Data.Platform.Hypervisor + ') and the approved snapshot procedure.' }
     Add-Result 'CHECKLIST' 'Backup and fallback' 'MANUAL' 'Cannot be proven from inside the guest' -Recommendation $fallback -Kind 'Checklist'
     Add-Result 'CHECKLIST' 'Credentials and console access' 'MANUAL' 'Not provable by an unattended inventory' -Recommendation 'Validate domain logon, PAM checkout and local fallback credentials, plus console (vCenter/iLO/iDRAC) access in case network logon fails.' -Kind 'Checklist'
-    Add-Result 'CHECKLIST' 'Target licensing' 'MANUAL' ('KMS: ' + $script:Data.KmsEndpoint) -Recommendation ('Confirm licence entitlement for ' + (Get-ReleaseDisplayName $TargetServerVersion) + ' and that the KMS host/ADBA or MAK can activate it.') -Kind 'Checklist'
+    $lic = Get-TargetLicensingDecision ([string]$script:Data.ActivationKind) ([string]$script:Data.KmsEndpoint) $TargetServerVersion
+    Add-Result 'CHECKLIST' 'Target licensing' 'MANUAL' $lic.Value -Recommendation $lic.Text -Kind 'Checklist'
     $media = $script:Data.RecommendedMedia; if (-not $media) { $media = 'See Upgrade path section' }
     Add-Result 'CHECKLIST' 'Installation media' 'MANUAL' $media -Recommendation 'Use media with the exact edition, installation type and language listed. Optional pre-flight: setup.exe /auto upgrade /compat scanonly with the same media.' -Kind 'Checklist'
     Add-Result 'CHECKLIST' 'Application owner sign-off' 'MANUAL' 'Required for every listed workload' -Recommendation 'Get sign-off from each workload owner, including a post-upgrade test plan.' -Kind 'Checklist'
