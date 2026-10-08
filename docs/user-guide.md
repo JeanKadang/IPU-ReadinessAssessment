@@ -290,19 +290,21 @@ within one run (the same address is always `IP-3`):
 
 | Replaced | Placeholder | Example |
 |---|---|---|
-| Computer name, FQDNs in the server's domain, KMS and other hosts in that domain | `HOST-n` | `srv01.corp.example.test` |
+| Computer name and host names in any domain (IIS bindings, backup and KMS servers, ...), except public documentation and vendor sites such as `learn.microsoft.com` | `HOST-n` | `srv01.corp.example.test`, `shop.customer.example` |
 | Domain name and NetBIOS domain | `DOMAIN-n` | `corp.example.test`, `CORP` |
 | IPv4 and IPv6 addresses (not masks, `127.0.0.1`, `0.0.0.0`, `::1`) | `IP-n` | `10.20.30.40`, `fe80::1c2d:...` |
 | MAC addresses | `MAC-n` | `00:50:56:AB:CD:EF` |
-| Accounts: `DOMAIN\user`, `user@domain`, local group members | `ACCOUNT-n` | `CORP\svc_batch` |
+| Accounts: `DOMAIN\user`, `user@domain`, local group members, and the bare names of service and scheduled-task accounts wherever they appear | `ACCOUNT-n` | `CORP\svc_batch`, `adm-jdoe` |
+| GPO names (not *Default Domain Policy* and *Local Group Policy*) | `GPO-n` | `Web Server Lockdown` |
+| WMI filter names, OU names in Group Policy link paths and distinguished names | `NAME-n` | `.../Servers/Web` |
 | Domain SIDs (well-known SIDs such as `S-1-5-32-544` are kept) | `SID-n` | `S-1-5-21-...-500` |
 | Certificate thumbprints and subject/issuer names | `CERT-n`, `NAME-n` | `CN=srv01.corp...` |
 
-Kept: well-known accounts (`BUILTIN\...`, `NT AUTHORITY\...`), versions, file and registry paths, product
-names, ports.
+Kept: well-known accounts (`BUILTIN\...`, `NT AUTHORITY\...`, `LocalSystem`), versions, file and registry paths, product
+names, ports, WMI filter query text, and certificate locality fields (`L=`, `S=`, `C=`, city level only).
 
-> **Redaction is best effort.** It recognises the patterns above and the names it knows (this server and its
-> domain). A host name from another domain, a name inside free text, or an unusual format can stay visible.
+> **Redaction is best effort.** It recognises the patterns above and the names the script itself collected
+> (accounts, GPO names). Company words inside product, task or file names, or an unusual format, can stay visible.
 > **Read a redacted report before you share it.**
 
 What changes with redaction:
