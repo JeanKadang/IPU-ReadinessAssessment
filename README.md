@@ -134,7 +134,7 @@ The assessment is **non-remediating**. It never installs, removes or reconfigure
 ```mermaid
 flowchart TD
     R[IPU-ReadinessAssessment] --> S[src/<br/>assessment + fleet merge scripts]
-    R --> T[tests/<br/>Pester 5, 105 tests]
+    R --> T[tests/<br/>Pester 5]
     R --> D[docs/<br/>user guide, checks, schema, samples]
     R --> G[.github/<br/>CI, templates, Dependabot]
     R --> C[.claude/ and AGENTS.md<br/>shared AI workflow]
@@ -143,13 +143,13 @@ flowchart TD
 | Path | Contents |
 |---|---|
 | `src/` | `Windows-IPU-Readiness-Assessment.ps1` (runs on each server), `Merge-IPUAssessments.ps1` (fleet overview, runs on a workstation) |
-| `tests/` | Pester tests for the decision rules and reporting |
+| `tests/` | Pester tests: decision rules, every check against a simulated server, reports, redaction, and the fleet merge |
 | `docs/user-guide.md` | How to run and interpret the assessment |
 | `docs/checks.md` | What every check looks at and can report |
 | `docs/result-schema.md`, `docs/result-schema.json` | JSON result format (`IPU-Assessment/1`) and its JSON Schema |
 | `docs/samples/` | Synthetic sample report and result, built by `build/New-SampleReport.ps1` |
 | `docs/adr/` | Architecture decision records |
-| `docs/review/` | Repository quality review |
+| `docs/review/` | Repository quality reviews (newest: `audit-review-claude-v2.md`) |
 | `.github/` | CI, release and labeler workflows, issue forms, PR template, Dependabot, release notes config |
 | `.claude/`, `AGENTS.md`, `CLAUDE.md` | Shared GitHub workflow skills, plugin settings and assistant guidance (see [CONTRIBUTING](CONTRIBUTING.md#working-with-claude-code)) |
 
@@ -160,9 +160,11 @@ flowchart TD
 Invoke-Pester .\tests -Output Detailed
 ```
 
-Tests load the script in library mode (`IPU_ASSESSMENT_LIBRARY_ONLY=1`): functions only, nothing is collected,
-so they run on any machine with PowerShell and Pester. If your machine enforces a signed-script policy, start
-the session with `pwsh -ExecutionPolicy Bypass` (process scope only).
+Tests load the script in library mode (`IPU_ASSESSMENT_LIBRARY_ONLY=1`): functions only, nothing is collected
+from the machine. They need Windows, and some tests create folders limited to SYSTEM and Administrators, so run
+the full suite in an **elevated** session (CI does). Add `-ExcludeTagFilter Integration` to skip the tests that
+start real processes. If your machine enforces a signed-script policy, start the session with
+`pwsh -ExecutionPolicy Bypass` (process scope only). Details: [user guide, Running the tests](docs/user-guide.md#13-running-the-tests).
 
 New contributor? Start with the [Git setup guide](docs/git-setup.md). Contributing workflow and conventions: [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md](SECURITY.md).
 Version history: [CHANGELOG.md](CHANGELOG.md).
