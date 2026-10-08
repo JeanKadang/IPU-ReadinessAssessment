@@ -639,6 +639,15 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
     }
 
     Context 'domain' {
+        It 'calls a non-domain server a workgroup server, with the workgroup name (#98)' {
+            $script:Fake.Cim['Win32_ComputerSystem'].PartOfDomain = $false
+            $script:Fake.Cim['Win32_ComputerSystem'].DomainRole = 2
+            $script:Fake.Cim['Win32_ComputerSystem'].Domain = 'WORKGROUP'
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'domain'
+            $script:Data.DomainRoleText | Should -Be 'Workgroup server (standalone), workgroup WORKGROUP'
+            (Get-Row 'ACCESS' 'DomainMembership')[0].Details | Should -Be 'Role=Workgroup server (standalone), workgroup WORKGROUP'
+        }
         It 'a member server with a working secure channel is OK' {
             (Invoke-TestCheck 'domain').Outcome | Should -Be 'Completed'
             (Get-Row 'ACCESS' 'DomainSecureChannel')[0].Status | Should -Be 'OK'

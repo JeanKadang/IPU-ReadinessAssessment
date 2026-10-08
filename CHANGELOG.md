@@ -5,6 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- A server that is not in a domain is called "Workgroup server (standalone)" with its workgroup name, instead of "Standalone server" (#98).
 - "Status meaning" is shown right after the Summary, before the tables that use the statuses (#96).
 
 ### Added

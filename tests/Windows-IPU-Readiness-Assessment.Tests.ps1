@@ -2179,3 +2179,18 @@ Describe 'Status meaning right after the Summary (#96)' {
         if ($Mode -eq 'Pre') { $html.IndexOf('<section id="checklist">') | Should -BeGreaterThan $positions[3] }
     }
 }
+
+Describe 'Domain role wording (#98)' {
+    It 'DomainRole <Role> is "<Expected>"' -TestCases @(
+        @{ Role = 0; Domain = 'WORKGROUP';         Expected = 'Workgroup computer (standalone), workgroup WORKGROUP' }
+        @{ Role = 1; Domain = 'corp.example.test'; Expected = 'Member workstation' }
+        @{ Role = 2; Domain = 'WORKGROUP';         Expected = 'Workgroup server (standalone), workgroup WORKGROUP' }
+        @{ Role = 2; Domain = '';                  Expected = 'Workgroup server (standalone)' }
+        @{ Role = 3; Domain = 'corp.example.test'; Expected = 'Member server' }
+        @{ Role = 4; Domain = 'corp.example.test'; Expected = 'Backup domain controller' }
+        @{ Role = 5; Domain = 'corp.example.test'; Expected = 'Primary domain controller' }
+        @{ Role = 9; Domain = '';                  Expected = 'Unknown role (9)' }
+    ) {
+        Get-DomainRoleText $Role $Domain | Should -Be $Expected
+    }
+}

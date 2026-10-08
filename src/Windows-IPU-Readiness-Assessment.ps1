@@ -1562,6 +1562,23 @@ function Get-RecommendationCommand {
     throw ('Unknown recommendation command: ' + $Id)
 }
 
+function Get-DomainRoleText {
+    # Pure (#98): the domain role in the words operators use. Win32 calls a
+    # non-domain server "Standalone server"; most people say workgroup server.
+    param([int]$DomainRole, [string]$DomainOrWorkgroup)
+    switch ($DomainRole) {
+        0 { $t = 'Workgroup computer (standalone)' }
+        1 { $t = 'Member workstation' }
+        2 { $t = 'Workgroup server (standalone)' }
+        3 { $t = 'Member server' }
+        4 { $t = 'Backup domain controller' }
+        5 { $t = 'Primary domain controller' }
+        default { $t = 'Unknown role (' + $DomainRole + ')' }
+    }
+    if ($DomainRole -in @(0, 2) -and $DomainOrWorkgroup) { $t += ', workgroup ' + $DomainOrWorkgroup }
+    return $t
+}
+
 function Get-UacDecision {
     # Pure: User Account Control in plain words from the registry values
     # under HKLM\...\Policies\System (#75). Missing values mean the
@@ -2271,8 +2288,8 @@ Register-Check -Id 'history' -Name 'Previous upgrade history' -Script {
 Register-Check -Id 'domain' -Name 'Domain role and access' -Script {
     $cs = $script:Data.CS
     $role = [int]$cs.DomainRole
-    $roleNames = @{ 0='Standalone workstation'; 1='Member workstation'; 2='Standalone server'; 3='Member server'; 4='Backup domain controller'; 5='Primary domain controller' }
-    $script:Data.DomainRoleText = $roleNames[$role]
+    $roleNames = @{ 0='Workgroup computer (standalone)'; 1='Member workstation'; 2='Workgroup server (standalone)'; 3='Member server'; 4='Backup domain controller'; 5='Primary domain controller' }
+    $script:Data.DomainRoleText = Get-DomainRoleText $role ([string]$cs.Domain)
     if ($role -ge 4) {
         $status = 'WARNING'; $rec = 'Domain controller: follow the AD DS upgrade guidance (adprep, FSMO, replication health) and engage the AD team.'
         if ($BlockDomainControllerIPU) { $status = 'BLOCKER'; $rec = 'Company standard: do not upgrade domain controllers in place. Build a new DC side-by-side, move roles, demote this DC and swap the IP address.' }
@@ -2289,7 +2306,7 @@ Register-Check -Id 'domain' -Name 'Domain role and access' -Script {
             else { Add-Result 'ACCESS' 'DomainSecureChannel' 'MANUAL' 'Secure channel could not be tested' -Recommendation 'Verify domain logon manually before the change.' -Source 'Test-ComputerSecureChannel' }
         }
     } else {
-        Add-Result 'ACCESS' 'DomainMembership' 'WARNING' ('Workgroup=' + $cs.Domain) -Recommendation 'Workgroup server: confirm it is onboarded in CyberArk/PAM and that local fallback credentials work before IPU.' -Source 'Win32_ComputerSystem'
+        Add-Result 'ACCESS' 'DomainMembership' 'WARNING' ('Workgroup=' + $cs.Domain) ('Role=' + $script:Data.DomainRoleText) -Recommendation 'Workgroup server: confirm it is onboarded in CyberArk/PAM and that local fallback credentials work before IPU.' -Source 'Win32_ComputerSystem'
     }
 
     # User Account Control (#75). Information, not a finding: UAC does not
