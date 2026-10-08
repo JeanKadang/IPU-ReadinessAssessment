@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- "Status meaning" is shown right after the Summary, before the tables that use the statuses (#96).
+
 ### Added
 - The computer object's OU path in AD, in the summary ("AD location (OU)"), the Group Policy section and the JSON; the post-upgrade comparison reports a moved computer object (#99).
 

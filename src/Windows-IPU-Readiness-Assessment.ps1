@@ -3733,6 +3733,14 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
     }
     [void]$sb.AppendLine('</div></section>')
 
+    # Status meaning right after the Summary, before the tables that use it (#96).
+    [void]$sb.AppendLine('<section class="legend"><h2>Status meaning</h2>')
+    [void]$sb.AppendLine('<p>' + (New-StatusBadge 'BLOCKER') + ' The selected IPU path or standard procedure does not apply.</p>')
+    [void]$sb.AppendLine('<p>' + (New-StatusBadge 'ACTION') + ' Must be fixed or investigated before IPU.</p>')
+    [void]$sb.AppendLine('<p>' + (New-StatusBadge 'WARNING') + ' Planning risk.</p>')
+    [void]$sb.AppendLine('<p>' + (New-StatusBadge 'MANUAL') + ' Needs human or external verification, or the check could not complete.</p>')
+    [void]$sb.AppendLine('<p>' + (New-StatusBadge 'OK') + ' Check passed. ' + (New-StatusBadge 'INFO') + ' Documentation only. Rows marked <em>Observation</em> in the sections below have a status for visibility but do not affect the overall result.</p></section>')
+
     if ($isPost) { [void]$sb.AppendLine('<section id="decision"><h2>Must be resolved</h2><p class="lead">Problems found after the upgrade, including what changed compared with the pre-upgrade snapshot.</p>') }
     else { [void]$sb.AppendLine('<section id="decision"><h2>IPU decision - must be resolved</h2><p class="lead">BLOCKER: this server cannot follow the standard IPU path as configured. ACTION: must be fixed or investigated before the change.</p>') }
     if ($decision.Count -eq 0) { [void]$sb.AppendLine('<p>No BLOCKER or ACTION findings.</p>') } else { [void]$sb.AppendLine((New-FindingTable $decision -WithCheckbox -Caption 'Findings that must be resolved')) }
@@ -3749,12 +3757,6 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
         [void]$sb.AppendLine('</section>')
     }
 
-    [void]$sb.AppendLine('<section class="legend"><h2>Status meaning</h2>')
-    [void]$sb.AppendLine('<p>' + (New-StatusBadge 'BLOCKER') + ' The selected IPU path or standard procedure does not apply.</p>')
-    [void]$sb.AppendLine('<p>' + (New-StatusBadge 'ACTION') + ' Must be fixed or investigated before IPU.</p>')
-    [void]$sb.AppendLine('<p>' + (New-StatusBadge 'WARNING') + ' Planning risk.</p>')
-    [void]$sb.AppendLine('<p>' + (New-StatusBadge 'MANUAL') + ' Needs human or external verification, or the check could not complete.</p>')
-    [void]$sb.AppendLine('<p>' + (New-StatusBadge 'OK') + ' Check passed. ' + (New-StatusBadge 'INFO') + ' Documentation only. Rows marked <em>Observation</em> in the sections below have a status for visibility but do not affect the overall result.</p></section>')
 
     foreach ($chapter in $script:ChapterOrder) {
         $areas = @($script:AreaMap.Keys | Where-Object { $script:AreaMap[$_].Chapter -eq $chapter })

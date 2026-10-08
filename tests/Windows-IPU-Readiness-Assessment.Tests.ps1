@@ -2164,3 +2164,18 @@ Describe 'OU path of the computer object (#99)' {
         $out | Should -Match '^(DOMAIN-\d+)/NAME-\d+/NAME-\d+ \| DistinguishedName=CN=NAME-\d+,OU=NAME-\d+,OU=NAME-\d+,DC=\1$'
     }
 }
+
+Describe 'Status meaning right after the Summary (#96)' {
+    It 'orders the report: Summary, Status meaning, decision, planning, checklist, chapters (<Mode>)' -TestCases @(@{ Mode = 'Pre' }, @{ Mode = 'Post' }) {
+        $script:Results.Clear(); $script:CheckRuns.Clear()
+        Add-Result 'STORAGE' 'CFreeSpace' 'ACTION' 'low'
+        Add-Result 'STORAGE' 'PartitionAfterC' 'WARNING' 'Yes'
+        Add-Result 'CHECKLIST' 'Backup and fallback' 'MANUAL' 'x' -Kind 'Checklist'
+        $AssessmentMode = $Mode
+        $html = New-IPUReportHtml -Results $script:Results.ToArray() -CheckRuns $script:CheckRuns.ToArray() -OverallStatus 'ACTION' -CompletedTime (Get-Date)
+        $positions = @('<h2>Summary</h2>', '<h2>Status meaning</h2>', '<section id="decision">', '<section id="planning">', '<details') | ForEach-Object { $html.IndexOf($_) }
+        foreach ($p in $positions) { $p | Should -BeGreaterThan -1 }
+        for ($i = 1; $i -lt $positions.Count; $i++) { $positions[$i] | Should -BeGreaterThan $positions[$i - 1] }
+        if ($Mode -eq 'Pre') { $html.IndexOf('<section id="checklist">') | Should -BeGreaterThan $positions[3] }
+    }
+}

@@ -23,6 +23,7 @@
     "Platform": "Virtual (VMware) | Manufacturer=VMware, Inc. | Model=VMware7,1",
     "DomainRole": "Member server",
     "Uac": null,
+    "AdLocation": null,
     "SqlServer": "MSSQLSERVER=SQL Server 2017",
     "Activation": "Status=Licensed, Channel=Volume:GVLK",
     "CDrive": "Size 100,00 GB, free 22,00 GB",
