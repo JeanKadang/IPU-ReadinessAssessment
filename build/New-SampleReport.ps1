@@ -31,6 +31,8 @@ function Set-Check([string]$Id) { $script:CurrentCheckId = $Id }
 Set-Check 'upgradepath'
 $script:Data.SourceRelease = Get-WindowsServerRelease '14393' ''
 Add-Result 'UPGRADE_PATH' 'CurrentOS' 'INFO' 'Microsoft Windows Server 2016 Standard' @('Build=14393.7428', 'Release=Windows Server 2016', 'Architecture=64-bit') -Source 'Win32_OperatingSystem'
+$life = Get-SupportLifecycleDecision '2016' ([datetime]'2026-10-08')
+Add-Result 'UPGRADE_PATH' 'SourceEndOfSupport' $life.Status $life.Value ('EndOfExtendedSupport=' + $life.EndDate) -Source 'Microsoft Lifecycle (fixed dates in the script)' -Link $script:DocLinks.Lifecycle.Url -LinkTitle $script:DocLinks.Lifecycle.Title
 $path = Get-UpgradePathDecision '2016' '2025' $false
 Add-Result 'UPGRADE_PATH' 'TargetUpgradePath' $path.Status $path.Text 'Target=Windows Server 2025' -Source 'Microsoft supported upgrade paths (installation media)' -Link $script:DocLinks.InPlaceUpgrade.Url -LinkTitle $script:DocLinks.InPlaceUpgrade.Title
 $edition = Get-EditionDecision 'ServerStandard' 'Server' '2025'
@@ -110,6 +112,8 @@ Add-Run 'backup' 'Backup and VSS'
 Set-Check 'checklist'
 Add-Result 'CHECKLIST' 'Backup and fallback' 'MANUAL' 'Cannot be proven from inside the guest' -Recommendation 'Confirm a recent successful backup externally, snapshot eligibility (VMware) and the approved snapshot procedure.' -Kind 'Checklist'
 Add-Result 'CHECKLIST' 'Credentials and console access' 'MANUAL' 'Not provable by an unattended inventory' -Recommendation 'Validate domain logon, PAM checkout and local fallback credentials, plus console (vCenter/iLO/iDRAC) access in case network logon fails.' -Kind 'Checklist'
+$lic = Get-TargetLicensingDecision 'KMS' 'kms.example.test:1688' '2025'
+Add-Result 'CHECKLIST' 'Target licensing' 'MANUAL' $lic.Value -Recommendation $lic.Text -Kind 'Checklist'
 Add-Result 'CHECKLIST' 'Installation media' 'MANUAL' $script:Data.RecommendedMedia -Recommendation 'Use media with the exact edition, installation type and language listed.' -Kind 'Checklist'
 Add-Run 'checklist' 'Standard change checklist'
 

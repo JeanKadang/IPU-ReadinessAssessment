@@ -1,6 +1,6 @@
 {
   "Schema": "IPU-Assessment/1",
-  "CollectorVersion": "4.2.0",
+  "CollectorVersion": "4.3.0",
   "ComputerName": "SRV-APP01",
   "Mode": "Pre",
   "TargetServerVersion": "2025",
@@ -44,6 +44,21 @@
       "CommandKind": "",
       "Link": "",
       "LinkTitle": ""
+    },
+    {
+      "CheckId": "upgradepath",
+      "Area": "UPGRADE_PATH",
+      "Item": "SourceEndOfSupport",
+      "Status": "INFO",
+      "Kind": "Evidence",
+      "Value": "Windows Server 2016: supported until 2027-01-12 (96 days)",
+      "Details": "EndOfExtendedSupport=2027-01-12",
+      "Recommendation": "",
+      "Source": "Microsoft Lifecycle (fixed dates in the script)",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "https://learn.microsoft.com/en-us/lifecycle/products/?terms=windows%20server",
+      "LinkTitle": "Microsoft Lifecycle: Windows Server"
     },
     {
       "CheckId": "upgradepath",
@@ -459,6 +474,21 @@
       "Value": "Not provable by an unattended inventory",
       "Details": "",
       "Recommendation": "Validate domain logon, PAM checkout and local fallback credentials, plus console (vCenter/iLO/iDRAC) access in case network logon fails.",
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
+    },
+    {
+      "CheckId": "checklist",
+      "Area": "CHECKLIST",
+      "Item": "Target licensing",
+      "Status": "MANUAL",
+      "Kind": "Checklist",
+      "Value": "KMS client (GVLK), KMS: kms.example.test:1688",
+      "Details": "",
+      "Recommendation": "Confirm the KMS host or Active Directory-based activation holds a host key (CSVLK) that activates Windows Server 2025. Setup installs the Windows Server 2025 GVLK; activation follows once the host can serve it.",
       "Source": "",
       "Command": "",
       "CommandKind": "",
