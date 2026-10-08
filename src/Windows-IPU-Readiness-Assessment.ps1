@@ -1790,7 +1790,29 @@ function New-RedactionContext {
     $netbios = @()
     if ($DomainFqdn -and $DomainFqdn -match '\.') { $netbios += ($DomainFqdn -split '\.')[0] }
     if ($ComputerName) { $netbios += $ComputerName }
-    return @{ Map = @{}; Counters = @{}; ComputerName = $ComputerName; DomainFqdn = $DomainFqdn; NetBios = $netbios }
+    return @{ Map = @{}; Counters = @{}; ComputerName = $ComputerName; DomainFqdn = $DomainFqdn; NetBios = $netbios; Literals = @{} }
+}
+
+# Names that never identify a site: built-in accounts and groups (#100).
+$script:RedactionWellKnownNames = '^(SYSTEM|LocalSystem|LOCAL SERVICE|LocalService|NETWORK SERVICE|NetworkService|INTERACTIVE|Users|Administrators|Administrator|Everyone|Guest|Authenticated Users|Default Domain Policy|Default Domain Controllers Policy|Local Group Policy)$'
+# Public documentation and vendor domains kept in redacted reports (#100).
+$script:RedactionKeepDomains = @('microsoft.com','windows.com','windowsupdate.com','trendmicro.com','broadcom.com','vmware.com','asp.net','microsoft.net','oracle.com','sap.com','citrix.com','apache.org','mysql.com','postgresql.org','ibm.com','veeam.com','commvault.com','crowdstrike.com','sentinelone.com','sophos.com','eset.com','kaspersky.com','trellix.com','mcafee.com','cisco.com','broadcom.net','tenable.com','nxlog.co','opentext.com','example.test','example.com')
+
+function Add-RedactionLiteral {
+    # Remembers a name seen during collection that must be replaced in a
+    # redacted report wherever it appears (#100): accounts without a domain
+    # prefix, GPO names, WMI filter names. Kept for every run (cheap).
+    param([string]$Value, [ValidateSet('ACCOUNT','GPO','NAME')][string]$Kind)
+    if (-not $Value) { return }
+    $v = $Value.Trim()
+    if ($Kind -eq 'ACCOUNT' -and $v -match '^(.+)\\(.+)$') {
+        if ($Matches[1] -match '^(NT AUTHORITY|NT SERVICE|BUILTIN|IIS APPPOOL|NT VIRTUAL MACHINE|Window Manager|Font Driver Host)$') { return }
+        $v = $Matches[2]
+    }
+    $v = $v.TrimStart('.').TrimStart('\\')
+    if ($v.Length -lt 3 -or $v -match $script:RedactionWellKnownNames -or $v -match '^S-1-') { return }
+    if (-not $script:Data.ContainsKey('RedactLiterals') -or $null -eq $script:Data.RedactLiterals) { $script:Data.RedactLiterals = @{} }
+    $script:Data.RedactLiterals[$v] = $Kind
 }
 
 function Get-RedactionPlaceholder {
@@ -1814,6 +1836,15 @@ function Protect-ReportText {
     $t = $Text
     $ic = [Text.RegularExpressions.RegexOptions]::IgnoreCase
 
+    # Names collected during the run (#100), longest first so a GPO name is
+    # replaced as a whole before word-level rules see its parts.
+    if ($ctx.Literals) {
+        foreach ($lit in @($ctx.Literals.Keys | Sort-Object { $_.Length } -Descending)) {
+            $kind = $ctx.Literals[$lit]
+            $t = [regex]::Replace($t, '(?<![\w.-])' + [regex]::Escape($lit) + '(?![\w-])', { param($m) Get-RedactionPlaceholder $ctx $kind $m.Value }, $ic)
+        }
+    }
+
     # Local group members: "name [WinNT://DOMAIN/name]"
     $t = [regex]::Replace($t, '([^\s|>\[\]][^|<>\[\]]*?) \[WinNT://([^/\]]+)/([^\]]+)\]', {
         param($m)
@@ -1826,6 +1857,14 @@ function Protect-ReportText {
     $t = [regex]::Replace($t, '(?<![0-9A-Fa-f])[0-9A-Fa-f]{40}(?![0-9A-Fa-f])', { param($m) Get-RedactionPlaceholder $ctx 'CERT' $m.Value })
     # Certificate subject and issuer names
     $t = [regex]::Replace($t, '\b(CN|OU|O)=([^,|<>\]\r\n]*[^,|<>\]\r\n\s])', { param($m) $m.Groups[1].Value + '=' + (Get-RedactionPlaceholder $ctx 'NAME' $m.Groups[2].Value) })
+    # Domain components of a distinguished name (#100, #99)
+    # The DC= components together are the domain: one placeholder, the same
+    # one the domain name gets elsewhere.
+    $t = [regex]::Replace($t, '\bDC=[^,|<>\]\r\n\s]+(?:,DC=[^,|<>\]\r\n\s]+)*', {
+        param($m)
+        $fqdn = (@($m.Value -split ',' | ForEach-Object { $_.Substring(3) }) -join '.')
+        return 'DC=' + (Get-RedactionPlaceholder $ctx 'DOMAIN' $fqdn)
+    }, $ic)
     # MAC addresses
     $t = [regex]::Replace($t, '\b([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b', { param($m) Get-RedactionPlaceholder $ctx 'MAC' $m.Value })
     # Domain SIDs (well-known S-1-5-32-*, S-1-5-18 etc. are kept)
@@ -1836,6 +1875,7 @@ function Protect-ReportText {
     $t = [regex]::Replace($t, '(?<![\\:/\w.-])([A-Za-z0-9][A-Za-z0-9-]{1,14})\\([A-Za-z0-9._$-]{1,64})', {
         param($m)
         $d = $m.Groups[1].Value
+        if ($m.Groups[2].Value -match '^(ACCOUNT|HOST|DOMAIN|NAME|GPO)-\d+$') { return (Get-RedactionPlaceholder $ctx 'DOMAIN' $d) + '\' + $m.Groups[2].Value }
         $known = @($ctx.NetBios | Where-Object { $_ -and $_ -ieq $d }).Count -gt 0
         $caps = ($d -cmatch '^[A-Z0-9-]+$') -and ($d -notmatch $skip) -and ($d -match '[A-Z]')
         if ($known -or $caps) { return Get-RedactionPlaceholder $ctx 'ACCOUNT' $m.Value }
@@ -1849,11 +1889,29 @@ function Protect-ReportText {
         $t = [regex]::Replace($t, '\b[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.' + $dom + '\b', { param($m) Get-RedactionPlaceholder $ctx 'HOST' $m.Value }, $ic)
         $t = [regex]::Replace($t, '\b' + $dom + '\b', { param($m) Get-RedactionPlaceholder $ctx 'DOMAIN' $m.Value }, $ic)
     }
+    # Any other host name with a public or internal top-level domain (#100),
+    # except documentation and vendor domains used in report links.
+    $tld = 'com|net|org|edu|gov|mil|int|info|biz|local|lan|corp|internal|intra|intranet|ad|home|cloud|online|dk|se|no|fi|is|de|nl|be|lu|fr|uk|ie|es|pt|it|ch|at|pl|cz|sk|hu|ee|lv|lt|eu|us|ca|au|nz|jp|cn|sg|hk|in'
+    $t = [regex]::Replace($t, '(?<![\w.@-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+(?:' + $tld + ')(?![\w-]|\.[A-Za-z0-9])', {
+        param($m)
+        $v = $m.Value
+        foreach ($keep in $script:RedactionKeepDomains) { if ($v -ieq $keep -or $v.EndsWith('.' + $keep, [StringComparison]::OrdinalIgnoreCase)) { return $v } }
+        return Get-RedactionPlaceholder $ctx 'HOST' $v
+    }, $ic)
     foreach ($n in @($ctx.NetBios)) {
         if (-not $n) { continue }
         $kind = 'DOMAIN'; if ($n -ieq $ctx.ComputerName) { $kind = 'HOST' }
         $t = [regex]::Replace($t, '(?<![\w-])' + [regex]::Escape($n) + '(?![\w])', { param($m) Get-RedactionPlaceholder $ctx $kind $m.Value }, $ic)
     }
+    # Group Policy link paths: every OU after the (already replaced) domain (#100)
+    $t = [regex]::Replace($t, '(?<!WinNT://)\b(DOMAIN-\d+|HOST-\d+)((?:/[^/|;<>"\[\]\r\n]+)+)', {
+        param($m)
+        $parts = @($m.Groups[2].Value.Split('/') | Where-Object { $_ } | ForEach-Object {
+            $c = $_.Trim()
+            if ($c -match '^(ACCOUNT|HOST|DOMAIN|NAME|GPO)-\d+$') { $c } else { Get-RedactionPlaceholder $ctx 'NAME' $c }
+        })
+        return $m.Groups[1].Value + '/' + ($parts -join '/')
+    })
     # IPv4 (not version numbers, masks, loopback or the any-address)
     $t = [regex]::Replace($t, '(?<![\w.])(?<!Version[=: ])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![\w.])', {
         param($m)
@@ -2241,10 +2299,13 @@ Register-Check -Id 'grouppolicy' -Name 'Group Policy and AD groups' -Script {
     if ($gp) {
         $target = Get-ReleaseDisplayName $TargetServerVersion
         foreach ($g in @($gp.Gpos)) {
+            Add-RedactionLiteral $g.Name 'GPO'
+            if ($g.FilterName) { Add-RedactionLiteral $g.FilterName 'NAME' }
             $state = 'Applied'; if (-not $g.Applied) { $state = $g.Reason }
             $details = @(('Linked at ' + (@($g.Links) -join '; ')))
             $filter = $filters[$g.Guid]
             if ($filter) {
+                Add-RedactionLiteral $filter.Name 'NAME'
                 $details += ('WMI filter: ' + $filter.Name)
                 foreach ($q in @($filter.Queries)) { $details += ('Query: ' + $q.Query) }
             } elseif ($g.FilterName) { $details += ('WMI filter: ' + $g.FilterName) }
@@ -2893,6 +2954,7 @@ Register-Check -Id 'services' -Name 'Services' -Script {
     $auto = @($script:Data.Services | Where-Object { $_.StartMode -eq 'Auto' })
     $autoStopped = @($auto | Where-Object { $_.State -ne 'Running' })
     Add-Result 'SERVICES' 'AutomaticServices' 'INFO' ('Total=' + $auto.Count) ('NotRunning=' + $autoStopped.Count) -Recommendation 'Save this list. After IPU, compare which Automatic services are running to spot what did not come back.' -Source 'Win32_Service'
+    foreach ($s in @($script:Data.Services | Where-Object { $_.StartName })) { Add-RedactionLiteral ([string]$s.StartName) 'ACCOUNT' }
     foreach ($s in @($script:Data.Services | Where-Object { $_.StartMode -in @('Auto','Manual') } | Sort-Object StartMode,DisplayName)) {
         Add-Result 'SERVICES' $s.Name 'INFO' $s.DisplayName @(('State=' + $s.State),('StartMode=' + $s.StartMode),('LogOnAs=' + $s.StartName)) -Source 'Win32_Service'
     }
@@ -3014,6 +3076,7 @@ Register-Check -Id 'tasks' -Name 'Scheduled tasks' -Script {
         if (-not $user) { $user = [string]$t.Principal.GroupId }
         $actions = @($t.Actions | ForEach-Object { (([string]$_.Execute) + ' ' + ([string]$_.Arguments)).Trim() } | Where-Object { $_ }) -join '; '
         $fullName = $t.TaskPath + $t.TaskName
+        if ($user -and $user -notmatch $builtIn) { Add-RedactionLiteral $user 'ACCOUNT' }
         $script:Data.Snapshot.Tasks += $fullName
         Add-Result 'TASKS' $fullName 'INFO' ('RunAs=' + $user) @(('State=' + $t.State),('Action=' + $actions)) -Source 'Get-ScheduledTask'
         if ($user -and $user -notmatch $builtIn) { $named += ($fullName + ' (' + $user + ')') }
@@ -3710,6 +3773,10 @@ function Get-RedactionContext {
         $domain = ''
         if ($script:Data.CS -and $script:Data.CS.PartOfDomain) { $domain = [string]$script:Data.CS.Domain }
         $script:RedactionContext = New-RedactionContext $script:ComputerName $domain
+    }
+    # Names collected so far (the checkpoint and the final report share them).
+    if ($script:Data.RedactLiterals) {
+        foreach ($k in @($script:Data.RedactLiterals.Keys)) { $script:RedactionContext.Literals[$k] = $script:Data.RedactLiterals[$k] }
     }
     return $script:RedactionContext
 }

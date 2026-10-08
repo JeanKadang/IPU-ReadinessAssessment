@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+- Redaction now also replaces host names in any domain (except documentation and vendor sites), the bare names of service and scheduled-task accounts, GPO and WMI filter names, OU names in Group Policy link paths and `DC=` components. A live run had shown these in a redacted report. The smoke test checks the redacted output for leftover host and account names (#100).
+
 ### Added
 - Prerequisites check before anything is collected: PowerShell 4.0 or later, .NET Framework 4.5 or later and administrator rights. If one is missing, the run stops with a clear `FAILED` SA line and report text naming what is missing and what to do; a missing optional module is a MANUAL row naming the affected checks. CI checks `src/` against Windows Server 2012 R2 / Windows PowerShell 4.0 (#94).
 

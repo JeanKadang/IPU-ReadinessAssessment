@@ -118,6 +118,17 @@ try {
         foreach ($secret in $secrets) {
             Assert-That (@($texts | Where-Object { $_ -match ('(?<![\w.])' + [regex]::Escape($secret) + '(?![\w.])') }).Count -eq 0) ('Redacted output does not contain the runner''s ' + $(if ($secret -eq $env:COMPUTERNAME) { 'computer name' } else { 'IPv4 address' }))
         }
+        # Leak check (#100): no host name outside the allow-list of documentation
+        # domains, and none of the runner's service or task accounts.
+        $keep = 'microsoft\.com|windows\.com|windowsupdate\.com|trendmicro\.com|broadcom\.com|vmware\.com|asp\.net|microsoft\.net|example\.test|example\.com'
+        $fqdnPattern = '(?<![\w.@-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+(?:com|net|org|local|lan|corp|internal|dk|se|no|de|eu|io|cloud)(?![\w-]|\.[A-Za-z0-9])'
+        $hosts = @($texts | ForEach-Object { [regex]::Matches($_, $fqdnPattern) | ForEach-Object { $_.Value } } | Where-Object { $_ -notmatch ('(^|\.)(' + $keep + ')$') } | Sort-Object -Unique)
+        Assert-That ($hosts.Count -eq 0) ('Redacted output has no host names outside the allow-list' + $(if ($hosts.Count) { ' (found ' + $hosts.Count + ')' } else { '' }))
+        $accounts = @(@(Get-CimInstance Win32_Service | ForEach-Object { [string]$_.StartName }) + @(Get-ScheduledTask -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.Principal.UserId }) |
+            Where-Object { $_ } | ForEach-Object { ($_ -split '\\')[-1].TrimStart('.') } |
+            Where-Object { $_.Length -ge 3 -and $_ -notmatch '^(SYSTEM|LocalSystem|LOCAL SERVICE|LocalService|NETWORK SERVICE|NetworkService|INTERACTIVE|Users|Administrators|Administrator|Everyone|Guest)$' -and $_ -notmatch '^S-1-' } | Sort-Object -Unique)
+        $leaked = @($accounts | Where-Object { $a = $_; @($texts | Where-Object { $_ -match ('(?<![\w.-])' + [regex]::Escape($a) + '(?![\w-])') }).Count -gt 0 })
+        Assert-That ($leaked.Count -eq 0) ('Redacted output has none of the runner''s ' + $accounts.Count + ' service and task account names' + $(if ($leaked.Count) { ' (leaked ' + $leaked.Count + ')' } else { '' }))
         $redObj = Test-ResultJson $redJson[0].FullName 'Pre'
         if ($redObj) { Assert-That ([bool]$redObj.Redacted) 'Redacted JSON has Redacted = true' }
     }

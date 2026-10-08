@@ -2019,3 +2019,52 @@ Describe 'Prerequisites (#94)' {
         [IO.File]::ReadAllText($script:ReportPath) | Should -Match 'Administrator rights'
     }
 }
+
+Describe 'Redaction gaps from a live run (#100)' {
+    BeforeAll {
+        $script:Data = @{}
+        Add-RedactionLiteral 'CORP\adm-jdoe' 'ACCOUNT'
+        Add-RedactionLiteral 'svc_batch' 'ACCOUNT'
+        Add-RedactionLiteral 'Contoso Web Lockdown' 'GPO'
+        Add-RedactionLiteral 'Contoso VM filter' 'NAME'
+        foreach ($builtin in 'LocalSystem', 'NT AUTHORITY\NetworkService', 'NT SERVICE\MSSQLSERVER', 'Administrators', 'Default Domain Policy', 'S-1-5-18', 'ab') { Add-RedactionLiteral $builtin 'ACCOUNT' }
+        $script:GapCtx = New-RedactionContext 'SRV01' 'corp.example.test'
+        foreach ($k in $script:Data.RedactLiterals.Keys) { $script:GapCtx.Literals[$k] = $script:Data.RedactLiterals[$k] }
+        function Protect([string]$Text) { Protect-ReportText $Text $script:GapCtx }
+    }
+    It 'collects only site-specific names (built-in accounts and short names are skipped)' {
+        (@($script:Data.RedactLiterals.Keys) | Sort-Object) -join ',' | Should -Be 'adm-jdoe,Contoso VM filter,Contoso Web Lockdown,svc_batch'
+    }
+    It 'replaces <What>' -TestCases @(
+        @{ What = 'IIS binding host names outside the domain'; In = 'IIS https *:443:shop.customer-site.dk'; Gone = 'customer-site' }
+        @{ What = 'servers in another domain';                 In = 'Backup to bck01.backup.vendorcorp.com done'; Gone = 'vendorcorp' }
+        @{ What = 'bare run-as accounts in free text';         In = '\Nightly export (adm-jdoe) | \Cleanup (svc_batch)'; Gone = 'adm-jdoe|svc_batch' }
+        @{ What = 'the same account with a domain prefix';     In = 'RunAs=CORP\adm-jdoe'; Gone = 'adm-jdoe' }
+        @{ What = 'GPO names';                                 In = 'GPO: Contoso Web Lockdown'; Gone = 'Contoso' }
+        @{ What = 'WMI filter names';                          In = 'WMI filter: Contoso VM filter | Query: SELECT * FROM Win32_ComputerSystem'; Gone = 'Contoso' }
+        @{ What = 'OU names in Group Policy link paths';       In = 'Linked at corp.example.test/General Servers/Web Apps; corp.example.test'; Gone = 'General Servers|Web Apps' }
+        @{ What = 'domain components of a distinguished name'; In = 'CN=SRV01,OU=Servers,DC=corp,DC=example,DC=test'; Gone = 'corp|example' }
+    ) {
+        $out = Protect $In
+        $out | Should -Not -Match $Gone
+    }
+    It 'gives one account one placeholder, with or without the domain' {
+        $out = Protect 'Task (adm-jdoe) runs as CORP\adm-jdoe'
+        $out | Should -Match '^Task \((ACCOUNT-\d+)\) runs as DOMAIN-\d+\\\1$'
+    }
+    It 'maps DC= components to the same placeholder as the domain name' {
+        $a = Protect 'Domain=corp.example.test'
+        $b = Protect 'CN=SRV01,DC=corp,DC=example,DC=test'
+        $a -replace '^Domain=', '' | Should -Be ($b -replace '^.*DC=', '')
+    }
+    It 'keeps <What>' -TestCases @(
+        @{ What = 'documentation links';         In = 'https://learn.microsoft.com/en-us/windows-server/get-started/perform-in-place-upgrade' }
+        @{ What = 'vendor documentation';        In = 'https://docs.trendmicro.com/en-us/documentation/article/x' }
+        @{ What = 'framework paths';             In = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319' }
+        @{ What = 'file names and namespaces';   In = 'applicationHost.config tmmon.dll System.IO.Compression Windows.old ASP.NET' }
+        @{ What = 'built-in accounts and GPOs';  In = 'LogOnAs=LocalSystem | GPO: Default Domain Policy | NT AUTHORITY\NetworkService' }
+        @{ What = 'certificate locality fields'; In = 'Subject=L=Copenhagen, C=DK' }
+    ) {
+        Protect $In | Should -Be $In
+    }
+}
