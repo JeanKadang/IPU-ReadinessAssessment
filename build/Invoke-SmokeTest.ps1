@@ -136,7 +136,8 @@ try {
             $i = 0
             foreach ($a in $leaked) {
                 $i++
-                $pattern = '(?<![\w.-])' + [regex]::Escape($a) + '(?![\w-])'
+                # Case-insensitive, like the -match that found the leak.
+                $pattern = '(?i)(?<![\w.-])' + [regex]::Escape($a) + '(?![\w-])'
                 $sources = @()
                 if (@(Get-CimInstance Win32_Service | Where-Object { ([string]$_.StartName -split '\\')[-1].TrimStart('.') -eq $a }).Count) { $sources += 'service logon account' }
                 foreach ($t in @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { ([string]$_.Principal.UserId -split '\\')[-1].TrimStart('.') -eq $a })) {
