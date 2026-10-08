@@ -10,6 +10,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - "Status meaning" is shown right after the Summary, before the tables that use the statuses (#96).
 
 ### Added
+- The source OS end of extended support: an INFO row while supported, a WARNING observation (with a note on Extended Security Updates) once it has ended, and the patch-level row says why updates are old on an out-of-support source (#102).
+- The *Target licensing* checklist item now says what the target release needs for the current activation channel (KMS client, MAK, AVMA, OEM, retail), instead of always showing the KMS host (#102).
 - The computer object's OU path in AD, in the summary ("AD location (OU)"), the Group Policy section and the JSON; the post-upgrade comparison reports a moved computer object (#99).
 
 ### Added

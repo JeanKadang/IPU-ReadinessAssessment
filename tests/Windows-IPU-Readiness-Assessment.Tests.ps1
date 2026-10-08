@@ -2225,3 +2225,52 @@ Describe 'Report chapters open and closed (#97)' {
         $script:ChapterHtml | Should -Match 'addEventListener\("afterprint"'
     }
 }
+
+Describe 'Source end of support (#102)' {
+    It '<Release> on <Today> is <Status>' -TestCases @(
+        @{ Release = '2012R2'; Today = '2023-10-10'; Status = 'INFO';    Ended = $false }
+        @{ Release = '2012R2'; Today = '2023-10-11'; Status = 'WARNING'; Ended = $true }
+        @{ Release = '2012';   Today = '2026-10-08'; Status = 'WARNING'; Ended = $true }
+        @{ Release = '2016';   Today = '2027-01-12'; Status = 'INFO';    Ended = $false }
+        @{ Release = '2016';   Today = '2027-01-13'; Status = 'WARNING'; Ended = $true }
+        @{ Release = '2019';   Today = '2026-10-08'; Status = 'INFO';    Ended = $false }
+        @{ Release = '2022';   Today = '2031-10-15'; Status = 'WARNING'; Ended = $true }
+        @{ Release = '';       Today = '2026-10-08'; Status = 'INFO';    Ended = $false }
+    ) {
+        $d = Get-SupportLifecycleDecision $Release ([datetime]::ParseExact($Today, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture))
+        $d.Status | Should -Be $Status
+        $d.Ended | Should -Be $Ended
+    }
+    It 'counts the days left while supported and mentions ESU once ended' {
+        (Get-SupportLifecycleDecision '2016' ([datetime]'2027-01-02')).Value | Should -Match '\(10 days\)'
+        (Get-SupportLifecycleDecision '2012R2' ([datetime]'2026-10-08')).Text | Should -Match 'ESU'
+    }
+}
+
+Describe 'Target licensing per activation channel (#102)' {
+    It '<Channel> / <Description> is <Kind>' -TestCases @(
+        @{ Channel = 'Volume:GVLK'; Description = 'Windows(R) Operating System, VOLUME_KMSCLIENT channel'; Kind = 'KMS' }
+        @{ Channel = 'Volume:MAK';  Description = 'Windows(R) Operating System, VOLUME_MAK channel';       Kind = 'MAK' }
+        @{ Channel = 'OEM:DM';      Description = 'Windows(R) Operating System, OEM_DM channel';           Kind = 'OEM' }
+        @{ Channel = 'Retail';      Description = 'Windows(R) Operating System, RETAIL channel';           Kind = 'Retail' }
+        @{ Channel = 'Retail';      Description = 'Windows(R) Operating System, VIRTUAL_MACHINE_ACTIVATION channel'; Kind = 'AVMA' }
+        @{ Channel = '';            Description = '';                                                       Kind = 'Unknown' }
+    ) {
+        Get-ActivationChannelKind $Channel $Description | Should -Be $Kind
+    }
+    It '<Kind> needs <Expect>' -TestCases @(
+        @{ Kind = 'KMS';     Expect = 'CSVLK' }
+        @{ Kind = 'MAK';     Expect = 'Windows Server 2025 MAK' }
+        @{ Kind = 'AVMA';    Expect = 'Hyper-V host must run Datacenter' }
+        @{ Kind = 'OEM';     Expect = 'tied to the original hardware' }
+        @{ Kind = 'Retail';  Expect = 'retail Windows Server 2025 licence' }
+        @{ Kind = 'Unknown'; Expect = 'KMS host/ADBA, MAK or AVMA host' }
+    ) {
+        (Get-TargetLicensingDecision $Kind 'kms.example.test:1688' '2025').Text | Should -Match $Expect
+    }
+    It 'only the KMS and unknown channels mention the KMS endpoint' {
+        (Get-TargetLicensingDecision 'KMS' 'kms.example.test:1688' '2025').Value | Should -Match 'kms\.example\.test'
+        (Get-TargetLicensingDecision 'MAK' 'kms.example.test:1688' '2025').Value | Should -Not -Match 'KMS'
+    }
+}
+
