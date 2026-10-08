@@ -124,7 +124,12 @@ try {
         $fqdnPattern = '(?<![\w.@-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+(?:com|net|org|local|lan|corp|internal|dk|se|no|de|eu|io|cloud)(?![\w-]|\.[A-Za-z0-9])'
         $hosts = @($texts | ForEach-Object { [regex]::Matches($_, $fqdnPattern) | ForEach-Object { $_.Value } } | Where-Object { $_ -notmatch ('(^|\.)(' + $keep + ')$') } | Sort-Object -Unique)
         Assert-That ($hosts.Count -eq 0) ('Redacted output has no host names outside the allow-list' + $(if ($hosts.Count) { ' (found ' + $hosts.Count + ')' } else { '' }))
-        $accounts = @(@(Get-CimInstance Win32_Service | ForEach-Object { [string]$_.StartName }) + @(Get-ScheduledTask -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.Principal.UserId }) |
+        # Only accounts the script itself collects: service logon accounts and
+        # the run-as accounts of non-Microsoft tasks (the tasks check skips
+        # \Microsoft\). On windows-2022 a Microsoft task runs as an account
+        # whose name is an ordinary word ("Installer"), which matched product
+        # names such as "Windows Installer" - not a leak (#114).
+        $accounts = @(@(Get-CimInstance Win32_Service | ForEach-Object { [string]$_.StartName }) + @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskPath -notlike '\Microsoft\*' } | ForEach-Object { [string]$_.Principal.UserId }) |
             Where-Object { $_ } | ForEach-Object { ($_ -split '\\')[-1].TrimStart('.') } |
             Where-Object { $_.Length -ge 3 -and $_ -notmatch '^(SYSTEM|LocalSystem|LOCAL SERVICE|LocalService|NETWORK SERVICE|NetworkService|INTERACTIVE|Users|Administrators|Administrator|Everyone|Guest)$' -and $_ -notmatch '^S-1-' } | Sort-Object -Unique)
         $leaked = @($accounts | Where-Object { $a = $_; @($texts | Where-Object { $_ -match ('(?<![\w.-])' + [regex]::Escape($a) + '(?![\w-])') }).Count -gt 0 })
