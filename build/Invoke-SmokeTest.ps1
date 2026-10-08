@@ -155,6 +155,14 @@ try {
                     }
                 }
                 foreach ($k in @($leakJson.Facts.PSObject.Properties)) { if ([regex]::IsMatch([string]$k.Value, $pattern)) { $where += ('Facts/' + $k.Name) } }
+                # Anywhere else in the raw JSON (Snapshot, CheckRuns, property
+                # names): the surrounding text, with the name masked.
+                $rawJson = [IO.File]::ReadAllText($redJson[0].FullName)
+                foreach ($m in @([regex]::Matches($rawJson, $pattern) | Select-Object -First 5)) {
+                    $start = [Math]::Max(0, $m.Index - 60)
+                    $snippet = $rawJson.Substring($start, [Math]::Min($rawJson.Length - $start, $m.Length + 120))
+                    $where += ('raw JSON: ...' + ([regex]::Replace($snippet, $pattern, '<leak>') -replace '\s+', ' ') + '...')
+                }
                 if ([regex]::IsMatch([IO.File]::ReadAllText($redHtml[0].FullName), $pattern) -and $where.Count -eq 0) { $where += 'HTML only' }
                 Write-Host ('::warning title=Redaction leak {0}::source: {1}; found in: {2}' -f $i, ((@($sources | Sort-Object -Unique) -join ', ')), ((@($where | Select-Object -First 15) -join '; ')))
             }
