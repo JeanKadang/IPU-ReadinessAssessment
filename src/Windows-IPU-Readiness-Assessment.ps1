@@ -188,6 +188,9 @@ param(
     # Output files are then named REDACTED-<time>-..., and a redacted result
     # cannot serve as the post-upgrade baseline. The log is not redacted.
     [bool]$RedactReport = $false,
+    # Write REDACTED- copies of reports that already exist (a folder or one
+    # report file), without collecting anything (#101). The originals stay.
+    [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$RedactExisting = '',
     # Folders this run creates (report, policy evidence) get SYSTEM and
     # Administrators access only; reports describe the server in detail.
     # Existing folders are never changed. $false keeps inherited permissions.
@@ -1796,7 +1799,7 @@ function New-RedactionContext {
 # Names that never identify a site: built-in accounts and groups (#100).
 $script:RedactionWellKnownNames = '^(SYSTEM|LocalSystem|LOCAL SERVICE|LocalService|NETWORK SERVICE|NetworkService|INTERACTIVE|Users|Administrators|Administrator|Everyone|Guest|Authenticated Users|Default Domain Policy|Default Domain Controllers Policy|Local Group Policy)$'
 # Public documentation and vendor domains kept in redacted reports (#100).
-$script:RedactionKeepDomains = @('microsoft.com','windows.com','windowsupdate.com','trendmicro.com','broadcom.com','vmware.com','asp.net','microsoft.net','oracle.com','sap.com','citrix.com','apache.org','mysql.com','postgresql.org','ibm.com','veeam.com','commvault.com','crowdstrike.com','sentinelone.com','sophos.com','eset.com','kaspersky.com','trellix.com','mcafee.com','cisco.com','broadcom.net','tenable.com','nxlog.co','opentext.com','example.test','example.com')
+$script:RedactionKeepDomains = @('microsoft.com','windows.com','windowsupdate.com','trendmicro.com','broadcom.com','vmware.com','asp.net','microsoft.net','oracle.com','sap.com','citrix.com','apache.org','mysql.com','postgresql.org','ibm.com','veeam.com','commvault.com','crowdstrike.com','sentinelone.com','sophos.com','eset.com','kaspersky.com','trellix.com','mcafee.com','cisco.com','broadcom.net','tenable.com','nxlog.co','opentext.com')
 
 function Add-RedactionLiteral {
     # Remembers a name seen during collection that must be replaced in a
@@ -3766,6 +3769,67 @@ function New-AssessmentJsonObject {
     }
 }
 
+function Get-RedactionLiteralFromResult {
+    # Pure (#101): the names a run collected for redaction, recovered from
+    # the rows of an existing result - task run-as accounts, service logon
+    # accounts, GPO names and WMI filter names. Returns value/kind pairs.
+    param([object[]]$Results)
+    $found = @()
+    foreach ($r in @($Results)) {
+        if ($r.Area -eq 'TASKS' -and [string]$r.Value -match '^RunAs=(.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'ACCOUNT' } }
+        if ($r.Area -eq 'SERVICES' -and [string]$r.Details -match '(?:^|\|\s*)LogOnAs=([^|]+)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'ACCOUNT' } }
+        if ($r.Area -eq 'GROUP_POLICY' -and [string]$r.Item -match '^GPO: (.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'GPO' } }
+        if ($r.Area -eq 'GROUP_POLICY' -and [string]$r.Details -match '(?:^|\|\s*)WMI filter: ([^|]+)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'NAME' } }
+    }
+    return ,$found
+}
+
+function Invoke-RedactExisting {
+    # -RedactExisting (#101): writes REDACTED- copies of existing reports
+    # without collecting anything. The originals are not changed. Returns the
+    # exit code: 0 when at least one report was redacted.
+    param([Parameter(Mandatory=$true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { [Console]::Out.WriteLine('RedactExisting: not found: ' + $Path); return 1 }
+    $item = Get-Item -LiteralPath $Path
+    if ($item.PSIsContainer) {
+        $jsonFiles = @(Get-ChildItem -LiteralPath $Path -File | Where-Object { $_.Name -match '-IPU-(Assessment|PostUpgrade)\.json$' -and $_.Name -notlike 'REDACTED-*' })
+    } elseif ($item.Name -match '-IPU-(Assessment|PostUpgrade)\.(json|html)$') {
+        $jsonFiles = @(Get-Item -LiteralPath ([IO.Path]::ChangeExtension($item.FullName, '.json')) -ErrorAction SilentlyContinue)
+    } else { $jsonFiles = @() }
+    if ($jsonFiles.Count -eq 0) { [Console]::Out.WriteLine('RedactExisting: no *-IPU-Assessment.json or *-IPU-PostUpgrade.json report found in ' + $Path); return 1 }
+    $done = 0
+    foreach ($jf in $jsonFiles) {
+        try {
+            $obj = [IO.File]::ReadAllText($jf.FullName) | ConvertFrom-Json
+            if ($obj.Schema -ne 'IPU-Assessment/1') { throw 'not an IPU-Assessment/1 result' }
+            if ($obj.PSObject.Properties['Redacted'] -and $obj.Redacted) { [Console]::Out.WriteLine('RedactExisting: already redacted, skipped: ' + $jf.Name); continue }
+            $domain = ''
+            $member = @($obj.Results | Where-Object { $_.Area -eq 'ACCESS' -and $_.Item -eq 'DomainMembership' -and [string]$_.Value -match '^Domain=' }) | Select-Object -First 1
+            if ($member) { $domain = ([string]$member.Value).Substring(7) }
+            $script:Data = @{}
+            foreach ($l in (Get-RedactionLiteralFromResult @($obj.Results))) { Add-RedactionLiteral $l.Value $l.Kind }
+            $ctx = New-RedactionContext ([string]$obj.ComputerName) $domain
+            if ($script:Data.RedactLiterals) { foreach ($k in @($script:Data.RedactLiterals.Keys)) { $ctx.Literals[$k] = $script:Data.RedactLiterals[$k] } }
+            $suffix = '-IPU-Assessment'; if ($jf.Name -match '-IPU-PostUpgrade\.json$') { $suffix = '-IPU-PostUpgrade' }
+            $base = Join-Path $jf.DirectoryName ('REDACTED-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + $done + $suffix)
+            $red = Protect-ReportObject $obj $ctx
+            $red | Add-Member -NotePropertyName Redacted -NotePropertyValue $true -Force
+            [IO.File]::WriteAllText($base + '.json', ($red | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding($false)))
+            $html = [IO.Path]::ChangeExtension($jf.FullName, '.html')
+            $note = ''
+            if (Test-Path -LiteralPath $html) {
+                [IO.File]::WriteAllText($base + '.html', (Protect-ReportText ([IO.File]::ReadAllText($html)) $ctx), (New-Object System.Text.UTF8Encoding($false)))
+            } else { $note = ' (no HTML report next to it)' }
+            [Console]::Out.WriteLine('RedactExisting: ' + $jf.Name + ' -> ' + (Split-Path -Leaf $base) + '.json/.html' + $note)
+            $done++
+        } catch {
+            [Console]::Out.WriteLine('RedactExisting: could not redact ' + $jf.Name + ': ' + $_.Exception.Message)
+        }
+    }
+    if ($done -gt 0) { [Console]::Out.WriteLine('RedactExisting: ' + $done + ' report(s) redacted. Redaction is best effort - read the copies before sharing them.'); return 0 }
+    return 1
+}
+
 function Get-RedactionContext {
     # One context per run, so placeholders match between the checkpoint and
     # the final report, and between the HTML and the JSON.
@@ -3965,6 +4029,8 @@ function Invoke-Assessment {
 }
 
 if ($env:IPU_ASSESSMENT_LIBRARY_ONLY -eq '1') { return }
+
+if ($RedactExisting) { exit (Invoke-RedactExisting $RedactExisting) }
 
 # A 32-bit PowerShell host on 64-bit Windows sees redirected registry
 # (Wow6432Node) and System32 (SysWOW64) views, which would silently give wrong

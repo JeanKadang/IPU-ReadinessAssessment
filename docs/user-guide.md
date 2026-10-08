@@ -181,6 +181,7 @@ When the budget runs out, remaining slow checks are reported as `MANUAL` (skippe
 | `WriteJson` | `$true` | Write the JSON result (also the post-upgrade baseline) |
 | `RestrictOutputAcl` | `$true` | Folders the script creates (report folder, policy evidence) get access for SYSTEM and Administrators only. Existing folders are never changed; the report warns, with the `icacls` command to fix it, if an existing folder is readable by Everyone, Authenticated Users or Users. `$false` keeps inherited permissions |
 | `NumberCultureName` | `da-DK` | Culture used to format numbers in the SA result line. Invalid values fall back to invariant |
+| `RedactExisting` | blank | A folder or report file: write redacted copies of existing reports and stop (see [Sharing a report: redaction](#sharing-a-report-redaction)) |
 | `RedactReport` | `$false` | Replace names, addresses, accounts, SIDs and certificate details with placeholders in the HTML and JSON, for sharing outside the team. See [Sharing a report: redaction](#sharing-a-report-redaction) |
 
 ### Site data files
@@ -306,6 +307,14 @@ names, ports, WMI filter query text, and certificate locality fields (`L=`, `S=`
 > **Redaction is best effort.** It recognises the patterns above and the names the script itself collected
 > (accounts, GPO names). Company words inside product, task or file names, or an unusual format, can stay visible.
 > **Read a redacted report before you share it.**
+
+**Redact a report that already exists.** To share a report you already have, without running the assessment again:
+
+```
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Windows-IPU-Readiness-Assessment.ps1 -RedactExisting C:\Temp\IPU-Assessment
+```
+
+It writes a `REDACTED-<time>-...` copy of every `*-IPU-Assessment` and `*-IPU-PostUpgrade` report pair (JSON and HTML) in the folder, or of one report when you give a file, in a few seconds. Nothing is collected, and the originals are not changed. The names to redact come from the report itself: the computer, the domain, task and service accounts, and GPO and WMI filter names. Reports that are already redacted are skipped. Use `-RedactReport $true` when you run a new assessment; use `-RedactExisting` for reports you already have.
 
 What changes with redaction:
 

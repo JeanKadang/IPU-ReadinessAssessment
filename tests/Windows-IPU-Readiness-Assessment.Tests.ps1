@@ -2068,3 +2068,61 @@ Describe 'Redaction gaps from a live run (#100)' {
         Protect $In | Should -Be $In
     }
 }
+
+Describe 'Redact existing reports (#101)' {
+    BeforeAll {
+        $script:RexDir = Join-Path $TestDrive 'existing'
+        New-Item -ItemType Directory -Path $script:RexDir | Out-Null
+        $sample = Join-Path $PSScriptRoot '..\docs\samples'
+        Copy-Item -LiteralPath (Join-Path $sample 'sample-result.json') -Destination (Join-Path $script:RexDir 'SRV-APP01-IPU-Assessment.json')
+        Copy-Item -LiteralPath (Join-Path $sample 'sample-report.html') -Destination (Join-Path $script:RexDir 'SRV-APP01-IPU-Assessment.html')
+        $script:RexBefore = @(Get-ChildItem -LiteralPath $script:RexDir | ForEach-Object { $_.Name + '|' + (Get-FileHash -LiteralPath $_.FullName).Hash })
+        $script:RexCode = Invoke-RedactExisting $script:RexDir
+        $script:RexJson = @(Get-ChildItem -LiteralPath $script:RexDir -Filter 'REDACTED-*-IPU-Assessment.json')
+        $script:RexHtml = @(Get-ChildItem -LiteralPath $script:RexDir -Filter 'REDACTED-*-IPU-Assessment.html')
+    }
+    It 'writes one redacted JSON and HTML pair and returns 0' {
+        $script:RexCode | Should -Be 0
+        $script:RexJson.Count | Should -Be 1
+        $script:RexHtml.Count | Should -Be 1
+    }
+    It 'the copies contain neither the computer name nor the domain, and the JSON is marked Redacted' {
+        foreach ($f in @($script:RexJson[0], $script:RexHtml[0])) {
+            $text = [IO.File]::ReadAllText($f.FullName)
+            $text | Should -Not -Match 'SRV-APP01'
+            $text | Should -Not -Match 'corp\.example\.test'
+        }
+        ([IO.File]::ReadAllText($script:RexJson[0].FullName) | ConvertFrom-Json).Redacted | Should -BeTrue
+    }
+    It 'HTML and JSON use the same placeholder for the computer' {
+        $json = [IO.File]::ReadAllText($script:RexJson[0].FullName) | ConvertFrom-Json
+        $json.ComputerName | Should -Match '^HOST-\d+$'
+        [IO.File]::ReadAllText($script:RexHtml[0].FullName) | Should -Match ([regex]::Escape('<strong>' + $json.ComputerName + '</strong>'))
+    }
+    It 'leaves the originals unchanged' {
+        $after = @(Get-ChildItem -LiteralPath $script:RexDir | Where-Object { $_.Name -notlike 'REDACTED-*' } | ForEach-Object { $_.Name + '|' + (Get-FileHash -LiteralPath $_.FullName).Hash })
+        ($after -join ';') | Should -Be ($script:RexBefore -join ';')
+    }
+    It 'skips a report that is already redacted' {
+        $out = Join-Path $TestDrive 'skip'
+        New-Item -ItemType Directory -Path $out | Out-Null
+        Copy-Item -LiteralPath $script:RexJson[0].FullName -Destination (Join-Path $out 'X-IPU-Assessment.json')
+        Invoke-RedactExisting $out | Should -Be 1
+        @(Get-ChildItem -LiteralPath $out -Filter 'REDACTED-*').Count | Should -Be 0
+    }
+    It 'says clearly when nothing is there' {
+        Invoke-RedactExisting (Join-Path $TestDrive 'nowhere') | Should -Be 1
+        $empty = Join-Path $TestDrive 'empty'
+        New-Item -ItemType Directory -Path $empty | Out-Null
+        Invoke-RedactExisting $empty | Should -Be 1
+    }
+    It 'recovers the names to redact from the result rows' {
+        $rows = @(
+            [pscustomobject]@{ Area = 'TASKS'; Item = '\Nightly'; Value = 'RunAs=CORP\adm-jdoe'; Details = '' }
+            [pscustomobject]@{ Area = 'SERVICES'; Item = 'App'; Value = 'App'; Details = 'State=Running | StartMode=Auto | LogOnAs=svc_app@corp.example.test' }
+            [pscustomobject]@{ Area = 'GROUP_POLICY'; Item = 'GPO: Web Lockdown'; Value = 'Applied'; Details = 'Linked at x | WMI filter: VM only | Query: SELECT 1' }
+        )
+        $l = Get-RedactionLiteralFromResult $rows
+        (@($l | ForEach-Object { $_.Kind + '=' + $_.Value }) -join '; ') | Should -Be 'ACCOUNT=CORP\adm-jdoe; ACCOUNT=svc_app@corp.example.test; GPO=Web Lockdown; NAME=VM only'
+    }
+}
