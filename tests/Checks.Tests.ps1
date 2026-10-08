@@ -1261,6 +1261,19 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             (Get-Row 'TASKS' 'TasksWithNamedAccounts')[0].Details | Should -Match 'svc_batch'
             $script:Data.Snapshot.Tasks | Should -Contain '\Example\Nightly export'
         }
+        It 'collects run-as accounts for redaction only from non-Microsoft tasks (#114)' {
+            # On windows-2022 a Microsoft task runs as an account named like an
+            # ordinary word. It is never reported, so it must not become a
+            # redaction literal that blanks "Windows Installer" everywhere.
+            $script:Fake.Tasks += [pscustomobject]@{ TaskPath = '\Microsoft\Windows\Example\'; TaskName = 'Installer task'; State = 'Ready'; Principal = [pscustomobject]@{ UserId = 'Installer'; GroupId = '' }; Actions = @() }
+            $script:Fake.Tasks += [pscustomobject]@{ TaskPath = '\Example\'; TaskName = 'Nightly export'; State = 'Ready'; Principal = [pscustomobject]@{ UserId = 'CORP\svc_batch'; GroupId = '' }; Actions = @() }
+            $null = Invoke-TestCheck 'tasks'
+            $script:Data.RedactLiterals.Keys | Should -Contain 'svc_batch'
+            $script:Data.RedactLiterals.Keys | Should -Not -Contain 'Installer'
+            $ctx = New-RedactionContext 'SRV01' ''
+            foreach ($k in @($script:Data.RedactLiterals.Keys)) { $ctx.Literals[$k] = $script:Data.RedactLiterals[$k] }
+            Protect-ReportText 'Windows Installer; task runs as svc_batch' $ctx | Should -Be 'Windows Installer; task runs as ACCOUNT-1'
+        }
     }
 
     Context 'checklist' {

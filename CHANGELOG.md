@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### CI
+- The smoke test's redaction leak check failed on Windows Server 2022 although nothing leaked. A built-in Microsoft scheduled task there runs as an account named like an ordinary word, which matched product names such as "Windows Installer". The check now looks only for the accounts the script collects (service logon accounts and non-Microsoft task accounts). When a real leak is found, it reports the source and the report rows that hold it, with the name masked (#114).
+
 ## [4.3.0] - 2026-10-08
 
 Findings and requests from a live run on Windows Server 2012 R2 (Windows PowerShell 4.0).

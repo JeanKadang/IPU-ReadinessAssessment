@@ -124,10 +124,55 @@ try {
         $fqdnPattern = '(?<![\w.@-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+(?:com|net|org|local|lan|corp|internal|dk|se|no|de|eu|io|cloud)(?![\w-]|\.[A-Za-z0-9])'
         $hosts = @($texts | ForEach-Object { [regex]::Matches($_, $fqdnPattern) | ForEach-Object { $_.Value } } | Where-Object { $_ -notmatch ('(^|\.)(' + $keep + ')$') } | Sort-Object -Unique)
         Assert-That ($hosts.Count -eq 0) ('Redacted output has no host names outside the allow-list' + $(if ($hosts.Count) { ' (found ' + $hosts.Count + ')' } else { '' }))
-        $accounts = @(@(Get-CimInstance Win32_Service | ForEach-Object { [string]$_.StartName }) + @(Get-ScheduledTask -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.Principal.UserId }) |
+        # Only accounts the script itself collects: service logon accounts and
+        # the run-as accounts of non-Microsoft tasks (the tasks check skips
+        # \Microsoft\). On windows-2022 a Microsoft task runs as an account
+        # whose name is an ordinary word ("Installer"), which matched product
+        # names such as "Windows Installer" - not a leak (#114).
+        $accounts = @(@(Get-CimInstance Win32_Service | ForEach-Object { [string]$_.StartName }) + @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskPath -notlike '\Microsoft\*' } | ForEach-Object { [string]$_.Principal.UserId }) |
             Where-Object { $_ } | ForEach-Object { ($_ -split '\\')[-1].TrimStart('.') } |
             Where-Object { $_.Length -ge 3 -and $_ -notmatch '^(SYSTEM|LocalSystem|LOCAL SERVICE|LocalService|NETWORK SERVICE|NetworkService|INTERACTIVE|Users|Administrators|Administrator|Everyone|Guest)$' -and $_ -notmatch '^S-1-' } | Sort-Object -Unique)
         $leaked = @($accounts | Where-Object { $a = $_; @($texts | Where-Object { $_ -match ('(?<![\w.-])' + [regex]::Escape($a) + '(?![\w-])') }).Count -gt 0 })
+        # Where a leak is (#114): the account's source and the JSON rows and
+        # fields holding it, with the name itself replaced. A public CI log
+        # must never show the runner's account names.
+        if ($leaked.Count -gt 0) {
+            $leakJson = [IO.File]::ReadAllText($redJson[0].FullName) | ConvertFrom-Json
+            $i = 0
+            foreach ($a in $leaked) {
+                $i++
+                # Case-insensitive, like the -match that found the leak.
+                $pattern = '(?i)(?<![\w.-])' + [regex]::Escape($a) + '(?![\w-])'
+                $sources = @()
+                if (@(Get-CimInstance Win32_Service | Where-Object { ([string]$_.StartName -split '\\')[-1].TrimStart('.') -eq $a }).Count) { $sources += 'service logon account' }
+                foreach ($t in @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { ([string]$_.Principal.UserId -split '\\')[-1].TrimStart('.') -eq $a })) {
+                    $sources += $(if ($t.TaskPath -like '\Microsoft\*') { 'task principal (Microsoft task)' } else { 'task principal (non-Microsoft task)' })
+                }
+                $where = @()
+                foreach ($r in @($leakJson.Results)) {
+                    foreach ($field in 'Item', 'Value', 'Details', 'Recommendation', 'Source', 'Command') {
+                        $v = [string]$r.$field
+                        $m = [regex]::Match($v, $pattern)
+                        if (-not $m.Success) { continue }
+                        $before = $v.Substring(0, $m.Index)
+                        $context = 'text'
+                        if ($before -match '(?i)\\Users\\$') { $context = 'user profile path' } elseif ($before -match '[\\/]$') { $context = 'path' } elseif ($before -match '(?i)WinNT://[^/]*/$') { $context = 'WinNT path' }
+                        $where += ('{0}/{1}/{2} ({3})' -f $r.Area, ([regex]::Replace([string]$r.Item, $pattern, '<leak>')), $field, $context)
+                    }
+                }
+                foreach ($k in @($leakJson.Facts.PSObject.Properties)) { if ([regex]::IsMatch([string]$k.Value, $pattern)) { $where += ('Facts/' + $k.Name) } }
+                # Anywhere else in the raw JSON (Snapshot, CheckRuns, property
+                # names): the surrounding text, with the name masked.
+                $rawJson = [IO.File]::ReadAllText($redJson[0].FullName)
+                foreach ($m in @([regex]::Matches($rawJson, $pattern) | Select-Object -First 5)) {
+                    $start = [Math]::Max(0, $m.Index - 60)
+                    $snippet = $rawJson.Substring($start, [Math]::Min($rawJson.Length - $start, $m.Length + 120))
+                    $where += ('raw JSON: ...' + ([regex]::Replace($snippet, $pattern, '<leak>') -replace '\s+', ' ') + '...')
+                }
+                if ([regex]::IsMatch([IO.File]::ReadAllText($redHtml[0].FullName), $pattern) -and $where.Count -eq 0) { $where += 'HTML only' }
+                Write-Host ('::warning title=Redaction leak {0}::source: {1}; found in: {2}' -f $i, ((@($sources | Sort-Object -Unique) -join ', ')), ((@($where | Select-Object -First 15) -join '; ')))
+            }
+        }
         Assert-That ($leaked.Count -eq 0) ('Redacted output has none of the runner''s ' + $accounts.Count + ' service and task account names' + $(if ($leaked.Count) { ' (leaked ' + $leaked.Count + ')' } else { '' }))
         $redObj = Test-ResultJson $redJson[0].FullName 'Pre'
         if ($redObj) { Assert-That ([bool]$redObj.Redacted) 'Redacted JSON has Redacted = true' }
