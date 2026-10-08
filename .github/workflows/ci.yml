@@ -6,7 +6,8 @@ on:
     branches: [main]
   # Weekly run on main, so changes in the runner images (Windows updates,
   # PowerShell, tools) show up even when nobody opens a pull request.
-  # A failed scheduled run opens or updates an issue (job "notify").
+  # A failed scheduled run, or a failed run for a push to main, opens or
+  # updates an issue (job "notify").
   schedule:
     - cron: '17 5 * * 1'   # Mondays 05:17 UTC
   workflow_dispatch:
@@ -108,13 +109,16 @@ jobs:
         run: ./build/Invoke-CiLint.ps1 -FailOn Warning
 
   notify:
-    # Makes a failed scheduled run visible: opens an issue, or comments on the
-    # open one, instead of relying on someone reading the Actions tab.
-    name: notify (scheduled run failed)
+    # Makes a failed run on main visible: opens an issue, or comments on the
+    # open one, instead of relying on someone reading the Actions tab. Covers
+    # the weekly run and every push to main (#123): main was red on two
+    # merges in a row without anyone noticing.
+    name: notify (failed run on main)
     needs: [pester, smoke, lint]
     if: >-
       always() && (
         (github.event_name == 'schedule' && contains(needs.*.result, 'failure')) ||
+        (github.event_name == 'push' && contains(needs.*.result, 'failure')) ||
         (github.event_name == 'workflow_dispatch' && inputs.test_notification)
       )
     runs-on: ubuntu-latest
@@ -128,14 +132,23 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RESULTS: 'pester=${{ needs.pester.result }}, smoke=${{ needs.smoke.result }}, lint=${{ needs.lint.result }}'
           TEST: ${{ github.event_name == 'workflow_dispatch' }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
         run: |
-          title='Scheduled CI run failed'
-          if [ "$TEST" = 'true' ]; then title='Scheduled CI run failed (notification test)'; fi
+          # A push and a scheduled run get different titles, so a red merge is not
+          # mistaken for image drift.
+          if [ "$GITHUB_EVENT_NAME" = 'push' ]; then
+            title='CI failed on main'
+            cause='Commit: '"$COMMIT_URL"'. Fix it in a branch (or revert the commit) before the next release: a release from a red commit is not tested.'
+          else
+            title='Scheduled CI run failed'
+            cause='A change in the runner image (Windows updates, PowerShell, tools) can cause this without a code change.'
+          fi
+          if [ "$TEST" = 'true' ]; then title="$title (notification test)"; fi
           body="The ${GITHUB_EVENT_NAME} CI run on main did not pass: ${RESULTS}.
 
           Run: ${RUN_URL}
 
-          A change in the runner image (Windows updates, PowerShell, tools) can cause this without a code change. Open the run, fix the cause in a branch, and close this issue with a link to the fix."
+          ${cause} Open the run, fix the cause in a branch, and close this issue with a link to the fix."
           existing=$(gh issue list --state open --search "\"${title}\" in:title" --json number,title --jq ".[] | select(.title == \"${title}\") | .number" | head -n 1)
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --body "$body"
