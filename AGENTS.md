@@ -38,8 +38,8 @@ The repo follows the GitHub workflow skills in `.claude/skills/` (source of trut
 2. **One branch per issue**, created with `gh issue develop <N> --name <type>/<N>-<slug> --base main --checkout`. Never commit to `main`.
 3. **Conventional commits**, subject 50 characters or fewer, body says why. End with the co-author trailer your tool requires.
 4. **PR body starts with `Refs #N`.** Use `Closes #N` only after every acceptance criterion has evidence.
-5. **CI must be green** (`gh pr checks`) before merge. Merge with `gh pr merge <N> --merge`. Branch protection is not available on this plan, so merge discipline is the control.
-6. **Security findings** that are exploitable never go in a public issue; contact the maintainer (see `SECURITY.md`).
+5. **CI must be green** (`gh pr checks`) before merge. Merge with `gh pr merge <N> --merge`. A ruleset on `main` enforces this: changes go through a pull request, the PR checks must pass, and force-push and deletion are blocked. Reviews are encouraged but not required.
+6. **Security findings** that are exploitable never go in a public issue; report them privately through the Security tab (see `SECURITY.md`).
 
 | Task | Skill |
 |---|---|

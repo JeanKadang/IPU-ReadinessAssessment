@@ -15,7 +15,7 @@ commits show the wrong author.
    Invoke-Pester .\tests -Output Detailed
    ```
 5. Open a pull request using the template. Reference the issue with `Refs #N`. Release notes are built from PR labels: a workflow adds them automatically (`feat/` branch → `enhancement`, `fix/` → `bug`, changed paths → `documentation`, `testing`, `tooling`; see `.github/labeler.yml`). Check them and add or remove labels by hand when they don't fit; the workflow never removes a label.
-6. Merge with a merge commit once CI is green and the other maintainer has reviewed.
+6. Merge with a merge commit once CI is green. A review by the other maintainer is welcome, but not required.
 
 ## What CI runs
 
@@ -28,7 +28,7 @@ commits show the wrong author.
 | `release` (workflow *Release*) | ubuntu-latest | Publishes a release: **Actions → Release → Run workflow** on `main` with the version (for example `4.1.0`), or push a tag `v4.1.0`. The version must match the script header and CHANGELOG |
 | `notify (scheduled run failed)` | ubuntu-latest | Only for the weekly run on `main` (Mondays): opens or updates the issue "Scheduled CI run failed" |
 
-The repository is private, so Actions minutes are limited and Windows minutes count double. Pull requests therefore skip the windows-2022 smoke jobs, and a newer push cancels the run still in progress on the same branch. Job names are stable, so a ruleset can require them (require only the jobs that run on pull requests). When GitHub retires or adds a Windows Server image, change
+Pull requests currently skip the windows-2022 smoke jobs (a cost saving from when the repository was private, #85), and a newer push cancels the run still in progress on the same branch. Job names are stable, so the ruleset on `main` requires them by name: only the jobs that run on pull requests are required (pester on both shells, smoke on windows-2025, lint). When GitHub retires or adds a Windows Server image, change
 the `smoke` matrix in `.github/workflows/ci.yml` and this table in the same pull request.
 
 ## Conventions
