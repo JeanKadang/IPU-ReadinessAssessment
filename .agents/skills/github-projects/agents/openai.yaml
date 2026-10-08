@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub Projects"
+  short_description: "Set up and maintain GitHub Projects boards"
+  default_prompt: "Use $github-projects to design or audit this shared GitHub project board."

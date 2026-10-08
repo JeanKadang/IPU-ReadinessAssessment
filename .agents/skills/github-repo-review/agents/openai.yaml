@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub Repo Review"
+  short_description: "Audit a GitHub repository and its roadmap"
+  default_prompt: "Use $github-repo-review to perform an evidence-based repository quality audit."

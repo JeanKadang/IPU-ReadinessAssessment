@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub Repository Bootstrap"
+  short_description: "Create and verify a new GitHub repository safely"
+  default_prompt: "Use $github-repo-bootstrap to create or finish bootstrapping this GitHub repository by the approved workflow."

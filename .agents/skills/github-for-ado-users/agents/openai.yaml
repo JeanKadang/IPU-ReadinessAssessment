@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub for ADO Users"
+  short_description: "Map Azure DevOps concepts to GitHub"
+  default_prompt: "Use $github-for-ado-users to map my Azure DevOps workflow to GitHub."
