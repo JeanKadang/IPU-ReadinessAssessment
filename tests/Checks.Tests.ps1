@@ -95,6 +95,10 @@ BeforeAll {
         if ($script:Fake.AdError) { throw $script:Fake.AdError }
         return @{ '{11111111-1111-1111-1111-111111111111}' = @{ Name = 'Server 2016-2022 only'; Queries = @([pscustomobject]@{ Namespace = 'root\CIMv2'; Query = "SELECT * FROM Win32_OperatingSystem WHERE Version LIKE '10.0.14393%' OR Version LIKE '10.0.20348%'" }) } }
     }
+    function Get-AdComputerDn {
+        if ($script:Fake.AdError) { throw $script:Fake.AdError }
+        return 'CN=SRV01,OU=Web,OU=Servers,DC=corp,DC=example,DC=test'
+    }
     function Get-GroupPolicyLastApplied {
         if ($script:Fake.ContainsKey('GpLastApplied')) { return $script:Fake.GpLastApplied }
         return (Get-Date).AddHours(-3)
@@ -597,6 +601,9 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             (Get-Row 'GROUP_POLICY' 'GroupPolicyLastApplied')[0].Status | Should -Be 'OK'
             ($script:Data.Snapshot.Gpos -join ',') | Should -Be 'Default Domain Policy,Server Baseline'
             $script:Data.Snapshot.Groups | Should -Contain 'CORP\Patch Ring 2'
+            (Get-Row 'GROUP_POLICY' 'ComputerOU')[0].Value | Should -Be 'corp.example.test/Servers/Web'   # (#99)
+            $script:Data.AdLocation | Should -Be 'corp.example.test/Servers/Web'
+            $script:Data.Snapshot.Ou | Should -Be 'CN=SRV01,OU=Web,OU=Servers,DC=corp,DC=example,DC=test'
         }
         It 'a workgroup server: local policy only, no MANUAL (#80)' {
             $script:Fake.Cim['Win32_ComputerSystem'].PartOfDomain = $false
@@ -606,6 +613,7 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             (Get-Row 'GROUP_POLICY' 'GPO: Local Group Policy')[0].Value | Should -Be 'Applied'
             (Get-Row 'GROUP_POLICY' 'ADGroup')[0].Value | Should -Be 'Not applicable (workgroup)'
             @($script:Results | Where-Object { $_.Area -eq 'GROUP_POLICY' -and $_.Status -eq 'MANUAL' }).Count | Should -Be 0
+            $script:Data.AdLocation | Should -Be 'Not applicable (workgroup)'   # (#99)
         }
         It 'a domain member that cannot reach AD: MANUAL, GPO list still shown, groups not in the snapshot (#80)' {
             $script:Fake.AdError = 'The server is not operational.'
@@ -614,6 +622,8 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             (Get-Row 'GROUP_POLICY' 'GPO: Server Baseline')[0].Status | Should -Be 'INFO'
             (Get-Row 'GROUP_POLICY' 'ADGroup').Count | Should -Be 0
             $script:Data.Snapshot.ContainsKey('Groups') | Should -BeFalse
+            $script:Data.AdLocation | Should -Be 'Not readable (domain not reachable)'   # (#99)
+            $script:Data.Snapshot.ContainsKey('Ou') | Should -BeFalse
         }
         It 'gpresult failing on a domain member: MANUAL and no GPO list in the snapshot (#80)' {
             $script:Fake.GpResultError = 'gpresult wrote no result (exit 1)'

@@ -632,6 +632,34 @@ function Get-AdComputerGroup {
     return ,@($names | Sort-Object -Unique)
 }
 
+function Get-AdComputerDn {
+    # The computer object's distinguished name, read as the computer account.
+    $searcher = New-Object System.DirectoryServices.DirectorySearcher
+    $searcher.Filter = '(&(objectCategory=computer)(sAMAccountName=' + $env:COMPUTERNAME + '$))'
+    $searcher.ClientTimeout = [TimeSpan]::FromSeconds(30)
+    $null = $searcher.PropertiesToLoad.Add('distinguishedName')
+    $hit = $searcher.FindOne()
+    if (-not $hit) { throw ('Computer object ' + $env:COMPUTERNAME + '$ not found in AD') }
+    return [string]$hit.Properties['distinguishedname'][0]
+}
+
+function ConvertTo-AdLocation {
+    # Pure (#99): "CN=SRV01,OU=Web,OU=Servers,DC=corp,DC=example,DC=test" ->
+    # "corp.example.test/Servers/Web" (the way AD tools show the OU path).
+    # Commas escaped with a backslash inside a name are kept.
+    param([string]$DistinguishedName)
+    if (-not $DistinguishedName) { return '' }
+    $parts = [regex]::Split($DistinguishedName, '(?<!\\),')
+    $dc = @(); $ou = @()
+    foreach ($p in $parts) {
+        if ($p -match '^\s*DC=(.+)$') { $dc += $Matches[1] }
+        elseif ($p -match '^\s*(OU|CN)=(.+)$') { $ou += ($Matches[2] -replace '\\,', ',') }
+    }
+    if ($ou.Count -gt 0) { $ou = $ou[1..($ou.Count - 1)] }   # drop the computer's own CN
+    [array]::Reverse($ou)
+    return ((@(($dc -join '.')) + @($ou)) -join '/')
+}
+
 function Get-WmiFilterQuery {
     # WMI filter name and queries for the given GPO GUIDs, from AD.
     # Returns GUID -> @{ Name; Queries }; GPOs without a filter are absent.
@@ -1354,6 +1382,9 @@ function Compare-IPUSnapshot {
         @{ Name='File shares';       Prop='Shares';       Status='ACTION';  Rec='These folders were shared before the upgrade. Re-create the shares with their permissions (see the pre-upgrade report) and test access from a client.' },
         @{ Name='AD groups';         Prop='Groups';       Status='WARNING'; Rec='The computer was in these groups before. Check the AD group memberships (patch rings, GPO filtering, certificate enrolment).' }
     )
+    if ($Before.Ou -and $After.Ou -and [string]$Before.Ou -ne [string]$After.Ou) {
+        $diff += (& $make 'WARNING' 'Computer object moved in AD' ([string]$After.Ou) ('Before: ' + [string]$Before.Ou) 'The computer object is in another OU than before the upgrade, so other GPOs may apply. Move it back or confirm the new location with the AD team.')
+    }
     if ($Before.Uac -and $After.Uac -and [string]$Before.Uac -ne [string]$After.Uac) {
         $diff += (& $make 'WARNING' 'UAC changed' ([string]$After.Uac) ('Before: ' + [string]$Before.Uac) 'User Account Control is set differently after the upgrade. Confirm the change is intended (usually set by Group Policy).')
     }
@@ -1910,7 +1941,7 @@ function Protect-ReportText {
         $t = [regex]::Replace($t, '(?<![\w-])' + [regex]::Escape($n) + '(?![\w])', { param($m) Get-RedactionPlaceholder $ctx $kind $m.Value }, $ic)
     }
     # Group Policy link paths: every OU after the (already replaced) domain (#100)
-    $t = [regex]::Replace($t, '(?<!WinNT://)\b(DOMAIN-\d+|HOST-\d+)((?:/[^/|;<>"\[\]\r\n]+)+)', {
+    $t = [regex]::Replace($t, '(?<!WinNT://)\b(DOMAIN-\d+|HOST-\d+)((?:/[^/|;<>"\[\]\r\n]*[^/|;<>"\[\]\r\n\s])+)', {
         param($m)
         $parts = @($m.Groups[2].Value.Split('/') | Where-Object { $_ } | ForEach-Object {
             $c = $_.Trim()
@@ -2296,6 +2327,22 @@ Register-Check -Id 'grouppolicy' -Name 'Group Policy and AD groups' -Script {
             $groups = @($groups | Where-Object { $_ })
             if ($gp) { $filters = Get-WmiFilterQuery @($gp.Gpos | ForEach-Object { $_.Guid }) }
         } catch { $adRead = $false; $adError = $_.Exception.Message; Write-Swallowed $_ }
+    }
+    # Where the computer object is in AD (#99): the OU decides which GPOs link.
+    $dn = ''
+    if ($domainMember -and $adRead) {
+        try { $dn = Get-AdComputerDn } catch { Write-Swallowed $_ }
+    }
+    if ($dn) {
+        $script:Data.AdLocation = ConvertTo-AdLocation $dn
+        Add-Result 'GROUP_POLICY' 'ComputerOU' 'INFO' $script:Data.AdLocation ('DistinguishedName=' + $dn) -Source 'AD computer object (distinguishedName)'
+        if ($script:Data.Snapshot) { $script:Data.Snapshot.Ou = $dn }
+    } elseif (-not $domainMember) {
+        $script:Data.AdLocation = 'Not applicable (workgroup)'
+    } elseif ($adRead) {
+        $script:Data.AdLocation = 'Not readable'
+    } else {
+        $script:Data.AdLocation = 'Not readable (domain not reachable)'
     }
     $last = $null
     if ($domainMember) { $last = Get-GroupPolicyLastApplied }
@@ -3586,6 +3633,7 @@ function New-IPUReportHtml {
         @('Windows activation', (Get-ResultText $Results 'LICENSING' 'CurrentActivation')),
         @('Platform', (Get-ResultText $Results 'PLATFORM' 'PhysicalOrVirtual')),
         @('Domain role', $script:Data.DomainRoleText),
+        @('AD location (OU)', $script:Data.AdLocation),
         @('UAC', $script:Data.UacSummary),
         @('SQL Server', (& $factValue $script:Data.SqlSummary 'sql')),
         @('Endpoint protection', (& $factValue $epp 'antivirus')),
@@ -3796,6 +3844,7 @@ function New-AssessmentJsonObject {
             Platform         = (Get-ResultText $Results 'PLATFORM' 'PhysicalOrVirtual')
             DomainRole       = $script:Data.DomainRoleText
             Uac              = $script:Data.UacSummary
+            AdLocation       = $script:Data.AdLocation
             SqlServer        = $script:Data.SqlSummary
             Activation       = $script:Data.ActivationSummary
             CDrive           = $script:Data.CSummary

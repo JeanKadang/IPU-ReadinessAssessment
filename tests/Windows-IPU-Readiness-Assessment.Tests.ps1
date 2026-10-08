@@ -2135,3 +2135,32 @@ Describe 'File shares in the post-upgrade comparison (#95)' {
         $row.Details | Should -Be 'Scans'
     }
 }
+
+Describe 'OU path of the computer object (#99)' {
+    It '<Dn> -> <Expected>' -TestCases @(
+        @{ Dn = 'CN=SRV01,OU=Web,OU=Servers,DC=corp,DC=example,DC=test'; Expected = 'corp.example.test/Servers/Web' }
+        @{ Dn = 'CN=SRV02,CN=Computers,DC=corp,DC=example,DC=test';     Expected = 'corp.example.test/Computers' }
+        @{ Dn = 'CN=SRV03,OU=Sales\, North,DC=corp,DC=test';             Expected = 'corp.test/Sales, North' }
+        @{ Dn = '';                                                       Expected = '' }
+    ) {
+        ConvertTo-AdLocation $Dn | Should -Be $Expected
+    }
+    It 'the post-upgrade comparison reports a moved computer object, and nothing when unchanged' {
+        $before = @{ Ou = 'CN=SRV01,OU=Web,DC=corp,DC=test' }
+        $moved = Compare-IPUSnapshot $before @{ Ou = 'CN=SRV01,CN=Computers,DC=corp,DC=test' }
+        $row = @($moved | Where-Object { $_.Item -eq 'Computer object moved in AD' })
+        $row.Count | Should -Be 1
+        $row[0].Status | Should -Be 'WARNING'
+        $same = Compare-IPUSnapshot $before $before
+        @($same | Where-Object { $_.Item -eq 'Computer object moved in AD' }).Count | Should -Be 0
+        $old = Compare-IPUSnapshot @{} @{ Ou = 'CN=SRV01,DC=corp,DC=test' }
+        @($old | Where-Object { $_.Item -eq 'Computer object moved in AD' }).Count | Should -Be 0
+    }
+    It 'redaction replaces the OU path and the distinguished name, including the DC= parts' {
+        $script:Data = @{}
+        $ctx = New-RedactionContext 'SRV01' 'corp.example.test'
+        $out = Protect-ReportText 'corp.example.test/Servers/Web | DistinguishedName=CN=SRV01,OU=Web,OU=Servers,DC=corp,DC=example,DC=test' $ctx
+        $out | Should -Not -Match 'corp|example|Servers|Web|SRV01'
+        $out | Should -Match '^(DOMAIN-\d+)/NAME-\d+/NAME-\d+ \| DistinguishedName=CN=NAME-\d+,OU=NAME-\d+,OU=NAME-\d+,DC=\1$'
+    }
+}

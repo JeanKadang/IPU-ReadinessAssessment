@@ -39,6 +39,7 @@
         "Platform": { "$ref": "#/definitions/text" },
         "DomainRole": { "$ref": "#/definitions/text" },
         "Uac": { "$ref": "#/definitions/text" },
+        "AdLocation": { "$ref": "#/definitions/text" },
         "SqlServer": { "$ref": "#/definitions/text" },
         "Activation": { "$ref": "#/definitions/text" },
         "CDrive": { "$ref": "#/definitions/text" },
@@ -113,6 +114,7 @@
         "Hosts": { "$ref": "#/definitions/stringList" },
         "Tasks": { "$ref": "#/definitions/stringList" },
         "Gpos": { "$ref": "#/definitions/stringList" },
+        "Ou": { "$ref": "#/definitions/text" },
         "Shares": { "$ref": "#/definitions/stringList" },
         "Groups": { "$ref": "#/definitions/stringList" },
         "Uac": { "$ref": "#/definitions/text" }
