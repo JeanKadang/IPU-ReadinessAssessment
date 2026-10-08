@@ -664,6 +664,11 @@ function Get-GroupPolicyLastApplied {
     return (ConvertFrom-FileTimeValue $hi.Value $lo.Value)
 }
 
+function Test-Ps4CompatibilityDemo {
+    # Deliberately incompatible (PR demonstration for #94); removed in the next commit.
+    return (New-TemporaryFile)
+}
+
 function New-ZipFromFolder {
     # Zips a folder with .NET 4.5 (System.IO.Compression.FileSystem), which
     # Windows PowerShell 4.0 does not load by default. The type is resolved
