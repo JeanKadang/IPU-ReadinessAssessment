@@ -363,6 +363,7 @@ $script:AreaMap = @{
     'SQL'                = @{ Name='SQL Server';                  Chapter='Workloads and Applications' }
     'DOMAIN_CONTROLLER'  = @{ Name='Domain controller';           Chapter='Workloads and Applications' }
     'WORKLOAD'           = @{ Name='Roles and workloads';         Chapter='Workloads and Applications' }
+    'FILE_SHARES'        = @{ Name='File shares';                 Chapter='Workloads and Applications' }
     'ROLES'              = @{ Name='Installed roles/features';    Chapter='Workloads and Applications' }
     'APPLICATIONS'       = @{ Name='Installed applications';      Chapter='Workloads and Applications' }
     'PLATFORM'           = @{ Name='Platform';                    Chapter='Hardware and Virtualization' }
@@ -728,6 +729,7 @@ $script:OptionalModules = [ordered]@{
     NetTCPIP       = 'listening ports, routes and IP configuration'
     ScheduledTasks = 'scheduled tasks'
     Dism           = 'Setup compatibility scan (image selection)'
+    SmbShare       = 'file shares'
 }
 
 function Get-PrerequisiteDecision {
@@ -1349,6 +1351,7 @@ function Compare-IPUSnapshot {
         @{ Name='Windows features';  Prop='Features';     Status='WARNING'; Rec='Features removed by Setup. Confirm nothing depends on them.' },
         @{ Name='Scheduled tasks';   Prop='Tasks';        Status='WARNING'; Rec='Re-create missing tasks and confirm their run-as credentials.' },
         @{ Name='Applied GPOs';      Prop='Gpos';         Status='WARNING'; Rec='These GPOs applied before the upgrade and no longer do. Check their WMI filters (often a Windows version filter) and security filtering.' },
+        @{ Name='File shares';       Prop='Shares';       Status='ACTION';  Rec='These folders were shared before the upgrade. Re-create the shares with their permissions (see the pre-upgrade report) and test access from a client.' },
         @{ Name='AD groups';         Prop='Groups';       Status='WARNING'; Rec='The computer was in these groups before. Check the AD group memberships (patch rings, GPO filtering, certificate enrolment).' }
     )
     if ($Before.Uac -and $After.Uac -and [string]$Before.Uac -ne [string]$After.Uac) {
@@ -2671,6 +2674,41 @@ Register-Check -Id 'workloads' -Name 'Roles and workloads' -Script {
     foreach ($a in $script:Data.Apps) {
         Add-Result 'APPLICATIONS' $a.Name 'INFO' ('Version=' + $a.Version) @(('Publisher=' + $a.Publisher),('InstallDate=' + $a.InstallDate)) -Source 'Uninstall registry (no Win32_Product)'
     }
+}
+
+# ---------------------------------------------------------------------------
+Register-Check -Id 'fileshares' -Name 'File shares' -Script {
+    # #95: what is shared, from where and to whom, so owners can plan and
+    # test, and the post-upgrade run can report a share that is gone.
+    $role = Get-FeatureState 'FS-FileServer'
+    if (-not (Test-CommandAvailable 'Get-SmbShare')) {
+        if ($role -eq $true) { Add-Result 'FILE_SHARES' 'FileShares' 'MANUAL' 'Get-SmbShare is not available' -Recommendation 'List the shares manually (net share) and record their share permissions before the change.' -Kind 'Observation' -Source 'SmbShare module' }
+        return
+    }
+    $printing = (Get-FeatureState 'Print-Server') -eq $true
+    $shares = @(Get-SmbShare -ErrorAction Stop | Where-Object { -not $_.Special -and ($printing -or $_.Name -ne 'print$') } | Sort-Object Name)
+    if ($shares.Count -eq 0) {
+        $note = 'No shares besides the default administrative shares'
+        if ($role -eq $true) { Add-Result 'FILE_SHARES' 'FileShares' 'INFO' $note 'The File Server role is installed but shares nothing.' -Source 'Get-SmbShare' }
+        else { Add-Result 'FILE_SHARES' 'FileShares' 'INFO' $note -Source 'Get-SmbShare' }
+        return
+    }
+    Add-Result 'FILE_SHARES' 'FileShares' 'WARNING' ('Count=' + $shares.Count) (@($shares | ForEach-Object { $_.Name }) -join ', ') -Recommendation 'Shared folders must be reachable again right after the upgrade. Test access from a client with the share owners, and keep this list (with permissions) for the comparison afterwards.' -Source 'Get-SmbShare'
+    foreach ($sh in $shares) {
+        Add-RedactionLiteral ([string]$sh.Name) 'NAME'
+        if ($sh.Description) { Add-RedactionLiteral ([string]$sh.Description) 'NAME' }
+        $access = @()
+        if (Test-CommandAvailable 'Get-SmbShareAccess') {
+            try {
+                $access = @(Get-SmbShareAccess -Name $sh.Name -ErrorAction Stop | ForEach-Object { [string]$_.AccountName + ': ' + [string]$_.AccessRight + $(if ([string]$_.AccessControlType -eq 'Deny') { ' (Deny)' } else { '' }) })
+            } catch { Write-Swallowed $_ }
+        }
+        $details = @(('Path=' + $sh.Path))
+        if ($sh.Description) { $details += ('Description=' + $sh.Description) }
+        $details += ('Share permissions: ' + $(if ($access.Count) { $access -join '; ' } else { 'not readable' }))
+        Add-Result 'FILE_SHARES' ('Share: ' + $sh.Name) 'INFO' ([string]$sh.Path) $details -Source 'Get-SmbShare, Get-SmbShareAccess'
+    }
+    if ($script:Data.Snapshot) { $script:Data.Snapshot.Shares = @($shares | ForEach-Object { [string]$_.Name }) }
 }
 
 # ---------------------------------------------------------------------------

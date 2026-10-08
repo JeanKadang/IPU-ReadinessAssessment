@@ -78,6 +78,8 @@ BeforeAll {
         }
     }
     function Get-InstalledApplication { return @($script:Fake.Apps) }
+    function Get-SmbShare { [CmdletBinding()] param() return @($script:Fake.Shares) }
+    function Get-SmbShareAccess { [CmdletBinding()] param([string]$Name) return @($script:Fake.ShareAccess[$Name]) }
     function Get-GpResultXml {
         if ($script:Fake.GpResultError) { throw $script:Fake.GpResultError }
         if ($script:Fake.GpResultXml) { return $script:Fake.GpResultXml }
@@ -271,6 +273,7 @@ BeforeAll {
         if ($env:SystemRoot) { $hosts = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts' }
         $f = @{
             NativeCalls = @(); CimThrow = @(); MissingCommands = @('Get-Cluster', 'Get-VMSwitch')
+            Shares = @(); ShareAccess = @{}
             SystemLocale = 'en-US'
             Cim = @{
                 'Win32_OperatingSystem' = [pscustomobject]@{ Caption = 'Microsoft Windows Server 2016 Standard'; BuildNumber = '14393'; OSArchitecture = '64-bit'; OSLanguage = 1033; LastBootUpTime = (Get-Date).AddDays(-5); InstallDate = (Get-Date -Year 2019 -Month 3 -Day 1) }
@@ -409,8 +412,8 @@ BeforeAll {
 AfterAll { Remove-Item Env:\IPU_ASSESSMENT_LIBRARY_ONLY -ErrorAction SilentlyContinue }
 
 Describe 'Check registry' {
-    It 'registers 32 checks with unique ids' {
-        $script:AllChecks.Count | Should -Be 32
+    It 'registers 33 checks with unique ids' {
+        $script:AllChecks.Count | Should -Be 33
         @($script:AllChecks | Group-Object Id | Where-Object { $_.Count -gt 1 }).Count | Should -Be 0
     }
     It 'docs/checks.md describes every registered check' {
@@ -882,6 +885,62 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             Reset-FakeServerKeep
             $null = Invoke-TestCheck 'workloads'
             (Get-Row 'ROLES' 'Inventory')[0].Status | Should -Be 'MANUAL'
+        }
+    }
+
+    Context 'fileshares' {
+        BeforeEach {
+            $script:Fake.Shares = @(
+                [pscustomobject]@{ Name = 'ADMIN$'; Path = 'C:\Windows'; Description = 'Remote Admin'; Special = $true },
+                [pscustomobject]@{ Name = 'C$'; Path = 'C:\'; Description = 'Default share'; Special = $true },
+                [pscustomobject]@{ Name = 'Data'; Path = 'D:\Data'; Description = 'Team data'; Special = $false },
+                [pscustomobject]@{ Name = 'print$'; Path = 'C:\Windows\system32\spool\drivers'; Description = 'Printer Drivers'; Special = $false }
+            )
+            $script:Fake.ShareAccess = @{ 'Data' = @([pscustomobject]@{ AccountName = 'CORP\Data Owners'; AccessRight = 'Full'; AccessControlType = 'Allow' }, [pscustomobject]@{ AccountName = 'Everyone'; AccessRight = 'Read'; AccessControlType = 'Allow' }) }
+        }
+        It 'lists shares with path and permissions, without administrative shares, and keeps them in the snapshot (#95)' {
+            $script:Fake.Features['FS-FileServer'] = $true
+            Reset-FakeServerKeep
+            (Invoke-TestCheck 'fileshares').Outcome | Should -Be 'Completed'
+            $sum = (Get-Row 'FILE_SHARES' 'FileShares')[0]
+            $sum.Status | Should -Be 'WARNING'
+            $sum.Details | Should -Be 'Data'
+            $row = (Get-Row 'FILE_SHARES' 'Share: Data')[0]
+            $row.Value | Should -Be 'D:\Data'
+            $row.Details | Should -Be 'Path=D:\Data | Description=Team data | Share permissions: CORP\Data Owners: Full; Everyone: Read'
+            (Get-Row 'FILE_SHARES' 'Share: ADMIN$').Count | Should -Be 0
+            (Get-Row 'FILE_SHARES' 'Share: print$').Count | Should -Be 0
+            ($script:Data.Snapshot.Shares -join ',') | Should -Be 'Data'
+        }
+        It 'shows print$ when the Print Server role is installed (#95)' {
+            $script:Fake.Features['Print-Server'] = $true
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'fileshares'
+            (Get-Row 'FILE_SHARES' 'Share: print$').Count | Should -Be 1
+        }
+        It 'the role without shares says so (#95)' {
+            $script:Fake.Features['FS-FileServer'] = $true
+            $script:Fake.Shares = @($script:Fake.Shares | Where-Object { $_.Special })
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'fileshares'
+            $row = (Get-Row 'FILE_SHARES' 'FileShares')[0]
+            $row.Status | Should -Be 'INFO'
+            $row.Details | Should -Match 'role is installed but shares nothing'
+        }
+        It 'no role and no shares: one INFO row (#95)' {
+            $script:Fake.Features['FS-FileServer'] = $false
+            $script:Fake.Shares = @($script:Fake.Shares | Where-Object { $_.Special })
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'fileshares'
+            @($script:Results | Where-Object { $_.Area -eq 'FILE_SHARES' }).Count | Should -Be 1
+            (Get-Row 'FILE_SHARES' 'FileShares')[0].Status | Should -Be 'INFO'
+        }
+        It 'missing Get-SmbShare with the role is MANUAL (#95)' {
+            $script:Fake.Features['FS-FileServer'] = $true
+            $script:Fake.MissingCommands = @($script:Fake.MissingCommands) + 'Get-SmbShare'
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'fileshares'
+            (Get-Row 'FILE_SHARES' 'FileShares')[0].Status | Should -Be 'MANUAL'
         }
     }
 
