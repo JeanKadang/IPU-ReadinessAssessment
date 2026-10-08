@@ -5,6 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Report chapters open when they hold a finding to act on (WARNING and MANUAL too, not only BLOCKER and ACTION); a line explains the rule, *Expand all* / *Collapse all* buttons were added, and printing includes closed chapters (#97).
 - A server that is not in a domain is called "Workgroup server (standalone)" with its workgroup name, instead of "Standalone server" (#98).
 - "Status meaning" is shown right after the Summary, before the tables that use the statuses (#96).
 

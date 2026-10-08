@@ -383,6 +383,7 @@ Most severe on the left. The **overall status is the most severe *finding***.
 
 - **Hero**: computer, target, times, collector version, overall badge.
 - **Cards**: counts per finding status.
+- **Chapters**: a chapter opens by itself when it holds a finding to act on (BLOCKER, ACTION, WARNING or MANUAL). The others hold inventory and evidence and start closed. Use *Expand all* / *Collapse all* above the chapters. Printing or saving as PDF includes every chapter.
 - **Counters**: the BLOCKER, ACTION, WARNING and MANUAL counters at the top are links to the rows behind them; *Checklist items* and *Checks run* link to the checklist and to *Collector coverage*.
 - **Banners**: `PARTIAL REPORT` (slow checks unfinished) and `Not fully assessed` (a check failed, ran out of time, or was not started because the time budget was used up; the results for that area may be incomplete).
 - **Commands and links**: many recommendations show the exact command for this server, labelled **Check** (read-only, safe to run any time) or **Change** (changes the server: run it in the change window, after reading it). The *Copy* button copies it; in print the command is shown as text. The script itself never runs these commands. Where the right action depends on a vendor, there is a *Read more* link to the official page instead. A setting that comes from Group Policy says so, because a local command would be overwritten: change the GPO.

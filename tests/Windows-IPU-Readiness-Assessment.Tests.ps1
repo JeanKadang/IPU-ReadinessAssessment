@@ -2194,3 +2194,34 @@ Describe 'Domain role wording (#98)' {
         Get-DomainRoleText $Role $Domain | Should -Be $Expected
     }
 }
+
+Describe 'Report chapters open and closed (#97)' {
+    BeforeAll {
+        $script:Results.Clear(); $script:CheckRuns.Clear()
+        Add-Result 'STORAGE' 'PartitionAfterC' 'WARNING' 'Yes'                                    # finding -> Storage open
+        Add-Result 'SERVICES' 'AutomaticServices' 'INFO' 'Total=10'                              # evidence only -> closed
+        Add-Result 'RDP' 'NetworkLevelAuthentication' 'WARNING' 'Disabled' -Kind 'Observation'  # observation only -> closed
+        Add-Result 'BACKUP' 'VSSWriters' 'MANUAL' 'Unreadable'                                  # MANUAL finding -> open
+        $script:ChapterHtml = New-IPUReportHtml -Results $script:Results.ToArray() -CheckRuns $script:CheckRuns.ToArray() -OverallStatus 'WARNING' -CompletedTime (Get-Date)
+    }
+    It '<Chapter> is <State>' -TestCases @(
+        @{ Chapter = 'Storage';                        State = 'open' }
+        @{ Chapter = 'Backup and Recovery';            State = 'open' }
+        @{ Chapter = 'Services and Scheduled Tasks';   State = 'closed' }
+        @{ Chapter = 'Access and Remote Desktop';      State = 'closed' }
+    ) {
+        $tag = [string][regex]::Match([string]$script:ChapterHtml, '<details[^>]*><summary>' + [regex]::Escape($Chapter) + ' \(').Value
+        $tag | Should -Not -BeNullOrEmpty
+        [regex]::IsMatch($tag, '<details[^>]*\sopen[\s>]') | Should -Be ($State -eq 'open')
+    }
+    It 'explains the rule and offers Expand all / Collapse all buttons (hidden without JavaScript)' {
+        $script:ChapterHtml | Should -Match '<p class="chapters-note">Chapters with findings to act on are open'
+        $script:ChapterHtml | Should -Match '<button type="button" class="tgl" data-open="1">Expand all</button>'
+        $script:ChapterHtml | Should -Match '<button type="button" class="tgl" data-open="0">Collapse all</button>'
+        $script:ChapterHtml | Should -Match '\.js-only\{display:none\}'
+    }
+    It 'opens every chapter for printing and restores them afterwards' {
+        $script:ChapterHtml | Should -Match 'addEventListener\("beforeprint"'
+        $script:ChapterHtml | Should -Match 'addEventListener\("afterprint"'
+    }
+}

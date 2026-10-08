@@ -3697,6 +3697,7 @@ function New-IPUReportHtml {
 .ck{font-size:11px;font-weight:700;border-radius:4px;padding:2px 6px;border:1px solid var(--line);color:var(--ink)}.ck-change{border-color:var(--action);color:var(--action)}
 .copy{display:none;font:inherit;font-size:12px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:6px;padding:2px 8px;cursor:pointer}.js .copy{display:inline-block}.copy:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
 .more{margin-top:4px;font-size:12px}.more a{color:var(--heading)}
+.chapters-note{color:var(--muted);margin:18px 2px 6px}.js-only{display:none}.js .js-only{display:inline}.tgl{font:inherit;font-size:12px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:6px;padding:2px 8px;cursor:pointer}.tgl:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
 .note{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--info);border-radius:10px;padding:12px 16px;margin:14px 0}.card b{display:block;font-size:24px;font-weight:650}.card small{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
 section,details{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:14px 0}
 section{padding:18px 20px}h2{font-size:18px;margin:0 0 6px;color:var(--heading)}.lead{color:var(--muted);margin:0 0 12px}
@@ -3775,12 +3776,15 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
     }
 
 
+    [void]$sb.AppendLine('<p class="chapters-note">Chapters with findings to act on are open; the others hold inventory and evidence - open them as needed. Printing includes every chapter.<span class="js-only"> <button type="button" class="tgl" data-open="1">Expand all</button> <button type="button" class="tgl" data-open="0">Collapse all</button></span></p>')
     foreach ($chapter in $script:ChapterOrder) {
         $areas = @($script:AreaMap.Keys | Where-Object { $script:AreaMap[$_].Chapter -eq $chapter })
         $rows = @($Results | Where-Object { $areas -contains $_.Area -and $_.Kind -ne 'Checklist' } | Sort-Object @{Expression={Get-AreaName $_.Area}},@{Expression={Get-StatusRank $_.Status}},Item)
         if ($rows.Count -eq 0 -and $chapter -ne 'Assessment and Collector') { continue }
         $open = ''
-        if (@($rows | Where-Object { $_.Kind -eq 'Finding' -and $_.Status -in @('BLOCKER','ACTION') }).Count -gt 0) { $open = ' open' }
+        # Open when the chapter holds a finding to act on (#97); inventory and
+        # evidence chapters start closed.
+        if (@($rows | Where-Object { $_.Kind -eq 'Finding' -and $_.Status -in $script:FindingStatuses }).Count -gt 0) { $open = ' open' }
         $chapterId = ''
         if ($chapter -eq 'Assessment and Collector') {
             $chapterId = ' id="coverage"'
@@ -3808,7 +3812,7 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
     [void]$sb.AppendLine('<footer>Collector ' + (& $e $script:CollectorVersion) + ' | ' + @($Results).Count + ' records | Read-only local assessment. It does not prove backups, credentials, licensing or application/vendor support. Commands are shown, never run, by this script.</footer></div>')
     # Copy buttons (#79). Without JavaScript the buttons stay hidden and the
     # command text can be selected as usual.
-    [void]$sb.AppendLine('<script type="text/javascript">document.documentElement.className+=" js";document.addEventListener("click",function(e){var b=e.target;if(!b||!b.classList||!b.classList.contains("copy"))return;var t=b.getAttribute("data-cmd");var done=function(){b.textContent="Copied";setTimeout(function(){b.textContent="Copy"},1500)};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,function(){})}else{var a=document.createElement("textarea");a.value=t;document.body.appendChild(a);a.select();try{document.execCommand("copy");done()}catch(x){}document.body.removeChild(a)}});</script>')
+    [void]$sb.AppendLine('<script type="text/javascript">document.documentElement.className+=" js";document.addEventListener("click",function(e){var b=e.target;if(!b||!b.classList||!b.classList.contains("copy"))return;var t=b.getAttribute("data-cmd");var done=function(){b.textContent="Copied";setTimeout(function(){b.textContent="Copy"},1500)};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,function(){})}else{var a=document.createElement("textarea");a.value=t;document.body.appendChild(a);a.select();try{document.execCommand("copy");done()}catch(x){}document.body.removeChild(a)}});document.addEventListener("click",function(e){var b=e.target;if(!b||!b.classList||!b.classList.contains("tgl"))return;var o=b.getAttribute("data-open")==="1";var d=document.querySelectorAll("details");for(var i=0;i<d.length;i++){d[i].open=o}});var closedForPrint=[];window.addEventListener("beforeprint",function(){closedForPrint=[];var d=document.querySelectorAll("details:not([open])");for(var i=0;i<d.length;i++){d[i].open=true;closedForPrint.push(d[i])}});window.addEventListener("afterprint",function(){for(var i=0;i<closedForPrint.length;i++){closedForPrint[i].open=false}closedForPrint=[]});</script>')
     [void]$sb.AppendLine('</body></html>')
     return $sb.ToString()
 }
