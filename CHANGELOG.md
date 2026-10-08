@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `-RedactExisting <folder or report>` writes redacted copies of existing reports in seconds, without collecting anything; the originals are not changed (#101).
+
 ### Security
 - Redaction now also replaces host names in any domain (except documentation and vendor sites), the bare names of service and scheduled-task accounts, GPO and WMI filter names, OU names in Group Policy link paths and `DC=` components. A live run had shown these in a redacted report. The smoke test checks the redacted output for leftover host and account names (#100).
 
