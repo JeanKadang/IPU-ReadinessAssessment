@@ -23,7 +23,7 @@ commits show the wrong author.
 |---|---|---|
 | `pester (Windows PowerShell 5.1)`, `pester (PowerShell 7)` | windows-2025 | All Pester tests; coverage on PowerShell 7 |
 | `smoke (<shell>, windows-2025)`, `smoke (<shell>, windows-2022)` | windows-2025 on pull requests; both Windows Server images on pushes to `main`, the weekly run and manual runs | The real script end to end (Pre, Post, redacted, site data files), JSON checked against the schema |
-| `lint (PSScriptAnalyzer)` | windows-2025 | Fails on any warning |
+| `lint (PSScriptAnalyzer)` | windows-2025 | Fails on any warning. Also checks `src/` against Windows Server 2012 R2 / Windows PowerShell 4.0 (`PSScriptAnalyzerSettings.PS4.psd1`): a command, type or syntax that does not exist there fails the job |
 | `label` (workflow *Label pull requests*) | ubuntu-latest | Adds labels to each pull request |
 | `release` (workflow *Release*) | ubuntu-latest | Publishes a release: **Actions → Release → Run workflow** on `main` with the version (for example `4.1.0`), or push a tag `v4.1.0`. The version must match the script header and CHANGELOG |
 | `notify (scheduled run failed)` | ubuntu-latest | Only for the weekly run on `main` (Mondays): opens or updates the issue "Scheduled CI run failed" |

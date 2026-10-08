@@ -13,6 +13,9 @@ $findings = @()
 foreach ($p in 'src', 'build', 'tests') {
     $findings += @(Invoke-ScriptAnalyzer -Path $p -Recurse -Settings ./PSScriptAnalyzerSettings.psd1)
 }
+# Windows Server 2012 R2 / Windows PowerShell 4.0 compatibility of the
+# scripts that run on servers (#94). CI itself has no PowerShell 4.0.
+$findings += @(Invoke-ScriptAnalyzer -Path src -Recurse -Settings ./PSScriptAnalyzerSettings.PS4.psd1)
 foreach ($f in $findings) {
     $level = 'notice'
     if ([string]$f.Severity -eq 'Error') { $level = 'error' } elseif ([string]$f.Severity -eq 'Warning') { $level = 'warning' }
