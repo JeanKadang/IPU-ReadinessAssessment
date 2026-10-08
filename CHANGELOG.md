@@ -5,6 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### CI
+- Pull requests now run the end-to-end smoke test on both Windows Server 2025 and 2022, not only after the merge. The repository is public, so the runners are free; the 2022-only redaction false alarm (#114) had reached `main` because pull requests skipped that image (#122).
 - The release workflow now requires a green CI run for the push of the release commit to `main`: it waits while CI runs and refuses a failed, cancelled or missing run. v4.3.0 had been published from a commit whose CI run failed. A `dry_run` option does every check and builds the files without publishing (#121).
 - A failed CI run for a push to `main` now opens or updates an issue "CI failed on main", with the commit. Until now only the weekly run did, so `main` stayed red unnoticed on two merges in a row (#123).
 - The smoke test's redaction leak check failed on Windows Server 2022 although nothing leaked. A built-in Microsoft scheduled task there runs as an account named like an ordinary word, which matched product names such as "Windows Installer". The check now looks only for the accounts the script collects (service logon accounts and non-Microsoft task accounts). When a real leak is found, it reports the source and the report rows that hold it, with the name masked (#114).
