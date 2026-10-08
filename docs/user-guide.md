@@ -68,7 +68,8 @@ stateDiagram-v2
 | Item | Requirement |
 |---|---|
 | OS | Windows Server 2012 R2 or later (source) |
-| PowerShell | Windows PowerShell 4.0 or later (the script has `#requires -Version 4.0`) |
+| PowerShell | Windows PowerShell 4.0 or later (the script has `#requires -Version 4.0`). Windows Server 2012 R2's own 4.0 is enough; CI checks every change against it |
+| .NET Framework | 4.5 or later (2012 R2 with Windows PowerShell 4.0 always has it; 4.8 recommended) |
 | Rights | Administrator. Normally runs as the SA Agent (LocalSystem) |
 | Disk | Writable output folder (default `C:\Temp\IPU-Assessment`) |
 | Optional | `LGPO.exe` at `C:\Temp\Tools\LGPO.exe` for a restorable local-policy backup |
@@ -77,6 +78,8 @@ stateDiagram-v2
 A 32-bit PowerShell host on 64-bit Windows is handled: the script relaunches itself in 64-bit PowerShell,
 because the 32-bit view would give wrong registry and file results. If it cannot relaunch (no file path), it continues
 and flags it in the report.
+
+**Prerequisites check.** Before collecting anything, the script checks PowerShell 4.0 or later, .NET Framework 4.5 or later, and administrator rights. If one is missing, it stops at once, and the SA result line says `FAILED` with exactly what is missing and what to do. For example: `Missing: Administrator rights. Run the script elevated (Run as administrator), or as SYSTEM through OpenText SA.` The report contains the same text. If an optional PowerShell module is missing (Storage, NetAdapter, NetTCPIP, ScheduledTasks, ServerManager, Dism), the run continues, and a `MANUAL` row names the module and the checks it affects.
 
 ## 3. Running the assessment
 

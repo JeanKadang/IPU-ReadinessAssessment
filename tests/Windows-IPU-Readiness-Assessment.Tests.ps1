@@ -1970,3 +1970,52 @@ Describe 'Group Policy system helpers on a real Windows host (#80)' -Tag 'Integr
         { Get-WmiFilterQuery @('{11111111-1111-1111-1111-111111111111}') } | Should -Throw
     }
 }
+
+Describe 'Prerequisites (#94)' {
+    BeforeAll { $script:Ok = @{ Ps = [Version]'4.0'; Net = 528049; Elevated = $true } }
+    It 'everything present: can run, nothing to report' {
+        $d = Get-PrerequisiteDecision $script:Ok.Ps $script:Ok.Net $true @()
+        $d.CanRun | Should -BeTrue
+        @($d.Required).Count + @($d.Optional).Count | Should -Be 0
+    }
+    It 'missing <Case> stops the run with "<Expected>"' -TestCases @(
+        @{ Case = 'PowerShell 4.0';  Ps = [Version]'3.0'; Net = 528049; Elevated = $true;  Expected = 'Windows PowerShell 4.0 or later (found 3.0)' }
+        @{ Case = '.NET 4.5';        Ps = [Version]'4.0'; Net = 0;      Elevated = $true;  Expected = '.NET Framework 4.5 or later (not found). Install .NET Framework 4.8 and run again.' }
+        @{ Case = 'an old .NET 4.x'; Ps = [Version]'4.0'; Net = 300000; Elevated = $true;  Expected = '.NET Framework 4.5 or later (release 300000)' }
+        @{ Case = 'elevation';       Ps = [Version]'5.1'; Net = 528049; Elevated = $false; Expected = 'Administrator rights. Run the script elevated (Run as administrator), or as SYSTEM through OpenText SA.' }
+    ) {
+        $d = Get-PrerequisiteDecision $Ps $Net $Elevated @()
+        $d.CanRun | Should -BeFalse
+        ($d.Required -join ' ') | Should -BeLike ('*' + $Expected + '*')
+    }
+    It '.NET 4.5 exactly (release 378389) is enough' {
+        (Get-PrerequisiteDecision ([Version]'4.0') 378389 $true @()).CanRun | Should -BeTrue
+    }
+    It 'a missing optional module does not stop the run and names the affected checks' {
+        $d = Get-PrerequisiteDecision $script:Ok.Ps $script:Ok.Net $true @('Storage', 'ScheduledTasks')
+        $d.CanRun | Should -BeTrue
+        $d.Optional[0] | Should -Be 'PowerShell module Storage is not available: storage (disks, partitions, volumes) cannot be fully assessed.'
+        $d.Optional[1] | Should -BeLike '*ScheduledTasks*scheduled tasks*'
+    }
+    It 'a missing required item stops before any check, with a clear SA line and report' {
+        $dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $ReportDirectory = $dir
+        $RestrictOutputAcl = $false
+        $WriteJson = $true
+        $script:ReportPath = Join-Path $dir 'SRV-IPU-Assessment.html'
+        $script:JsonPath = Join-Path $dir 'SRV-IPU-Assessment.json'
+        $script:LogPath = Join-Path $dir 'SRV-IPU-Assessment.log'
+        $script:Results.Clear(); $script:CheckRuns.Clear(); $script:Checks.Clear(); $script:Data = @{}
+        Mock Get-PrerequisiteState { [pscustomobject]@{ PowerShellVersion = [Version]'5.1'; DotNetRelease = 528049; IsElevated = $false; MissingModules = @() } }
+        $writer = New-Object IO.StringWriter
+        $old = [Console]::Out
+        [Console]::SetOut($writer)
+        try { Invoke-Assessment } finally { [Console]::SetOut($old) }
+        $out = $writer.ToString()
+        $out | Should -Match ';FAILED;MANUAL;'
+        $out | Should -Match 'Missing: Administrator rights\. Run the script elevated'
+        $script:CheckRuns.Count | Should -Be 0
+        $script:ExitCode | Should -Be 1
+        [IO.File]::ReadAllText($script:ReportPath) | Should -Match 'Administrator rights'
+    }
+}

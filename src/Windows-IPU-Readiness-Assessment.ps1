@@ -128,6 +128,7 @@
 # =============================================================================
 # 1. PARAMETERS / SETTINGS (defaults are what SA uses when no arguments are given)
 # =============================================================================
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleCommands', 'Get-MpComputerStatus', Justification = 'Called only after Test-CommandAvailable confirms it exists (Defender is not part of Windows Server 2012 R2).')]
 [CmdletBinding()]
 param(
     # Planned destination release.
@@ -663,6 +664,18 @@ function Get-GroupPolicyLastApplied {
     return (ConvertFrom-FileTimeValue $hi.Value $lo.Value)
 }
 
+function New-ZipFromFolder {
+    # Zips a folder with .NET 4.5 (System.IO.Compression.FileSystem), which
+    # Windows PowerShell 4.0 does not load by default. The type is resolved
+    # after Add-Type, so a missing assembly is a clear error (#94).
+    param([Parameter(Mandatory=$true)][string]$Folder, [Parameter(Mandatory=$true)][string]$ZipPath)
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zipType = 'System.IO.Compression.ZipFile' -as [type]
+    $level = 'System.IO.Compression.CompressionLevel' -as [type]
+    if (-not $zipType -or -not $level) { throw '.NET Framework 4.5 or later is needed to create ZIP files.' }
+    $zipType::CreateFromDirectory($Folder, $ZipPath, $level::Optimal, $false)
+}
+
 function Save-IISConfigEvidence {
     # Copies the IIS configuration files into a new, restricted evidence
     # folder and zips it (#76). Read-only for IIS: nothing under inetsrv is
@@ -695,13 +708,73 @@ function Save-IISConfigEvidence {
     }
     $location = $Destination
     if ($Zip) {
-        Add-Type -AssemblyName System.IO.Compression.FileSystem
         $zipPath = $Destination + '.zip'
         if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
-        [IO.Compression.ZipFile]::CreateFromDirectory($Destination, $zipPath, [IO.Compression.CompressionLevel]::Optimal, $false)
+        New-ZipFromFolder $Destination $zipPath
         $location = $zipPath
     }
     return [pscustomobject]@{ Location = $location; Folder = $Destination; Files = @($files | ForEach-Object { $_.Name } | Sort-Object); ApplicationHostSha256 = $hash; SharedConfigPath = $shared }
+}
+
+# Optional PowerShell modules and the checks that need them (#94). A missing
+# module does not stop the run; the affected checks report it.
+$script:OptionalModules = [ordered]@{
+    ServerManager  = 'roles and features (baseline, workloads, IIS, RDS, clustering)'
+    Storage        = 'storage (disks, partitions, volumes)'
+    NetAdapter     = 'network adapters and teaming'
+    NetTCPIP       = 'listening ports, routes and IP configuration'
+    ScheduledTasks = 'scheduled tasks'
+    Dism           = 'Setup compatibility scan (image selection)'
+}
+
+function Get-PrerequisiteDecision {
+    # Pure (#94): what is missing for a reliable run, in words an operator can
+    # act on. Required items stop the run before anything is collected;
+    # optional items only reduce what some checks can see.
+    param(
+        [Version]$PowerShellVersion,
+        [int]$DotNetRelease,
+        [bool]$IsElevated,
+        [string[]]$MissingModules = @(),
+        [hashtable]$ModuleUse = $script:OptionalModules
+    )
+    $required = @()
+    if ($null -eq $PowerShellVersion -or $PowerShellVersion.Major -lt 4) {
+        $required += ('Windows PowerShell 4.0 or later (found ' + $(if ($PowerShellVersion) { $PowerShellVersion.ToString() } else { 'unknown' }) + '). Install Windows Management Framework 4.0 or later (5.1 recommended) and run again.')
+    }
+    if ($DotNetRelease -lt 378389) {
+        $found = 'not found'; if ($DotNetRelease -gt 0) { $found = 'release ' + $DotNetRelease }
+        $required += ('.NET Framework 4.5 or later (' + $found + '). Install .NET Framework 4.8 and run again.')
+    }
+    if (-not $IsElevated) {
+        $required += 'Administrator rights. Run the script elevated (Run as administrator), or as SYSTEM through OpenText SA.'
+    }
+    $optional = @()
+    foreach ($m in @($MissingModules | Where-Object { $_ })) {
+        $use = $ModuleUse[$m]; if (-not $use) { $use = 'some checks' }
+        $optional += ('PowerShell module ' + $m + ' is not available: ' + $use + ' cannot be fully assessed.')
+    }
+    return [pscustomobject]@{ CanRun = ($required.Count -eq 0); Required = $required; Optional = $optional }
+}
+
+function Get-PrerequisiteState {
+    # Reads what Get-PrerequisiteDecision needs. Never throws.
+    $release = 0
+    try {
+        $v = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full' -Name Release -ErrorAction Stop
+        $release = [int]$v.Release
+    } catch { Write-Swallowed $_ }
+    $elevated = $false
+    try {
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+        $elevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -or $identity.IsSystem
+    } catch { Write-Swallowed $_ }
+    $missing = @()
+    foreach ($m in @($script:OptionalModules.Keys)) {
+        if (-not (Get-Module -ListAvailable -Name $m -ErrorAction SilentlyContinue)) { $missing += $m }
+    }
+    return [pscustomobject]@{ PowerShellVersion = $PSVersionTable.PSVersion; DotNetRelease = $release; IsElevated = $elevated; MissingModules = $missing }
 }
 
 function Get-BroadFolderReader {
@@ -3264,9 +3337,8 @@ function Invoke-RdpPolicyAssessment {
         } catch { Write-Swallowed $_ }
         if ($CreatePolicyEvidenceZip) {
             try {
-                Add-Type -AssemblyName System.IO.Compression.FileSystem
                 if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
-                [IO.Compression.ZipFile]::CreateFromDirectory($root,$zip,[IO.Compression.CompressionLevel]::Optimal,$false)
+                New-ZipFromFolder $root $zip
                 $script:Data.PolicyEvidence = $zip
             } catch { Add-Result 'POLICY_EVIDENCE' 'EvidenceArchive' 'MANUAL' 'ZIP creation failed' $_.Exception.Message -Recommendation 'Retrieve the folder directly.' -Kind 'Observation' }
         }
@@ -3753,6 +3825,29 @@ function Invoke-Assessment {
         [IO.File]::WriteAllText($script:LogPath,('Timestamp;Level;Phase;Message' + [Environment]::NewLine),(New-Object System.Text.UTF8Encoding($false)))
     } catch { Write-Swallowed $_ }
     Write-AssessmentLog 'INFO' 'START' ('Collector={0} | Mode={1} | Target={2} | PowerShell={3}' -f $script:CollectorVersion,$AssessmentMode,$TargetServerVersion,$PSVersionTable.PSVersion)
+
+    # Prerequisites first (#94): stop with a clear message instead of failing
+    # deep inside a check when something required is missing.
+    $state = Get-PrerequisiteState
+    $prereq = Get-PrerequisiteDecision $state.PowerShellVersion $state.DotNetRelease $state.IsElevated $state.MissingModules
+    Write-AssessmentLog 'INFO' 'PREREQ' ('PowerShell={0} | .NET release={1} | Elevated={2} | MissingModules={3}' -f $state.PowerShellVersion,$state.DotNetRelease,$state.IsElevated,(@($state.MissingModules) -join ','))
+    foreach ($o in @($prereq.Optional)) { Add-Result 'COLLECTOR' 'Prerequisites' 'MANUAL' $o -Recommendation 'Install the missing component (or the Windows feature that provides it) and run again, or review the affected area manually.' -Kind 'Finding' -Source 'Get-Module -ListAvailable' }
+    if (-not $prereq.CanRun) {
+        $missingText = 'Missing: ' + (@($prereq.Required) -join ' ')
+        Write-AssessmentLog 'ERROR' 'PREREQ' $missingText
+        foreach ($r in @($prereq.Required)) { Add-Result 'COLLECTOR' 'Prerequisites' 'MANUAL' 'Not assessed: a required component is missing' $r -Recommendation 'Fix this and run the assessment again. Nothing was collected.' -Kind 'Finding' -Source 'Prerequisites check' }
+        $reportPath = ''
+        try { $null = Write-AssessmentReport; $reportPath = $script:ReportPath } catch { Write-Swallowed $_ }
+        $now = Get-Date
+        [Console]::Out.WriteLine($header)
+        [Console]::Out.WriteLine((@(
+            $script:ComputerName,'FAILED','MANUAL',$reportPath,$script:LogPath,'',$script:Results.Count,
+            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss'),$now.ToString('yyyy-MM-dd HH:mm:ss'),
+            (Format-Duration ($now - $script:CollectionStarted)),$script:CollectorVersion,$missingText
+        ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
+        $script:ExitCode = 1
+        return
+    }
 
     Import-SiteDataFile
     Register-AssessmentCheck

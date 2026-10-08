@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Prerequisites check before anything is collected: PowerShell 4.0 or later, .NET Framework 4.5 or later and administrator rights. If one is missing, the run stops with a clear `FAILED` SA line and report text naming what is missing and what to do; a missing optional module is a MANUAL row naming the affected checks. CI checks `src/` against Windows Server 2012 R2 / Windows PowerShell 4.0 (#94).
+
 ## [4.2.0] - 2026-10-07
 
 Improvements from the first live run of 4.1.0. `Merge-IPUAssessments.ps1` 1.0.4 ships with it.
