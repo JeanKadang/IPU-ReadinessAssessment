@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Decisions
+- ADR 0002 supersedes ADR 0001: the source may be kept in parts that a build step joins into the single `.ps1` that SA runs, and CI tests the built file. Nothing changes for operators. Until the build step lands (#151) the script stays one file (#125).
+
 ### CI
 - Pull requests now run the end-to-end smoke test on both Windows Server 2025 and 2022, not only after the merge. The repository is public, so the runners are free; the 2022-only redaction false alarm (#114) had reached `main` because pull requests skipped that image (#122).
 - The release workflow now requires a green CI run for the push of the release commit to `main`: it waits while CI runs and refuses a failed, cancelled or missing run. v4.3.0 had been published from a commit whose CI run failed. A `dry_run` option does every check and builds the files without publishing (#121).

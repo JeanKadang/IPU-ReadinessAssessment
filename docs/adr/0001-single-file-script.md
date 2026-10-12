@@ -1,6 +1,6 @@
 # ADR 0001: Keep the assessment as one PowerShell file
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR 0002](0002-source-in-parts-built-into-one-file.md) (2026-10-12)
 - **Date:** 2026-10-06
 - **Decided by:** maintainer, on issue #25
 
