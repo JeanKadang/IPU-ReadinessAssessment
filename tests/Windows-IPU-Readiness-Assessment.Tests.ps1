@@ -2423,7 +2423,7 @@ Describe 'Redact existing reports: one placeholder per server across files (#157
     }
     It 'gives one server the same placeholder in pre and post, and different servers different ones' {
         $tags = @($script:FleetJson | ForEach-Object { [regex]::Match($_.Name, 'HOST-\d+').Value + '|' + [regex]::Match($_.Name, 'Assessment|PostUpgrade').Value })
-        @($tags | ForEach-Object { ($_ -split '\|')[0] } | Sort-Object -Unique).Count | Should -Be 2
+        @($tags | ForEach-Object { ($_ -split '\|')[0] } | Sort-Object -Unique) -join ',' | Should -Be 'HOST-1,HOST-2'   # numbered first (#172)
         $post = @($tags | Where-Object { $_ -like '*|PostUpgrade' })[0].Split('|')[0]
         @($tags | Where-Object { $_ -eq ($post + '|Assessment') }).Count | Should -Be 1
     }
@@ -2483,5 +2483,33 @@ Describe 'Post-upgrade comparison: expected changes and NLA (#158)' {
         Test-PendingRenameHarmless @('\??\C:\Config.Msi\1bc393.rbf', '', '\??\C:\Program Files (x86)\Microsoft\EdgeUpdate\1.3.283.15', '') | Should -BeTrue
         Test-PendingRenameHarmless @('\??\C:\Config.Msi\1bc393.rbf', '', '\??\C:\Program Files\Example\agent.dll', '') | Should -BeFalse
         Test-PendingRenameHarmless @() | Should -BeFalse
+    }
+}
+
+Describe 'RedactExisting recovers every name the collector registers (#172)' {
+    It 'recovers share names and descriptions from the share rows' {
+        $rows = @(
+            [pscustomobject]@{ Area = 'FILE_SHARES'; Item = 'FileShares'; Value = 'Count=2'; Details = 'Finance, Scans$' }
+            [pscustomobject]@{ Area = 'FILE_SHARES'; Item = 'Share: Finance'; Value = 'D:\Finance'; Details = @('Path=D:\Finance', 'Description=Contoso finance team', 'Share permissions: Everyone: Read') }
+            [pscustomobject]@{ Area = 'FILE_SHARES'; Item = 'Share: Scans$'; Value = 'D:\Scans'; Details = @('Path=D:\Scans', 'Share permissions: not readable') }
+        )
+        $l = Get-RedactionLiteralFromResult $rows
+        (@($l | ForEach-Object { $_.Kind + '=' + $_.Value }) -join '; ') | Should -Be 'NAME=Finance; NAME=Contoso finance team; NAME=Scans$'
+    }
+    It 'has a recovery rule for every Add-RedactionLiteral call site in the collector' {
+        # When this fails, a new call site was added: add a rule to
+        # Get-RedactionLiteralFromResult and its pattern here.
+        $src = [IO.File]::ReadAllLines((Join-Path $PSScriptRoot '..\src\Windows-IPU-Readiness-Assessment.ps1'))
+        $sites = @($src | Where-Object { $_ -match 'Add-RedactionLiteral ' -and $_ -notmatch '^\s*function ' -and $_ -notmatch 'Get-RedactionLiteralFromResult' } | ForEach-Object { $_.Trim() })
+        $known = @(
+            'Add-RedactionLiteral $g.Name ''GPO''',
+            'if ($g.FilterName) { Add-RedactionLiteral $g.FilterName ''NAME'' }',
+            'Add-RedactionLiteral $filter.Name ''NAME''',
+            'Add-RedactionLiteral ([string]$sh.Name) ''NAME''',
+            'if ($sh.Description) { Add-RedactionLiteral ([string]$sh.Description) ''NAME'' }',
+            'foreach ($s in @($script:Data.Services | Where-Object { $_.StartName })) { Add-RedactionLiteral ([string]$s.StartName) ''ACCOUNT'' }',
+            'if ($user -and $user -notmatch $builtIn) { Add-RedactionLiteral $user ''ACCOUNT'' }'
+        )
+        @($sites | Where-Object { $known -notcontains $_ }) | Should -BeNullOrEmpty
     }
 }
