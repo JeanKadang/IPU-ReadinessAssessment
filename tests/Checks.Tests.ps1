@@ -135,6 +135,13 @@ BeforeAll {
         if ($script:Fake.NetEvidenceError) { throw $script:Fake.NetEvidenceError }
         return [pscustomobject]@{ Location = ($Destination + '.zip'); Folder = $Destination; Files = @('ipconfig-all.txt', 'route-print.txt', 'netsh-ipv4-show-config.txt', 'netsh-interface-dump.txt'); Failed = @($script:Fake.NetEvidenceFailed | Where-Object { $_ }) }
     }
+    function Get-PrinterInventory {
+        if ($script:Fake.PrintInvError) { throw $script:Fake.PrintInvError }
+        if ($script:Fake.PrintInv) { return $script:Fake.PrintInv }
+        return [pscustomobject]@{ Printers = @([pscustomobject]@{ Name = 'Microsoft Print to PDF'; ShareName = ''; Shared = $false; Published = $false; DriverName = 'Microsoft Print To PDF'; PortName = 'PORTPROMPT:' }); Ports = @(); Drivers = @(); Source = 'Get-Printer' }
+    }
+    function Get-PrintMonitorInventory { return ,@($script:Fake.PrintComponents | Where-Object { $_ }) }
+    function Get-PrintDriverStoreSize { if ($script:Fake.ContainsKey('DriverStoreBytes')) { return [long]$script:Fake.DriverStoreBytes }; return [long]200MB }
     function Get-LocalGroupMembersBySid { param([string]$Sid) return ,@($script:Fake.Groups[$Sid]) }
     function Read-FileTail { param([string]$Path, [int]$MaxBytes = 0) return ,@($script:Fake.CbsLines) }
     function Test-CommandAvailable { param([string]$Name) return ($script:Fake.MissingCommands -notcontains $Name) }
@@ -427,8 +434,8 @@ BeforeAll {
 AfterAll { Remove-Item Env:\IPU_ASSESSMENT_LIBRARY_ONLY -ErrorAction SilentlyContinue }
 
 Describe 'Check registry' {
-    It 'registers 34 checks with unique ids' {
-        $script:AllChecks.Count | Should -Be 34
+    It 'registers 36 checks with unique ids' {
+        $script:AllChecks.Count | Should -Be 36
         @($script:AllChecks | Group-Object Id | Where-Object { $_.Count -gt 1 }).Count | Should -Be 0
     }
     It 'docs/checks.md describes every registered check' {
@@ -1100,6 +1107,144 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $script:Fake.MissingCommands += 'Get-NetRoute'
             $null = Invoke-TestCheck 'network'
             (Get-Row 'NETWORK_DEPENDENCY' 'StaticRoutes')[0].Value | Should -Be 'Get-NetRoute unavailable'
+        }
+    }
+
+    Context 'printers (#148)' {
+        BeforeEach {
+            function New-FakePrintServer {
+                $script:Fake.Features['Print-Server'] = $true
+                $script:Fake.PrintInv = [pscustomobject]@{
+                    Source = 'Get-Printer, Get-PrinterPort, Get-PrinterDriver'
+                    Printers = @(
+                        [pscustomobject]@{ Name = 'Floor2-Color'; ShareName = 'Floor2C'; Shared = $true; Published = $true; DriverName = 'Example PCL6 Universal'; PortName = 'IP_10.20.40.11' }
+                        [pscustomobject]@{ Name = 'Label-Line'; ShareName = ''; Shared = $false; Published = $false; DriverName = 'Example Label v4'; PortName = 'lpr-label' }
+                        [pscustomobject]@{ Name = 'Microsoft Print to PDF'; ShareName = ''; Shared = $false; Published = $false; DriverName = 'Microsoft Print To PDF'; PortName = 'PORTPROMPT:' }
+                    )
+                    Ports = @(
+                        [pscustomobject]@{ Name = 'IP_10.20.40.11'; Description = 'Standard TCP/IP Port'; Monitor = 'TCPMON.DLL'; Address = '10.20.40.11'; PortNumber = '9100'; Protocol = '1'; Queue = '' }
+                        [pscustomobject]@{ Name = 'lpr-label'; Description = 'LPR Port'; Monitor = 'LPR Port'; Address = 'labelhost.corp.example.test'; PortNumber = ''; Protocol = ''; Queue = 'labels' }
+                        [pscustomobject]@{ Name = 'COM1:'; Description = 'Local Port'; Monitor = 'Local Port'; Address = ''; PortNumber = ''; Protocol = ''; Queue = '' }
+                    )
+                    Drivers = @(
+                        [pscustomobject]@{ Name = 'Example PCL6 Universal'; Environment = 'Windows x64'; Major = '3'; Manufacturer = 'Example Inc' }
+                        [pscustomobject]@{ Name = 'Example Label v4'; Environment = 'Windows x64'; Major = '4'; Manufacturer = 'Example Labels' }
+                        [pscustomobject]@{ Name = 'Example Old x86'; Environment = 'Windows NT x86'; Major = '3'; Manufacturer = 'Example Inc' }
+                        [pscustomobject]@{ Name = 'Microsoft Print To PDF'; Environment = 'Windows x64'; Major = '4'; Manufacturer = 'Microsoft' }
+                    )
+                }
+                $script:Fake.PrintComponents = @(
+                    [pscustomobject]@{ Type = 'PortMonitor'; Name = 'Standard TCP/IP Port'; Driver = 'tcpmon.dll'; Company = 'Microsoft Corporation' }
+                    [pscustomobject]@{ Type = 'PortMonitor'; Name = 'Example Port Monitor'; Driver = 'exmon.dll'; Company = 'Example Inc' }
+                    [pscustomobject]@{ Type = 'PrintProcessor'; Name = 'winprint'; Driver = 'winprint.dll'; Company = 'Microsoft Corporation' }
+                )
+                Reset-FakeServerKeep
+            }
+        }
+        It 'not a print server: one OK row and no backup' {
+            (Invoke-TestCheck 'printers').Outcome | Should -Be 'Completed'
+            (Get-Row 'PRINTING' 'PrintServer')[0].Value | Should -Be 'Not a print server'
+            $script:Data.PrintServer | Should -BeFalse
+            $run = Invoke-TestCheck 'printbackup'
+            $run.Outcome | Should -Be 'Skipped'
+            $run.Message | Should -Be 'Not a print server'
+        }
+        It 'a print server: printers, ports, drivers and components, virtual printers left out' {
+            New-FakePrintServer
+            (Invoke-TestCheck 'printers').Outcome | Should -Be 'Completed'
+            (Get-Row 'PRINTING' 'Printers')[0].Value | Should -Be 'Count=2, shared=1'
+            (Get-Row 'PRINTING' 'Printer: Floor2-Color')[0].Details | Should -Contain 'Share=Floor2C'
+            (Get-Row 'PRINTING' 'Printer: Microsoft Print to PDF').Count | Should -Be 0
+            (Get-Row 'PRINTING' 'Port: IP_10.20.40.11')[0].Value | Should -Be 'Standard TCP/IP (RAW)'
+            (Get-Row 'PRINTING' 'Port: lpr-label')[0].Status | Should -Be 'WARNING'
+            (Get-Row 'PRINTING' 'Port: COM1:').Count | Should -Be 0
+            $drv = (Get-Row 'PRINTING' 'PrinterDrivers')[0]
+            $drv.Status | Should -Be 'WARNING'
+            $drv.Value | Should -Be 'Third-party=2 of 3 (x64)'
+            $drv.Recommendation | Should -Match '15 January 2026'
+            (Get-Row 'PRINTING' 'PrinterDriversX86Only')[0].Details | Should -Be 'Example Old x86'
+            (Get-Row 'PRINTING' 'Port monitor: Example Port Monitor')[0].Status | Should -Be 'WARNING'
+            (Get-Row 'PRINTING' 'Print processor: winprint').Count | Should -Be 0
+            $script:Data.Snapshot.Printers | Should -Be @('Floor2-Color', 'Label-Line')
+            $script:Data.Snapshot.PrinterPorts | Should -Be @('IP_10.20.40.11', 'lpr-label')
+            @($script:Data.Snapshot.PrinterDrivers | Where-Object { $_.Printer -eq 'Label-Line' })[0].Driver | Should -Be 'Example Label v4'
+            foreach ($n in 'Floor2-Color', 'Floor2C', 'Label-Line', 'IP_10.20.40.11', 'lpr-label') { $script:Data.RedactLiterals[$n] | Should -Be 'NAME' }
+            $script:Data.RedactLiterals['labelhost.corp.example.test'] | Should -Be 'HOST'
+        }
+        It 'the LPD service is a WARNING' {
+            New-FakePrintServer
+            $script:Fake.Features['Print-LPD-Service'] = $true
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'printers'
+            (Get-Row 'PRINTING' 'LPD Service')[0].Status | Should -Be 'WARNING'
+        }
+        It 'printers that cannot be read on a print server are MANUAL' {
+            $script:Fake.Features['Print-Server'] = $true
+            $script:Fake.PrintInvError = 'The spooler service is not reachable'
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'printers'
+            $r = (Get-Row 'PRINTING' 'Printers')[0]
+            $r.Status | Should -Be 'MANUAL'
+            $r.Details | Should -Match 'spooler'
+        }
+    }
+
+    Context 'printbackup (#148)' {
+        BeforeEach {
+            $script:SlowSecondsLeft = 3000
+            $script:Fake.Paths[(Join-Path $env:windir 'System32\spool\tools\PrintBrm.exe')] = $true
+            $script:Data.PrintServer = $true
+            $script:Fake.Cim['Win32_LogicalDisk'] = [pscustomobject]@{ Size = [double]100GB; FreeSpace = [double]50GB }
+            $script:Fake.Cim["Win32_LogicalDisk|DeviceID='C:'"].FreeSpace = [double]50GB
+        }
+        It 'exports with PrintBrm -B into the evidence folder' {
+            $PolicyEvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $script:Fake.Native['printbrm.exe'] = { param($a) [IO.File]::WriteAllText($a[2], 'export'); @{ Output = 'Successfully finished operation.' } }
+            (Invoke-TestCheck 'printbackup').Outcome | Should -Be 'Completed'
+            $call = @($script:Fake.NativeCalls | Where-Object { $_.Exe -eq 'printbrm.exe' })[0]
+            $call.Args[0] | Should -Be '-B'
+            $call.Args[1] | Should -Be '-F'
+            $row = (Get-Row 'PRINTING' 'PrintBackup')[0]
+            $row.Status | Should -Be 'OK'
+            $row.Value | Should -BeLike (Join-Path $PolicyEvidenceRoot '*-IPU-Print-*\*-printers.printerExport')
+            $row.Recommendation | Should -Match 'off the server'
+            $row.Recommendation | Should -Match 'PrintBrm -R -F'
+        }
+        It 'not enough free space: skipped as MANUAL with the command to run elsewhere' {
+            $script:Fake.DriverStoreBytes = [long]4GB
+            $script:Fake.Cim['Win32_LogicalDisk'].FreeSpace = [double]6GB
+            $script:Fake.Cim["Win32_LogicalDisk|DeviceID='C:'"].FreeSpace = [double]6GB
+            $PolicyEvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $null = Invoke-TestCheck 'printbackup'
+            $row = (Get-Row 'PRINTING' 'PrintBackup')[0]
+            $row.Status | Should -Be 'MANUAL'
+            $row.Value | Should -Match 'not enough free space'
+            $row.Command | Should -Match 'PrintBrm\.exe -B -F'
+            @($script:Fake.NativeCalls | Where-Object { $_.Exe -eq 'printbrm.exe' }).Count | Should -Be 0
+        }
+        It 'a timeout is MANUAL, never OK' {
+            $PolicyEvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $script:Fake.Native['printbrm.exe'] = @{ TimedOut = $true; ExitCode = $null }
+            $run = Invoke-TestCheck 'printbackup'
+            $run.Outcome | Should -Be 'TimedOut'
+            (Get-Row 'PRINTING' 'PrintBackup')[0].Status | Should -Be 'MANUAL'
+        }
+        It 'a failed export is MANUAL' {
+            $PolicyEvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $script:Fake.Native['printbrm.exe'] = @{ ExitCode = 1; Output = 'Operation failed.' }
+            $null = Invoke-TestCheck 'printbackup'
+            (Get-Row 'PRINTING' 'PrintBackup')[0].Value | Should -Be 'PrintBrm failed (exit code 1)'
+        }
+        It 'switched off: MANUAL with the command' {
+            $EnablePrintBackup = $false
+            $null = Invoke-TestCheck 'printbackup'
+            $row = (Get-Row 'PRINTING' 'PrintBackup')[0]
+            $row.Status | Should -Be 'MANUAL'
+            $row.Value | Should -Match 'EnablePrintBackup is off'
+        }
+        It 'not run after the upgrade' {
+            $AssessmentMode = 'Post'
+            (Invoke-TestCheck 'printbackup').Message | Should -Be 'Not needed after the upgrade'
         }
     }
 

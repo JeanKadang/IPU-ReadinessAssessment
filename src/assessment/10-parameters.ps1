@@ -56,6 +56,12 @@ param(
     # ZIP under PolicyEvidenceRoot (#149). Never redacted: copy it off the
     # server before the change, and do not share it.
     [bool]$EnableNetworkEvidence = $true,
+    # On a print server, export printers, ports and drivers with PrintBrm -B
+    # into a restricted evidence folder under PolicyEvidenceRoot (#148). Skipped
+    # (MANUAL, with the command) when the drive lacks 1.5 x the size of
+    # spool\drivers + 1 GB. A slow check: counts against the time budget.
+    [bool]$EnablePrintBackup = $true,
+    [ValidateRange(1, 240)][int]$PrintBackupTimeoutMinutes = 30,
 
     # Output.
     [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$ReportDirectory = 'C:\Temp\IPU-Assessment',
