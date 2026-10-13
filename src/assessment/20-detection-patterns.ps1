@@ -60,6 +60,7 @@ $script:DetectionPatterns = @{
 # "Features removed or no longer developed" pages for the target release.
 # Removed  -> ACTION (Setup drops the feature; the dependent workload breaks).
 # Deprecated -> Observation (still works, plan a replacement).
+# Verified: see $script:FactSources.FeatureLifecycle (section 4).
 $script:FeatureLifecycle = @(
     @{ Feature='SMTP-Server';              Name='SMTP Server';                     State='Removed';    Targets=@('2025') }
     @{ Feature='Web-Lgcy-Mgmt-Console';    Name='IIS 6 Management Console';        State='Removed';    Targets=@('2025') }

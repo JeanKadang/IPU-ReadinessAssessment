@@ -63,7 +63,20 @@ jobs:
           Install-Module Pester -RequiredVersion $env:PESTER_VERSION -Scope CurrentUser -Force -SkipPublisherCheck
       - name: Run Pester
         run: |
-          if ('${{ matrix.coverage }}' -eq 'true') { ./build/Invoke-CiTests.ps1 -Coverage } else { ./build/Invoke-CiTests.ps1 }
+          if ('${{ matrix.coverage }}' -eq 'true') { ./build/Invoke-CiTests.ps1 -Coverage -MinimumCoverage 85 } else { ./build/Invoke-CiTests.ps1 }
+
+  pester-unelevated:
+    # #126: the suite as a standard user (no admin token), as on a
+    # contributor's workstation. Windows PowerShell 5.1.
+    name: pester (unelevated)
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run Pester as a standard user
+        run: ./build/Invoke-UnelevatedTests.ps1
 
   smoke:
     # Runs the real script end to end on the runner (Pre, then Post against
@@ -106,6 +119,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Built file matches its parts (ADR 0002)
         run: ./build/Build-Script.ps1 -Check
+      - name: Skill copies are identical (#129)
+        run: ./build/Sync-Skills.ps1 -Check
       - name: Install PSScriptAnalyzer
         run: Install-Module PSScriptAnalyzer -RequiredVersion $env:PSSA_VERSION -Scope CurrentUser -Force
       - name: Run PSScriptAnalyzer
@@ -117,7 +132,7 @@ jobs:
     # the weekly run and every push to main (#123): main was red on two
     # merges in a row without anyone noticing.
     name: notify (failed run on main)
-    needs: [pester, smoke, lint]
+    needs: [pester, pester-unelevated, smoke, lint]
     if: >-
       always() && (
         (github.event_name == 'schedule' && contains(needs.*.result, 'failure')) ||

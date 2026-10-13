@@ -9,6 +9,12 @@ param()
 BeforeAll {
     $env:IPU_ASSESSMENT_LIBRARY_ONLY = '1'
     . (Join-Path $PSScriptRoot '..\src\Windows-IPU-Readiness-Assessment.ps1')
+    # Unelevated runs (#126): keep the current user on the folders the tests
+    # restrict, so they can be used and cleaned up. Elevated runs are as before.
+    if ($env:OS -eq 'Windows_NT') {
+        $me = [Security.Principal.WindowsIdentity]::GetCurrent()
+        if (-not (New-Object Security.Principal.WindowsPrincipal($me)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { $script:ExtraRestrictedSids = @($me.User.Value) }
+    }
 }
 
 AfterAll { Remove-Item Env:\IPU_ASSESSMENT_LIBRARY_ONLY -ErrorAction SilentlyContinue }
@@ -579,10 +585,16 @@ Describe 'Output folder access (#12)' {
     }
 
     It 'builds a protected ACL with only SYSTEM and Administrators (Windows)' -Skip:($env:OS -ne 'Windows_NT') {
-        $sec = New-RestrictedDirectorySecurity
+        $sec = New-RestrictedDirectorySecurity -ExtraSids @()
         $sec.AreAccessRulesProtected | Should -BeTrue
         $sids = @($sec.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { [string]$_.IdentityReference } | Sort-Object)
         ($sids -join ',') | Should -Be 'S-1-5-18,S-1-5-32-544'
+    }
+    It 'adds extra SIDs only when given (the unelevated test run, #126)' -Skip:($env:OS -ne 'Windows_NT') {
+        $sec = New-RestrictedDirectorySecurity -ExtraSids @('S-1-5-21-1-2-3-1001', 'S-1-5-18')
+        $sids = @($sec.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { [string]$_.IdentityReference } | Sort-Object)
+        ($sids -join ',') | Should -Be 'S-1-5-18,S-1-5-21-1-2-3-1001,S-1-5-32-544'
+        $script:ExtraRestrictedSids.GetType().IsArray | Should -BeTrue
     }
     It 'applies the ACL to a real folder (Windows)' -Skip:($env:OS -ne 'Windows_NT') {
         $p = Join-Path $TestDrive 'real-acl'
@@ -3021,5 +3033,200 @@ Describe 'Print servers (#148)' {
         )
         $l = Get-RedactionLiteralFromResult $rows
         (@($l | ForEach-Object { $_.Kind + '=' + $_.Value }) -join '; ') | Should -Be 'NAME=Floor2-Color; NAME=Floor2C; NAME=Local-Only; NAME=lpr-label; HOST=labelhost.corp.example.test; NAME=IP_10.20.40.11'
+    }
+}
+
+Describe 'Read-only system helpers (#127: every function runs in a test)' {
+    It 'Get-PrerequisiteState never throws and reads this host' {
+        $s = Get-PrerequisiteState
+        $s.PowerShellVersion | Should -Be $PSVersionTable.PSVersion
+        $s.DotNetRelease | Should -BeOfType [int]
+        $s.IsElevated | Should -BeOfType [bool]
+        , @($s.MissingModules) | Should -BeOfType [object[]]
+    }
+    It 'Get-AdComputerDn returns a DN or throws with a message (never an empty name)' {
+        $r = try { Get-AdComputerDn } catch { 'threw: ' + $_.Exception.Message }
+        $r | Should -Match '^(CN=.+|threw: .+)'
+    }
+    It 'Get-GpoListRegistryEntry reads the GPO-List keys in numeric order' {
+        Mock Get-ChildItem { @([pscustomobject]@{ PSChildName = '10'; PSPath = 'k10' }, [pscustomobject]@{ PSChildName = '2'; PSPath = 'k2' }) }
+        Mock Get-ItemProperty { if ($LiteralPath -eq 'k2') { [pscustomobject]@{ DisplayName = 'Second'; GPOName = '{2}'; Link = 'Local' } } else { [pscustomobject]@{ DisplayName = 'Tenth'; GPOName = '{10}'; Link = 'Local' } } }
+        $list = Get-GpoListRegistryEntry
+        ($list | ForEach-Object { $_.DisplayName }) -join ',' | Should -Be 'Second,Tenth'
+    }
+    It 'Get-FileCompanyName: empty for a missing file, the company for a real one' {
+        Get-FileCompanyName '' | Should -Be ''
+        Get-FileCompanyName (Join-Path $TestDrive 'missing.dll') | Should -Be ''
+        $exe = (Get-Process -Id $PID).Path
+        Get-FileCompanyName $exe | Should -BeOfType [string]
+    }
+    It 'Get-PrintDriverStoreSize adds up every file under spool\drivers' {
+        Mock Get-ChildItem { @([pscustomobject]@{ Length = 1000 }, [pscustomobject]@{ Length = 2500 }) }
+        Get-PrintDriverStoreSize | Should -Be 3500
+    }
+    It 'Get-PrintMonitorInventory lists port monitors and print processors with their company' {
+        Mock Get-ChildItem { @([pscustomobject]@{ PSChildName = 'Local Port'; PSPath = 'mon1' }) } -ParameterFilter { $LiteralPath -like '*\Monitors' }
+        Mock Get-ChildItem { @([pscustomobject]@{ PSChildName = 'winprint'; PSPath = 'pp1' }) } -ParameterFilter { $LiteralPath -like '*Print Processors' }
+        Mock Get-ItemProperty { if ($LiteralPath -eq 'mon1') { [pscustomobject]@{ Driver = 'localspl.dll' } } else { [pscustomobject]@{ Driver = 'winprint.dll' } } }
+        Mock Get-FileCompanyName { 'Microsoft Corporation' }
+        $items = Get-PrintMonitorInventory
+        ($items | ForEach-Object { $_.Type + ':' + $_.Name + ':' + $_.Driver + ':' + $_.Company }) -join ';' | Should -Be 'PortMonitor:Local Port:localspl.dll:Microsoft Corporation;PrintProcessor:winprint:winprint.dll:Microsoft Corporation'
+    }
+}
+
+Describe 'Dated facts have a source and a recent check (#132)' {
+    It 'every fact table is listed with a date and an https source' {
+        foreach ($name in 'SupportedUpgradePaths', 'SqlSupportedOnTarget', 'ReleaseEndOfSupport', 'FeatureLifecycle', 'VMwareToolsMinimum', 'ExpectedWindowsChanges', 'WinReMinPartitionMB', 'DocLinks') {
+            $script:FactSources.Contains($name) | Should -BeTrue -Because $name
+        }
+        @(Get-StaleFactSource $script:FactSources ([datetime]'2026-10-13')) | Should -BeNullOrEmpty
+    }
+    It 'no fact table was last checked more than six months ago' {
+        $stale = Get-StaleFactSource $script:FactSources (Get-Date)
+        @($stale) | Should -BeNullOrEmpty -Because ('these need a recheck (CONTRIBUTING, "Dated facts"): ' + (@($stale) -join '; '))
+    }
+    It 'a back-dated entry is reported with its source; a missing date or source too' {
+        $sources = [ordered]@{
+            Old = @{ Verified = '2026-01-01'; Source = 'https://learn.microsoft.com/example' }
+            Fresh = @{ Verified = '2026-09-01'; Source = 'https://learn.microsoft.com/example' }
+            NoDate = @{ Verified = 'soon'; Source = 'https://learn.microsoft.com/example' }
+            NoSource = @{ Verified = '2026-09-01'; Source = '' }
+        }
+        $stale = Get-StaleFactSource $sources ([datetime]'2026-10-13')
+        @($stale).Count | Should -Be 3
+        $stale[0] | Should -Be 'Old: last verified 2026-01-01, recheck against https://learn.microsoft.com/example'
+        ($stale -join ' ') | Should -Match 'NoDate: no valid'
+        ($stale -join ' ') | Should -Match 'NoSource: no valid'
+    }
+    It 'six months is the limit' {
+        $s = [ordered]@{ T = @{ Verified = '2026-04-13'; Source = 'https://x.example' } }
+        @(Get-StaleFactSource $s ([datetime]'2026-10-13')).Count | Should -Be 0
+        @(Get-StaleFactSource $s ([datetime]'2026-10-14')).Count | Should -Be 1
+    }
+}
+
+Describe 'Print servers (#148)' {
+    It 'port kind: <Desc> / <Monitor> / <Protocol> -> <Kind>' -TestCases @(
+        @{ Desc = 'Standard TCP/IP Port'; Monitor = 'TCPMON.DLL'; Protocol = '1'; Kind = 'Standard TCP/IP (RAW)' }
+        @{ Desc = 'Standard TCP/IP Port'; Monitor = 'TCPMON.DLL'; Protocol = '2'; Kind = 'Standard TCP/IP (LPR protocol)' }
+        @{ Desc = 'LPR Port'; Monitor = 'LPR Port'; Protocol = ''; Kind = 'LPR port monitor' }
+        @{ Desc = 'WSD Port'; Monitor = 'WSD Port'; Protocol = ''; Kind = 'WSD' }
+        @{ Desc = 'Local Port'; Monitor = 'Local Port'; Protocol = ''; Kind = 'Local' }
+        @{ Desc = 'Virtual printer port for USB'; Monitor = 'USB Monitor'; Protocol = ''; Kind = 'USB' }
+        @{ Desc = 'Example Secure Port'; Monitor = 'Example Port Monitor'; Protocol = ''; Kind = 'Other: Example Secure Port' }
+    ) {
+        Get-PrinterPortKind $Desc $Monitor $Protocol | Should -Be $Kind
+    }
+    It 'backup space: 1.5 x the driver store + 1 GB, at the boundary' {
+        $need = [long](1.5 * 2GB) + [long]1GB
+        (Get-PrintBackupSpaceDecision ([long]2GB) $need).Proceed | Should -BeTrue
+        (Get-PrintBackupSpaceDecision ([long]2GB) ($need - 1)).Proceed | Should -BeFalse
+        (Get-PrintBackupSpaceDecision ([long]2GB) $need).RequiredBytes | Should -Be $need
+        (Get-PrintBackupSpaceDecision ([long]0) ([long]1GB)).Proceed | Should -BeTrue
+        (Get-PrintBackupSpaceDecision ([long]0) ([long]1GB - 1)).Proceed | Should -BeFalse
+    }
+    It 'third-party port monitors and print processors are WARNINGs; Microsoft ones are not' {
+        $items = @(
+            [pscustomobject]@{ Type = 'PortMonitor'; Name = 'Local Port'; Driver = 'localspl.dll'; Company = 'Microsoft Corporation' }
+            [pscustomobject]@{ Type = 'PortMonitor'; Name = 'Example Port Monitor'; Driver = 'exmon.dll'; Company = 'Example Inc' }
+            [pscustomobject]@{ Type = 'PrintProcessor'; Name = 'exproc'; Driver = 'exproc.dll'; Company = '' }
+        )
+        $rows = @(Get-PrintComponentDecision $items 'Windows Server 2025')
+        ($rows | ForEach-Object { $_.Status + ' ' + $_.Item }) -join '; ' | Should -Be 'WARNING Port monitor: Example Port Monitor; WARNING Print processor: exproc'
+        $rows[1].Details | Should -Match 'unknown'
+        $ok = @(Get-PrintComponentDecision @($items[0]) 'Windows Server 2025')
+        $ok[0].Status | Should -Be 'OK'
+    }
+    It 'third-party drivers: WARNING, with the Windows Update note only for 2025' {
+        $drivers = @(
+            [pscustomobject]@{ Name = 'Example PCL6'; Environment = 'Windows x64'; Major = '3'; Manufacturer = 'Example Inc' }
+            [pscustomobject]@{ Name = 'Microsoft IPP Class Driver'; Environment = 'Windows x64'; Major = '4'; Manufacturer = 'Microsoft' }
+            [pscustomobject]@{ Name = 'Microsoft Print To PDF'; Environment = 'Windows x64'; Major = '4'; Manufacturer = 'Microsoft' }
+        )
+        $r = @(Get-PrinterDriverDecision $drivers 'Windows Server 2025' '2025')
+        $r[0].Status | Should -Be 'WARNING'
+        $r[0].Value | Should -Be 'Third-party=1 of 2 (x64)'
+        $r[0].Details | Should -Be 'Example PCL6 (v3, Example Inc)'
+        $r[0].Recommendation | Should -Match 'Windows Update'
+        (@(Get-PrinterDriverDecision $drivers 'Windows Server 2022' '2022'))[0].Recommendation | Should -Not -Match 'Windows Update'
+        (@(Get-PrinterDriverDecision @($drivers[1]) 'Windows Server 2025' '2025'))[0].Status | Should -Be 'OK'
+    }
+    It 'a printer with another driver after the upgrade is named' {
+        $before = @([pscustomobject]@{ Printer = 'P1'; Driver = 'Example PCL6' }, [pscustomobject]@{ Printer = 'P2'; Driver = 'Example PS' })
+        $after = @([pscustomobject]@{ Printer = 'P1'; Driver = 'Microsoft IPP Class Driver' }, [pscustomobject]@{ Printer = 'P2'; Driver = 'Example PS' })
+        $c = Compare-PrinterDriver $before $after
+        @($c) | Should -Be @('P1: Example PCL6 -> Microsoft IPP Class Driver')
+    }
+    It 'the post-upgrade comparison reports missing printers and ports (ACTION) and changed drivers (WARNING)' {
+        $before = [pscustomobject]@{ Printers = @('P1', 'P2'); PrinterPorts = @('IP_10.20.40.11', 'IP_10.20.40.12'); PrinterDrivers = @([pscustomobject]@{ Printer = 'P1'; Driver = 'Example PCL6' }) }
+        $after = [pscustomobject]@{ Printers = @('P1'); PrinterPorts = @('IP_10.20.40.11'); PrinterDrivers = @([pscustomobject]@{ Printer = 'P1'; Driver = 'Microsoft IPP Class Driver' }) }
+        $d = Compare-IPUSnapshot $before $after
+        (@($d | Where-Object { $_.Item -eq 'Printers missing after upgrade' }))[0].Status | Should -Be 'ACTION'
+        (@($d | Where-Object { $_.Item -eq 'Printers missing after upgrade' }))[0].Details | Should -Be 'P2'
+        (@($d | Where-Object { $_.Item -eq 'Printer ports missing after upgrade' }))[0].Status | Should -Be 'ACTION'
+        (@($d | Where-Object { $_.Item -eq 'Printer drivers changed' }))[0].Status | Should -Be 'WARNING'
+    }
+    It 'the export command for a manual run' {
+        Get-PrintBackupCommand 'E:\Export\' 'SRV01' | Should -Be '%windir%\System32\spool\tools\PrintBrm.exe -B -F E:\Export\SRV01-printers.printerExport'
+    }
+    It 'reads printers from CIM when the PrintManagement module is missing' {
+        Mock Test-CommandAvailable { $false }
+        Mock Get-CimRequired { @([pscustomobject]@{ Name = 'P1'; ShareName = 'P1S'; Shared = $true; Published = $false; DriverName = 'Example PCL6'; PortName = 'IP_10.20.40.11' }) } -ParameterFilter { $Class -eq 'Win32_Printer' }
+        Mock Get-CimSafe { @([pscustomobject]@{ Name = 'IP_10.20.40.11'; HostAddress = '10.20.40.11'; PortNumber = 9100; Protocol = 1; Queue = '' }) } -ParameterFilter { $Class -eq 'Win32_TCPIPPrinterPort' }
+        Mock Get-CimSafe { @([pscustomobject]@{ Name = 'Example PCL6,3,Windows x64'; SupportedPlatform = 'Windows x64'; Version = 3 }) } -ParameterFilter { $Class -eq 'Win32_PrinterDriver' }
+        $inv = Get-PrinterInventory
+        $inv.Printers[0].ShareName | Should -Be 'P1S'
+        $inv.Ports[0].Address | Should -Be '10.20.40.11'
+        $inv.Drivers[0].Name | Should -Be 'Example PCL6'
+        $inv.Drivers[0].Major | Should -Be '3'
+        $inv.Drivers[0].Environment | Should -Be 'Windows x64'
+    }
+    It 'RedactExisting recovers printer, share and port names and port host names' {
+        $rows = @(
+            [pscustomobject]@{ Area = 'PRINTING'; Item = 'Printer: Floor2-Color'; Value = 'Driver=Example PCL6; Port=IP_10.20.40.11'; Details = @('Share=Floor2C', 'Published in AD=True') }
+            [pscustomobject]@{ Area = 'PRINTING'; Item = 'Printer: Local-Only'; Value = 'Driver=Example PCL6; Port=LPT1:'; Details = @('Share=(not shared)', 'Published in AD=False') }
+            [pscustomobject]@{ Area = 'PRINTING'; Item = 'Port: lpr-label'; Value = 'LPR port monitor'; Details = @('Address=labelhost.corp.example.test', 'Queue=labels') }
+            [pscustomobject]@{ Area = 'PRINTING'; Item = 'Port: IP_10.20.40.11'; Value = 'Standard TCP/IP (RAW)'; Details = @('Address=10.20.40.11:9100') }
+        )
+        $l = Get-RedactionLiteralFromResult $rows
+        (@($l | ForEach-Object { $_.Kind + '=' + $_.Value }) -join '; ') | Should -Be 'NAME=Floor2-Color; NAME=Floor2C; NAME=Local-Only; NAME=lpr-label; HOST=labelhost.corp.example.test; NAME=IP_10.20.40.11'
+    }
+}
+
+Describe 'Read-only system helpers (#127: every function runs in a test)' {
+    It 'Get-PrerequisiteState never throws and reads this host' {
+        $s = Get-PrerequisiteState
+        $s.PowerShellVersion | Should -Be $PSVersionTable.PSVersion
+        $s.DotNetRelease | Should -BeOfType [int]
+        $s.IsElevated | Should -BeOfType [bool]
+        , @($s.MissingModules) | Should -BeOfType [object[]]
+    }
+    It 'Get-AdComputerDn returns a DN or throws with a message (never an empty name)' {
+        $r = try { Get-AdComputerDn } catch { 'threw: ' + $_.Exception.Message }
+        $r | Should -Match '^(CN=.+|threw: .+)'
+    }
+    It 'Get-GpoListRegistryEntry reads the GPO-List keys in numeric order' {
+        Mock Get-ChildItem { @([pscustomobject]@{ PSChildName = '10'; PSPath = 'k10' }, [pscustomobject]@{ PSChildName = '2'; PSPath = 'k2' }) }
+        Mock Get-ItemProperty { if ($LiteralPath -eq 'k2') { [pscustomobject]@{ DisplayName = 'Second'; GPOName = '{2}'; Link = 'Local' } } else { [pscustomobject]@{ DisplayName = 'Tenth'; GPOName = '{10}'; Link = 'Local' } } }
+        $list = Get-GpoListRegistryEntry
+        ($list | ForEach-Object { $_.DisplayName }) -join ',' | Should -Be 'Second,Tenth'
+    }
+    It 'Get-FileCompanyName: empty for a missing file, the company for a real one' {
+        Get-FileCompanyName '' | Should -Be ''
+        Get-FileCompanyName (Join-Path $TestDrive 'missing.dll') | Should -Be ''
+        $exe = (Get-Process -Id $PID).Path
+        Get-FileCompanyName $exe | Should -BeOfType [string]
+    }
+    It 'Get-PrintDriverStoreSize adds up every file under spool\drivers' {
+        Mock Get-ChildItem { @([pscustomobject]@{ Length = 1000 }, [pscustomobject]@{ Length = 2500 }) }
+        Get-PrintDriverStoreSize | Should -Be 3500
+    }
+    It 'Get-PrintMonitorInventory lists port monitors and print processors with their company' {
+        Mock Get-ChildItem { @([pscustomobject]@{ PSChildName = 'Local Port'; PSPath = 'mon1' }) } -ParameterFilter { $LiteralPath -like '*\Monitors' }
+        Mock Get-ChildItem { @([pscustomobject]@{ PSChildName = 'winprint'; PSPath = 'pp1' }) } -ParameterFilter { $LiteralPath -like '*Print Processors' }
+        Mock Get-ItemProperty { if ($LiteralPath -eq 'mon1') { [pscustomobject]@{ Driver = 'localspl.dll' } } else { [pscustomobject]@{ Driver = 'winprint.dll' } } }
+        Mock Get-FileCompanyName { 'Microsoft Corporation' }
+        $items = Get-PrintMonitorInventory
+        ($items | ForEach-Object { $_.Type + ':' + $_.Name + ':' + $_.Driver + ':' + $_.Company }) -join ';' | Should -Be 'PortMonitor:Local Port:localspl.dll:Microsoft Corporation;PrintProcessor:winprint:winprint.dll:Microsoft Corporation'
     }
 }

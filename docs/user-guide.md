@@ -792,8 +792,10 @@ Requires Pester 5 (CI uses 5.7.1) on Windows. The tests load the script in libra
 | `tests/Checks.Tests.ps1` | Every check body, run against a simulated server (stand-ins for CIM, registry, native tools and cmdlets); also that `docs/checks.md` lists every check and that the sample result matches the JSON Schema |
 | `tests/Merge-IPUAssessments.Tests.ps1` | The fleet overview, CSV formula protection, redacted results |
 
-Run the full suite in an **elevated** session, as CI does. Some tests create folders limited to SYSTEM and
-Administrators; an unelevated session cannot use them, and the tests after them fail. Tests tagged
+The full suite runs in an elevated or a normal (unelevated) session, with the same result: CI runs it both ways, the
+second time as a standard local user (`pester (unelevated)`, #126). Unelevated, the folders that the tests limit to
+SYSTEM and Administrators also keep your own account, so the tests can use and remove them; a real assessment run
+never does that. Tests tagged
 `Integration` start real processes and read the real registry, local accounts and Group Policy; skip them with:
 
 ```powershell

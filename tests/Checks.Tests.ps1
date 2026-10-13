@@ -26,6 +26,12 @@ param()
 BeforeAll {
     $env:IPU_ASSESSMENT_LIBRARY_ONLY = '1'
     . (Join-Path $PSScriptRoot '..\src\Windows-IPU-Readiness-Assessment.ps1')
+    # Unelevated runs (#126): keep the current user on the folders the tests
+    # restrict, so they can be used and cleaned up. Elevated runs are as before.
+    if ($env:OS -eq 'Windows_NT') {
+        $me = [Security.Principal.WindowsIdentity]::GetCurrent()
+        if (-not (New-Object Security.Principal.WindowsPrincipal($me)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { $script:ExtraRestrictedSids = @($me.User.Value) }
+    }
 
     # ---------------------------------------------------------------- helpers
     $script:RealRoots = @([IO.Path]::GetTempPath(), $env:TEMP, $env:TMP) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\') + '\' }

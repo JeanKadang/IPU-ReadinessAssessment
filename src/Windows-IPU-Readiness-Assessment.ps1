@@ -307,6 +307,7 @@ $script:DetectionPatterns = @{
 # "Features removed or no longer developed" pages for the target release.
 # Removed  -> ACTION (Setup drops the feature; the dependent workload breaks).
 # Deprecated -> Observation (still works, plan a replacement).
+# Verified: see $script:FactSources.FeatureLifecycle (section 4).
 $script:FeatureLifecycle = @(
     @{ Feature='SMTP-Server';              Name='SMTP Server';                     State='Removed';    Targets=@('2025') }
     @{ Feature='Web-Lgcy-Mgmt-Console';    Name='IIS 6 Management Console';        State='Removed';    Targets=@('2025') }
@@ -603,13 +604,19 @@ function Invoke-Check {
     $script:CurrentCheckId = 'core'
 }
 
+# Extra SIDs for restricted folders. Always empty in a real run; the test
+# suite adds the current user when it runs unelevated, so it can still use
+# and clean up the folders it creates (#126).
+$script:ExtraRestrictedSids = @()
+
 function New-RestrictedDirectorySecurity {
     # SYSTEM and Administrators full control, inheritance from the parent
     # removed. Built from SIDs so it works on every OS language.
+    param([string[]]$ExtraSids = $script:ExtraRestrictedSids)
     $security = New-Object System.Security.AccessControl.DirectorySecurity
     $security.SetAccessRuleProtection($true, $false)
     $inherit = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
-    foreach ($sid in @('S-1-5-18', 'S-1-5-32-544')) {
+    foreach ($sid in (@('S-1-5-18', 'S-1-5-32-544') + @($ExtraSids | Where-Object { $_ }) | Select-Object -Unique)) {
         $identity = New-Object System.Security.Principal.SecurityIdentifier($sid)
         $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity, [System.Security.AccessControl.FileSystemRights]::FullControl, $inherit, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)
         $security.AddAccessRule($rule)
@@ -1315,9 +1322,43 @@ function Get-SpecialServerFact {
 # =============================================================================
 # 4. DECISION RULES (pure functions - no system access; unit-tested)
 # =============================================================================
+# Where each dated fact in this section (and the feature list in section 2)
+# comes from, and when it was last checked against that source (#132). A
+# test fails when a check is older than six months, so outdated facts show
+# up in CI instead of as confident, wrong answers. To re-verify: open the
+# source, update the table if it changed, and set Verified to the day you
+# checked (CONTRIBUTING, "Dated facts").
+$script:FactSources = [ordered]@{
+    SupportedUpgradePaths  = @{ Verified = '2026-10-13'; Source = 'https://learn.microsoft.com/en-us/windows-server/get-started/install-upgrade-migrate' }
+    SqlSupportedOnTarget   = @{ Verified = '2026-10-13'; Source = 'https://learn.microsoft.com/en-us/troubleshoot/sql/general/use-sql-server-in-windows' }
+    ReleaseEndOfSupport    = @{ Verified = '2026-10-13'; Source = 'https://learn.microsoft.com/en-us/lifecycle/products/windows-server-2025' }
+    # FeatureLifecycle: the 2025 page was checked; the 2022 page lists more removals (#187).
+    FeatureLifecycle       = @{ Verified = '2026-10-13'; Source = 'https://learn.microsoft.com/en-us/windows-server/get-started/removed-deprecated-features-windows-server-2025' }
+    VMwareToolsMinimum     = @{ Verified = '2026-10-13'; Source = 'https://blogs.vmware.com/cloud-foundation/2024/11/07/vmware-tools-12-5-0-is-ready-for-the-latest-windows-operating-systems/' }
+    ExpectedWindowsChanges = @{ Verified = '2026-10-13'; Source = 'https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/158' }
+    WinReMinPartitionMB    = @{ Verified = '2026-10-13'; Source = 'https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/161' }
+    DocLinks               = @{ Verified = '2026-10-13'; Source = 'https://learn.microsoft.com/en-us/windows-server/get-started/perform-in-place-upgrade' }
+}
+
+function Get-StaleFactSource {
+    # Pure (#132): the fact tables whose last check is older than MaxAgeDays
+    # (or has no valid date or source), as text naming what to recheck.
+    param([System.Collections.IDictionary]$Sources, [datetime]$Today, [int]$MaxAgeDays = 183)
+    $stale = @()
+    foreach ($name in @($Sources.Keys)) {
+        $e = $Sources[$name]
+        $date = [datetime]::MinValue
+        $ok = [datetime]::TryParseExact([string]$e.Verified, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$date)
+        if (-not $ok -or [string]$e.Source -notmatch '^https://') { $stale += ($name + ': no valid Verified date (yyyy-MM-dd) or https Source'); continue }
+        if (($Today.Date - $date.Date).TotalDays -gt $MaxAgeDays) { $stale += ($name + ': last verified ' + $e.Verified + ', recheck against ' + $e.Source) }
+    }
+    return $stale
+}
+
 $script:ReleaseOrder = @('2012','2012R2','2016','2019','2022','2025')
 
 # Microsoft "Supported in-place upgrade paths" (installation media).
+# Verified: see $script:FactSources.SupportedUpgradePaths.
 $script:SupportedUpgradePaths = @{
     '2022' = @('2016','2019')
     '2025' = @('2012R2','2016','2019','2022')
@@ -1325,6 +1366,7 @@ $script:SupportedUpgradePaths = @{
 
 # SQL Server major version -> Windows Server support (Microsoft "Using SQL
 # Server in Windows" compatibility matrix).
+# Verified: see $script:FactSources.SqlSupportedOnTarget.
 $script:SqlReleaseNames = @{ 9='2005'; 10='2008 / 2008 R2'; 11='2012'; 12='2014'; 13='2016'; 14='2017'; 15='2019'; 16='2022'; 17='2025' }
 $script:SqlSupportedOnTarget = @{
     '2022' = @(14,15,16,17)
@@ -1358,6 +1400,7 @@ function Get-WindowsServerRelease {
 
 # End of extended support per source release (Microsoft Lifecycle, fixed
 # policy). Support runs through the listed day.
+# Verified: see $script:FactSources.ReleaseEndOfSupport.
 $script:ReleaseEndOfSupport = @{
     '2012'   = '2023-10-10'
     '2012R2' = '2023-10-10'
@@ -1599,6 +1642,7 @@ function Get-VssWriterStatus {
 function Get-VMwareToolsDecision {
     # Broadcom: VMware Tools 12.5.0 is the release whose drivers are certified
     # for Windows Server 2025; Broadcom's IPU KB says to update Tools first.
+    # Verified: see $script:FactSources.VMwareToolsMinimum.
     param([string]$Version, [string]$Target)
     if (-not $Version) {
         return [pscustomobject]@{ Status='ACTION'; Text='VMware Tools not found. Install current VMware Tools before IPU (PVSCSI/VMXNET3 and other VMware drivers).' }
@@ -1677,6 +1721,7 @@ function ConvertTo-PendingRenamePath {
 
 # Changes Microsoft makes during an upgrade (#158), so the post-upgrade
 # comparison can call them expected instead of reporting them as problems.
+# Verified: see $script:FactSources.ExpectedWindowsChanges.
 # Services that newer Windows starts on demand (trigger start, Manual):
 $script:ExpectedManualServices = @('IKEEXT','NlaSvc')
 # Services and features removed or renamed in newer Windows Server releases:
@@ -2178,6 +2223,8 @@ function ConvertFrom-FileTimeValue {
 
 # Official pages linked from recommendations (#79). Only stable pages;
 # the report text must make sense without them (servers are often offline).
+# Verified (the Microsoft links open; the Trend Micro page was not reachable
+# from the checking session): see $script:FactSources.DocLinks.
 $script:DocLinks = @{
     Lifecycle      = @{ Url = 'https://learn.microsoft.com/en-us/lifecycle/products/?terms=windows%20server'; Title = 'Microsoft Lifecycle: Windows Server' }
     InPlaceUpgrade = @{ Url = 'https://learn.microsoft.com/en-us/windows-server/get-started/perform-in-place-upgrade'; Title = 'Microsoft: Perform an in-place upgrade of Windows Server' }
@@ -2212,6 +2259,7 @@ function Get-RecommendationCommand {
 
 # Smallest recovery partition that held the Windows Server 2025 WinRE in a
 # live run (#161): Setup created 901 MB partitions with 147 MB free.
+# Verified: see $script:FactSources.WinReMinPartitionMB.
 $script:WinReMinPartitionMB = 900
 
 function ConvertFrom-ReagentcInfo {
