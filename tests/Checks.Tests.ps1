@@ -844,6 +844,29 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             @(Get-Row 'STORAGE' 'SystemPartition' | Where-Object { $_.Status -eq 'WARNING' -and $_.Kind -eq 'Finding' }).Count | Should -Be 1
             @(Get-Row 'STORAGE' 'RecoveryPartition' | Where-Object { $_.Status -eq 'WARNING' -and $_.Kind -eq 'Observation' }).Count | Should -Be 1
         }
+        It 'predicts a new recovery partition before the upgrade and shows the Setup switch (#161)' {
+            $null = Invoke-TestCheck 'storage'
+            $r = (Get-Row 'STORAGE' 'RecoveryPartitionAfterC')[0]
+            $r.Status | Should -Be 'WARNING'
+            $r.Value | Should -Match 'smaller than 900 MB'
+            $r.Command | Should -Be 'setup.exe /ResizeRecoveryPartition Disable'
+        }
+        It 'a recovery partition after C: gets the removal steps with its number (#161)' {
+            $script:Fake.Partitions += [pscustomobject]@{ DiskNumber = 0; PartitionNumber = 4; DriveLetter = $null; Offset = [double]99.6GB; Size = 901MB; Type = 'Recovery'; GptType = '{de94bba4-06d1-4d40-a16a-bfd50179d6ac}'; MbrType = 0; IsSystem = $false; AccessPaths = @() }
+            $script:Fake.Volumes['0-4'] = [pscustomobject]@{ Size = 901MB; SizeRemaining = 147MB; FileSystemLabel = ''; FileSystem = 'NTFS' }
+            $script:Fake.Native['reagentc.exe'] = @{ ExitCode = 0; Output = "    Windows RE status:         Enabled`r`n    Windows RE location:       \\?\GLOBALROOT\device\harddisk0\partition4\Recovery\WindowsRE" }
+            $null = Invoke-TestCheck 'storage'
+            $r = (Get-Row 'STORAGE' 'RecoveryPartitionAfterC')[0]
+            $r.Value | Should -Match 'P4 \(901 MB\) directly after C:'
+            $r.Command | Should -Match 'select partition 4'
+            $r.Recommendation | Should -Match 'WinRE is on it'
+            (Get-Row 'STORAGE' 'WinREStatus')[0].Value | Should -Be 'Enabled, Disk0 P4'
+        }
+        It 'a failed reagentc /info is MANUAL (#161)' {
+            $script:Fake.Native['reagentc.exe'] = @{ ExitCode = 2; Output = 'Access denied' }
+            (Invoke-TestCheck 'storage').Outcome | Should -Be 'Completed'
+            (Get-Row 'STORAGE' 'WinREStatus')[0].Status | Should -Be 'MANUAL'
+        }
         It 'falls back to Win32_DiskDrive without storage cmdlets' {
             $script:Fake.MissingCommands += 'Get-Disk'
             $script:Fake.Cim['Win32_DiskDrive'] = @([pscustomobject]@{ Index = 0; Size = [double]100GB; Model = 'VMware Virtual disk' })
@@ -1280,6 +1303,7 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
         It 'adds the standard change steps as checklist items' {
             (Invoke-TestCheck 'checklist').Outcome | Should -Be 'Completed'
             @($script:Results | Where-Object { $_.Kind -eq 'Checklist' }).Count | Should -Be 6
+            (Get-Row 'CHECKLIST' 'Installation media')[0].Command | Should -Be 'setup.exe /ResizeRecoveryPartition Disable'
             (Get-Row 'CHECKLIST' 'Backup and fallback')[0].Recommendation | Should -Match 'VMware'
         }
         It 'target licensing follows the activation channel found by the licensing check (#102)' {

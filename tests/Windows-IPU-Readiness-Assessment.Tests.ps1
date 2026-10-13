@@ -2309,3 +2309,48 @@ Describe 'Redaction of user-rights entries (#156)' {
         $out | Should -Match '^ACCOUNT-\d+ \[SID-\d+\]$'
     }
 }
+
+Describe 'Recovery partition after C: (#161)' {
+    BeforeAll {
+        function New-Part($Number, $OffsetMB, $SizeMB, $Recovery) { [pscustomobject]@{ PartitionNumber = $Number; Offset = [double]$OffsetMB * 1MB; SizeMB = $SizeMB; IsRecovery = $Recovery } }
+    }
+    It 'reads status and location from reagentc /info' {
+        $r = ConvertFrom-ReagentcInfo ("Windows Recovery Environment (Windows RE) and system reset configuration`r`nInformation:`r`n    Windows RE status:         Enabled`r`n    Windows RE location:       \\?\GLOBALROOT\device\harddisk0\partition3\Recovery\WindowsRE")
+        $r.Enabled | Should -BeTrue
+        $r.Disk | Should -Be 0
+        $r.Partition | Should -Be 3
+    }
+    It 'returns nothing it cannot read' {
+        $r = ConvertFrom-ReagentcInfo ''
+        $r.Enabled | Should -BeNullOrEmpty
+        $r.Partition | Should -BeNullOrEmpty
+    }
+    It '<Case> -> <Kind>' -TestCases @(
+        @{ Case = 'MBR, only System Reserved (Pre)';         Mode = 'Pre';  Layout = @('1,1,500,0', '2,501,150000,0');                    Kind = 'LikelyNew' }
+        @{ Case = 'GPT, 500 MB WinRE at the start (Pre)';    Mode = 'Pre';  Layout = @('1,1,500,1', '2,501,100,0', '4,700,800000,0');     Kind = 'LikelyNew' }
+        @{ Case = 'big enough WinRE at the start (Pre)';      Mode = 'Pre';  Layout = @('1,1,1024,1', '2,1100,100,0', '4,1300,800000,0');  Kind = 'Fine' }
+        @{ Case = 'new partition after C: (Post)';            Mode = 'Post'; Layout = @('1,1,500,0', '2,501,160000,0', '3,160600,901,1');   Kind = 'AfterC' }
+        @{ Case = 'no recovery partition (Post)';             Mode = 'Post'; Layout = @('1,1,500,0', '2,501,110000,0');                     Kind = 'Fine' }
+    ) {
+        $built = @($Layout | ForEach-Object { $f = $_ -split ','; New-Part ([int]$f[0]) ([double]$f[1]) ([double]$f[2]) ($f[3] -eq '1') })
+        $cNumber = if ($Case -like 'GPT*' -or $Case -like 'big*') { 4 } else { 2 }
+        (Get-RecoveryPartitionDecision $built $cNumber $null $Mode).Kind | Should -Be $Kind
+    }
+    It 'names the partition after C:, prefers the one WinRE is on, and warns about reagentc /disable' {
+        $parts = @((New-Part 1 1 500 $true), (New-Part 2 600 100 $false), (New-Part 5 800 800000 $false), (New-Part 6 801000 901 $true))
+        $d = Get-RecoveryPartitionDecision $parts 5 6 'Post'
+        $d.PartitionNumber | Should -Be 6
+        $d.Value | Should -Match 'P6 \(901 MB\)'
+        $d.Text | Should -Match 'Never skip reagentc /disable'
+        $d.Text | Should -Match 'WinRE is on it'
+    }
+    It 'builds the exact Setup and removal commands' {
+        (Get-RecommendationCommand 'SetupNoRecoveryPartition').Command | Should -Be 'setup.exe /ResizeRecoveryPartition Disable'
+        $lines = (Get-RecommendationCommand 'RemoveRecoveryPartition' @{ Disk = 0; Partition = 3 }).Command -split '\r?\n'
+        $lines[0] | Should -Be 'reagentc /info'
+        $lines[1] | Should -Be 'reagentc /disable'
+        $lines | Should -Contain '  select partition 3'
+        $lines | Should -Contain '  delete partition override'
+        $lines[-2] | Should -Be 'reagentc /enable'
+    }
+}

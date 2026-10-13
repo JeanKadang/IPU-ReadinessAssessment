@@ -511,6 +511,50 @@ HTML. The checklist and Setup compatibility scan are skipped in Post mode.
 
 > Keep the pre-upgrade `.json`. It is the baseline.
 
+### Recovery partition after an upgrade
+
+When a server has no recovery (WinRE) partition big enough for the new WinRE, Setup silently shrinks C: and
+creates a new recovery partition (about 900 MB) **directly after C:**. That partition blocks extending C: later.
+
+**Prevent it:** start Setup with
+
+```
+setup.exe /ResizeRecoveryPartition Disable
+```
+
+Microsoft: "Windows does not resize the existing Windows RE tools partition or create a new one during
+installation" ([Windows Setup command-line options](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-command-line-options)).
+The pre-upgrade report warns when Setup is likely to add the partition, and the checklist shows the switch.
+Check afterwards with `reagentc /info`.
+
+**Remove it** (only if C: must be extendable, in a change with a snapshot). The report names the disk and
+partition number:
+
+```
+reagentc /info              note which partition holds WinRE
+reagentc /disable           copies WinRE to C:\Windows\System32\Recovery
+diskpart
+  select disk <d>
+  select partition <n>      the recovery partition AFTER C:
+  delete partition override
+  select volume c
+  extend
+  exit
+reagentc /enable            WinRE now lives on C:
+reagentc /info              must show Enabled
+```
+
+- Never skip `reagentc /disable`. Deleting the partition first deletes the only copy of WinRE: the server still
+  runs, but has no recovery environment, and `reagentc /enable` then fails.
+- Delete only the partition after C:. A recovery partition at the start of the disk is not in the way.
+- If WinRE was lost: take `Windows\System32\Recovery\Winre.wim` from `sources\install.wim` on the matching ISO,
+  copy it to `C:\Windows\System32\Recovery`, run `reagentc /setreimage /path C:\Windows\System32\Recovery`,
+  then `reagentc /enable`.
+- Microsoft's procedure for the reagentc and diskpart steps:
+  [KB5028997](https://support.microsoft.com/en-us/topic/kb5028997-instructions-to-manually-resize-your-partition-to-install-the-winre-update-400faa27-9343-461c-ada9-24c8229763bf).
+
+The script itself only reads the partition layout and `reagentc /info`; it never changes partitions.
+
 ## 9. Combining many servers: fleet overview
 
 `src/Merge-IPUAssessments.ps1` (version 1.0.4, for assessment 4.0.1 and later) reads the JSON result of every

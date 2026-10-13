@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Recovery partition after C: (#161). Setup silently creates one when no recovery partition is big enough for the new WinRE, which blocks extending C: later. The pre-upgrade report warns when this is likely and the checklist shows `setup.exe /ResizeRecoveryPartition Disable`; a recovery partition after C: is reported with its number and the removal steps (`reagentc /disable` first). WinRE status from `reagentc /info` (read-only). New user-guide section "Recovery partition after an upgrade".
+
 ### Fixed
 - System File Checker output "a system repair is pending which requires reboot" is now a WARNING with reboot advice. It was reported as integrity violations (ACTION) with repair advice, although SFC had checked nothing (#159).
 
