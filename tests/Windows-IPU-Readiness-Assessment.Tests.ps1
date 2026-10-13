@@ -2508,7 +2508,8 @@ Describe 'RedactExisting recovers every name the collector registers (#172)' {
             'Add-RedactionLiteral ([string]$sh.Name) ''NAME''',
             'if ($sh.Description) { Add-RedactionLiteral ([string]$sh.Description) ''NAME'' }',
             'foreach ($s in @($script:Data.Services | Where-Object { $_.StartName })) { Add-RedactionLiteral ([string]$s.StartName) ''ACCOUNT'' }',
-            'if ($user -and $user -notmatch $builtIn) { Add-RedactionLiteral $user ''ACCOUNT'' }'
+            'if ($user -and $user -notmatch $builtIn) { Add-RedactionLiteral $user ''ACCOUNT'' }',
+            'if ($act.KmsHost) { foreach ($h in @($act.KmsHost, ($act.KmsHost -split ''\.'')[0]) | Select-Object -Unique) { Add-RedactionLiteral $h ''HOST'' }; $script:Data.KmsEndpoint = $act.KmsEndpoint } elseif ($script:Data.ActivationKind -eq ''KMS'') { $script:Data.KmsEndpoint = ''found via DNS'' }'
         )
         @($sites | Where-Object { $known -notcontains $_ }) | Should -BeNullOrEmpty
     }
@@ -2559,5 +2560,40 @@ Describe 'RDP NLA in the Summary (#174)' {
         Get-RdpAccessFact | Should -Be 'GO (no local blocker), NLA off (was on before the upgrade)'
         $script:Data = @{}
         Get-RdpAccessFact | Should -Be 'Not reported, NLA unknown'
+    }
+}
+
+Describe 'Activation per channel, with the KMS host and renewal (#171)' {
+    It 'a KMS client names the host it found via DNS and the days to renewal' {
+        $d = Get-ActivationDecision 'KMS' 1 'Licensed' 'Volume:GVLK' (173 * 1440 + 30) 'kms01.corp.example.test' '1688' '' ''
+        $d.Status | Should -Be 'OK'
+        $d.Value | Should -Be 'Licensed (KMS client), activated by kms01.corp.example.test:1688, found via DNS. Renewal due in 173 days'
+        $d.KmsHost | Should -Be 'kms01.corp.example.test'
+    }
+    It 'a host set on the server says so' {
+        (Get-ActivationDecision 'KMS' 1 'Licensed' 'Volume:GVLK' 0 'kms01' '1688' 'kms02.corp.example.test' '1688').Value | Should -Match 'activated by kms02\.corp\.example\.test:1688, set manually on this server'
+    }
+    It 'few days left is a WARNING; not activated is an ACTION with the reason' {
+        $low = Get-ActivationDecision 'KMS' 1 'Licensed' 'Volume:GVLK' (12 * 1440) 'kms01' '1688' '' ''
+        $low.Status | Should -Be 'WARNING'
+        $low.Text | Should -Match '_vlmcs\._tcp'
+        $off = Get-ActivationDecision 'KMS' 2 'OOBGrace' 'Volume:GVLK' (20 * 1440) '' '' '' ''
+        $off.Status | Should -Be 'ACTION'
+        $off.Value | Should -Be 'Not activated (OOBGrace, KMS client)'
+    }
+    It '<Kind> gets its own text and no KMS wording' -TestCases @(
+        @{ Kind = 'MAK';    Expect = 'Licensed (MAK), activated permanently - no renewal needed' }
+        @{ Kind = 'AVMA';   Expect = 'Licensed (AVMA), activated through the Hyper-V host' }
+        @{ Kind = 'OEM';    Expect = 'Licensed (OEM)' }
+        @{ Kind = 'Retail'; Expect = 'Licensed (Retail)' }
+    ) {
+        $d = Get-ActivationDecision $Kind 1 'Licensed' 'x' 0 'kms01' '1688' '' ''
+        $d.Value | Should -Be $Expect
+        $d.Value | Should -Not -Match 'KMS'
+        $d.KmsHost | Should -Be ''
+    }
+    It 'RedactExisting recovers the KMS host name' {
+        $rows = @([pscustomobject]@{ Area = 'LICENSING'; Item = 'CurrentActivation'; Value = 'Licensed (KMS client), activated by kms01:1688, found via DNS'; Details = @('Channel=Volume:GVLK', 'PartialProductKey=ABCDE', 'KMS host: kms01:1688 (found via DNS)') })
+        (@(Get-RedactionLiteralFromResult $rows) | ForEach-Object { $_.Kind + '=' + $_.Value }) -join ';' | Should -Be 'HOST=kms01'
     }
 }
