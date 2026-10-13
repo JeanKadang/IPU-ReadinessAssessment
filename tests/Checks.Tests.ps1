@@ -422,8 +422,8 @@ BeforeAll {
 AfterAll { Remove-Item Env:\IPU_ASSESSMENT_LIBRARY_ONLY -ErrorAction SilentlyContinue }
 
 Describe 'Check registry' {
-    It 'registers 33 checks with unique ids' {
-        $script:AllChecks.Count | Should -Be 33
+    It 'registers 34 checks with unique ids' {
+        $script:AllChecks.Count | Should -Be 34
         @($script:AllChecks | Group-Object Id | Where-Object { $_.Count -gt 1 }).Count | Should -Be 0
     }
     It 'docs/checks.md describes every registered check' {
@@ -506,13 +506,13 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $null = Invoke-TestCheck 'upgradepath'
             (Get-Row 'UPGRADE_PATH' 'BootFromVHD')[0].Status | Should -Be 'BLOCKER'
         }
-        It 'a clustered node is a BLOCKER' {
+        It 'a clustered node points to the SPECIAL section (#152)' {
             $script:Fake.Features['Failover-Clustering'] = $true
             $script:Fake.Paths['HKLM:\Cluster'] = $true
             $script:Fake.Cim['Win32_Service'] = @($script:Fake.Cim['Win32_Service']) + @(New-FakeService 'ClusSvc')
             Reset-FakeServerKeep
             $null = Invoke-TestCheck 'upgradepath'
-            (Get-Row 'UPGRADE_PATH' 'TargetUpgradePath')[0].Status | Should -Be 'BLOCKER'
+            (Get-Row 'UPGRADE_PATH' 'TargetUpgradePath')[0].Value | Should -Match 'SPECIAL'
             $script:Data.IsClustered | Should -BeTrue
         }
     }
@@ -729,6 +729,75 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
         }
     }
 
+    Context 'special (#152)' {
+        It 'a cluster node gets the SPECIAL row and the facts to choose a plan' {
+            $script:Fake.MissingCommands = @('Get-VMSwitch')
+            $script:Fake.Features['Failover-Clustering'] = $true
+            $script:Fake.Cluster = [pscustomobject]@{ Name = 'CL01' }
+            $script:Fake.ClusterNodes = @([pscustomobject]@{ Name = 'SRV01'; State = 'Up' }, [pscustomobject]@{ Name = 'SRV02'; State = 'Up' })
+            $script:Fake.ClusterGroups = @([pscustomobject]@{ Name = 'SQL (MSSQLSERVER)'; GroupType = 'Unknown'; State = 'Online'; OwnerNode = 'SRV01' }, [pscustomobject]@{ Name = 'Cluster Group'; GroupType = 'Cluster'; State = 'Online'; OwnerNode = 'SRV01' })
+            $script:Fake.ClusterResources = @([pscustomobject]@{ Name = 'SQL Server'; ResourceType = 'SQL Server'; State = 'Online'; OwnerGroup = 'SQL (MSSQLSERVER)' })
+            $script:Fake.ClusterQuorum = [pscustomobject]@{ QuorumType = 'NodeAndFileShareMajority'; QuorumResource = 'File Share Witness' }
+            Reset-FakeServerKeep
+            $script:Data.SpecialKind = 'Cluster'
+            $run = Invoke-TestCheck 'special'
+            $run.Message | Should -BeNullOrEmpty
+            $run.Outcome | Should -Be 'Completed'
+            $r = (Get-Row 'SPECIAL' 'Failover cluster node')[0]
+            $r.Status | Should -Be 'SPECIAL'
+            $script:Data.Special.Facts | Should -Contain 'Cluster: CL01'
+            $script:Data.Special.Facts | Should -Contain 'Nodes (2): SRV01 (Up), SRV02 (Up)'
+            $script:Data.Special.Facts | Should -Contain 'SQL Server failover cluster instances: 1'
+            $script:Data.Special.Facts | Should -Contain 'Roles: Unknown x1'
+        }
+        It 'a domain controller gets the SPECIAL row; facts that cannot be read say so' {
+            $script:Fake.Cim['Win32_ComputerSystem'].DomainRole = 5
+            Reset-FakeServerKeep
+            $script:Data.SpecialKind = 'DomainController'
+            $run = Invoke-TestCheck 'special'
+            $run.Message | Should -BeNullOrEmpty
+            $run.Outcome | Should -Be 'Completed'
+            (Get-Row 'SPECIAL' 'Domain controller')[0].Status | Should -Be 'SPECIAL'
+            @($script:Data.Special.Facts | Where-Object { $_ -like 'Other roles on this server:*' }).Count | Should -Be 1
+            @($script:Data.Special.Facts | Where-Object { $_ -like 'Replication summary*' }).Count | Should -Be 1
+        }
+        It 'undecided cluster signals are MANUAL, never a silent standard report' {
+            $script:Data.SpecialKind = 'Undecided'
+            $null = Invoke-TestCheck 'special'
+            (Get-Row 'SPECIAL' 'ClusterMembership')[0].Status | Should -Be 'MANUAL'
+        }
+        It 'a normal server gets no SPECIAL rows' {
+            $script:Data.SpecialKind = ''
+            $null = Invoke-TestCheck 'special'
+            @($script:Results | Where-Object { $_.Area -eq 'SPECIAL' }).Count | Should -Be 0
+        }
+        It 'the whole run on a domain controller is a short SPECIAL report' {
+            $script:Fake.Cim['Win32_ComputerSystem'].DomainRole = 5
+            Reset-FakeServerKeep
+            $dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $ReportDirectory = $dir; $RestrictOutputAcl = $false; $WriteJson = $true; $EnableRDPPolicyEvidence = $false
+            $script:ReportPath = Join-Path $dir 'SRV01-IPU-Assessment.html'
+            $script:JsonPath = Join-Path $dir 'SRV01-IPU-Assessment.json'
+            $script:LogPath = Join-Path $dir 'SRV01-IPU-Assessment.log'
+            $script:Results.Clear(); $script:CheckRuns.Clear(); $script:Checks.Clear()
+            function Get-PrerequisiteState { [pscustomobject]@{ PowerShellVersion = [Version]'5.1'; DotNetRelease = 528049; IsElevated = $true; MissingModules = @() } }
+            $writer = New-Object IO.StringWriter
+            $old = [Console]::Out
+            [Console]::SetOut($writer)
+            try { Invoke-Assessment } finally { [Console]::SetOut($old) }
+            $out = $writer.ToString()
+            $out | Should -Match ';SUCCEEDED;SPECIAL;'
+            $out | Should -Match 'SPECIAL server \(Domain controller\): short report'
+            @($script:CheckRuns | Where-Object { $_.Id -eq 'dism' })[0].Message | Should -Be 'Not applicable: SPECIAL server, short report'
+            @($script:CheckRuns | Where-Object { $_.Id -eq 'special' })[0].Outcome | Should -Be 'Completed'
+            $json = [IO.File]::ReadAllText($script:JsonPath) | ConvertFrom-Json
+            $json.Overall | Should -Be 'SPECIAL'
+            $json.Special.Kind | Should -Be 'DomainController'
+            $json.Counts.SPECIAL | Should -Be 1
+            [IO.File]::ReadAllText($script:ReportPath) | Should -Match '<section id="special"'
+        }
+    }
+
     Context 'domain' {
         It 'calls a non-domain server a workgroup server, with the workgroup name (#98)' {
             $script:Fake.Cim['Win32_ComputerSystem'].PartOfDomain = $false
@@ -756,11 +825,20 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $script:Data.UacSummary | Should -Be $row.Value
             $script:Data.Snapshot.Uac | Should -Be $row.Value
         }
-        It 'a domain controller is a BLOCKER by company policy' {
+        It 'a domain controller is evidence only; the SPECIAL section carries the plan (#152)' {
             $script:Fake.Cim['Win32_ComputerSystem'].DomainRole = 5
             Reset-FakeServerKeep
             $null = Invoke-TestCheck 'domain'
-            (Get-Row 'DOMAIN_CONTROLLER' 'DomainController')[0].Status | Should -Be 'BLOCKER'
+            $r = (Get-Row 'DOMAIN_CONTROLLER' 'DomainController')[0]
+            $r.Status | Should -Be 'INFO'
+            $r.Recommendation | Should -Match 'SPECIAL'
+        }
+        It 'with -BlockDomainControllerIPU $false a domain controller is a WARNING in a full report' {
+            $script:Fake.Cim['Win32_ComputerSystem'].DomainRole = 5
+            Reset-FakeServerKeep
+            $BlockDomainControllerIPU = $false
+            $null = Invoke-TestCheck 'domain'
+            (Get-Row 'DOMAIN_CONTROLLER' 'DomainController')[0].Status | Should -Be 'WARNING'
         }
         It 'a broken trust is an ACTION; an untestable one is MANUAL' {
             $script:Fake.SecureChannel = $false
@@ -874,7 +952,7 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $null = Invoke-TestCheck 'cluster'
             (Get-Row 'CLUSTER' 'FailoverClustering')[0].Status | Should -Be 'ACTION'
         }
-        It 'cluster membership is a BLOCKER and lists nodes' {
+        It 'cluster membership points to SPECIAL, lists nodes and registers their names for redaction (#152)' {
             $script:Fake.Features['Failover-Clustering'] = $true
             $script:Fake.MissingCommands = @('Get-VMSwitch')
             $script:Fake.Cluster = [pscustomobject]@{ Name = 'CL01' }
@@ -882,8 +960,10 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $script:Fake.ClusterQuorum = [pscustomobject]@{ QuorumType = 'NodeAndFileShareMajority'; QuorumResource = 'File Share Witness' }
             Reset-FakeServerKeep
             $null = Invoke-TestCheck 'cluster'
-            (Get-Row 'CLUSTER' 'ClusterMembership')[0].Status | Should -Be 'BLOCKER'
+            (Get-Row 'CLUSTER' 'ClusterMembership')[0].Status | Should -Be 'INFO'
             (Get-Row 'CLUSTER' 'Node: SRV02').Count | Should -Be 1
+            $script:Data.RedactLiterals.ContainsKey('CL01') | Should -BeTrue
+            $script:Data.RedactLiterals.ContainsKey('SRV02') | Should -BeTrue
             (Get-Row 'CLUSTER' 'Quorum').Count | Should -Be 1
         }
     }

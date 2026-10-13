@@ -113,8 +113,26 @@ flowchart TD
     D --> E[2012 R2 to 2022 is a BLOCKER<br/>script suggests 2025]
 ```
 
-Anything else, including a clustered node (use a Cluster OS Rolling Upgrade) and, by company policy, a domain
-controller (`-BlockDomainControllerIPU`), is reported as a `BLOCKER`.
+Anything else is reported as a `BLOCKER`. A **cluster node** and, by site policy, a **domain controller**
+(`-BlockDomainControllerIPU`) are reported as **SPECIAL** (see below).
+
+### SPECIAL: cluster nodes and domain controllers
+
+A SPECIAL server is not a standard in-place upgrade: it needs its own plan, extra time and coordination, and carries
+more risk. Tell the project and the customer: **expensive and risky**. The report is short on purpose. It runs only the
+checks that describe the server (baseline, upgrade path, activation, platform, storage, domain, cluster) and shows a
+SPECIAL section with:
+
+- the facts needed to choose a plan (cluster: nodes, roles, SQL Server failover cluster instances, quorum, Cluster
+  Shared Volumes, Storage Spaces Direct; domain controller: FSMO roles, global catalog, DNS/DHCP/certificate services
+  on the same server, replication summary);
+- the risks, in plain words;
+- the options to evaluate, each with a Microsoft link (for example Cluster OS Rolling Upgrade, one version at a time;
+  a new domain controller beside the old one). These are options, not instructions.
+
+The overall result and the SA line say `SPECIAL`, the JSON has `Overall = SPECIAL` and a `Special` object, and the
+fleet overview lists SPECIAL servers first. When the cluster signals disagree (feature, service and registry), the
+report says MANUAL instead of guessing.
 
 ## 4. Parameters
 
@@ -131,7 +149,7 @@ ad-hoc job). Override only what you need.
 | `AssessmentMode` | `Pre` | `Pre` = before the upgrade. `Post` = verify and compare with the Pre result |
 | `TargetMediaPath` | blank | Folder/drive with `setup.exe`, UNC share, or `.iso`. Blank skips the Setup compatibility scan |
 | `TargetMediaLanguage` | blank | Language of the target ISO, for example `en-US`. Blank = the report tells you |
-| `BlockDomainControllerIPU` | `$true` | Company policy: domain controllers are replaced side by side, not upgraded in place |
+| `BlockDomainControllerIPU` | `$true` | Site policy: a domain controller is reported as **SPECIAL** with a short report (not a standard IPU). `$false` gives the full report with a WARNING instead |
 
 ### Thresholds
 
@@ -606,8 +624,8 @@ The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`
 
 | File | Contents |
 |---|---|
-| `IPU-Fleet-Overview.html` | Cards with overall counts, a **Servers (worst first)** table, the **most common BLOCKER/ACTION items** across the fleet with which servers have them, and a list of any files it could not read |
-| `IPU-Fleet-Servers.csv` | One row per server and mode: `ComputerName`, `Mode`, `Overall`, `Blocker`, `Action`, `Warning`, `Manual`, `Target`, `CurrentOS`, `UpgradePath`, `InstallationMedia`, `Platform`, `DomainRole`, `SqlServer`, `CompatScan`, `CDrive`, `Activation`, `Nla`, `TopIssues`, `NotAssessed`, `Partial`, `Redacted`, `Completed`, `CollectorVersion`, `SourceFile` |
+| `IPU-Fleet-Overview.html` | Cards with overall counts, a **Servers (worst first)** table, the **most common SPECIAL/BLOCKER/ACTION items** across the fleet with which servers have them, and a list of any files it could not read |
+| `IPU-Fleet-Servers.csv` | One row per server and mode: `ComputerName`, `Mode`, `Overall`, `Special`, `Blocker`, `Action`, `Warning`, `Manual`, `Target`, `CurrentOS`, `UpgradePath`, `InstallationMedia`, `Platform`, `DomainRole`, `SqlServer`, `CompatScan`, `CDrive`, `Activation`, `Nla`, `TopIssues`, `NotAssessed`, `Partial`, `Redacted`, `Completed`, `CollectorVersion`, `SourceFile` |
 | `IPU-Fleet-Findings.csv` | One row per BLOCKER, ACTION, WARNING or MANUAL finding: `ComputerName`, `Mode`, `Status`, `Area`, `Item`, `Value`, `Details`, `Recommendation`, `Command`, `Link`, `SourceFile`. Filter and pivot it in Excel |
 
 ### How it decides

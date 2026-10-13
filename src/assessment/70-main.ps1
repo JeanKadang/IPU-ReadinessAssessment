@@ -36,6 +36,22 @@ function Invoke-Assessment {
     Register-AssessmentCheck
     $skip = @()
     if ($AssessmentMode -eq 'Post') { $skip = @('checklist','compatscan') }
+    # The baseline first: it decides whether this is a SPECIAL server (#152).
+    $baselineCheck = @($script:Checks | Where-Object { $_.Id -eq 'baseline' }) | Select-Object -First 1
+    if ($baselineCheck) { Invoke-Check $baselineCheck; $skip += 'baseline' }
+    $script:Data.SpecialKind = ''
+    if ($AssessmentMode -ne 'Post') {
+        try { $script:Data.SpecialKind = Get-SpecialServerState } catch { $script:Data.SpecialKind = 'Undecided'; Write-Swallowed $_ }
+    }
+    if ($script:Data.SpecialKind -eq 'Cluster' -or $script:Data.SpecialKind -eq 'DomainController') {
+        # Short report: only what is needed to choose a plan.
+        $keep = Get-SpecialServerCheckId
+        Write-AssessmentLog 'INFO' 'SPECIAL' ('Kind=' + $script:Data.SpecialKind + ' | short report with checks: ' + ($keep -join ','))
+        foreach ($c in @($script:Checks | Where-Object { $keep -notcontains $_.Id -and $skip -notcontains $_.Id })) {
+            $script:CheckRuns.Add([pscustomobject]@{ Id=$c.Id; Name=$c.Name; Phase=$c.Phase; Outcome='Skipped'; Duration='00:00:00'; Seconds=0; Message='Not applicable: SPECIAL server, short report' })
+            $skip += $c.Id
+        }
+    }
     foreach ($check in @($script:Checks | Where-Object { $_.Phase -eq 'Fast' -and $skip -notcontains $_.Id })) { Invoke-Check $check }
     if ($AssessmentMode -eq 'Post') { Invoke-PostUpgradeComparison }
 
@@ -56,7 +72,9 @@ function Invoke-Assessment {
     $failedChecks = @($script:CheckRuns | Where-Object { $_.Outcome -ne 'Completed' }).Count
     try {
         $final = Write-AssessmentReport
-        $msg = 'Mode=' + $AssessmentMode + ', Checks=' + $script:CheckRuns.Count + ', NotCompleted=' + $failedChecks + $(if ($WriteJson) { ', JSON=' + $script:JsonPath } else { '' }) + '. Retrieve the HTML via the approved SA process.'
+        $specialNote = ''
+        if ($script:Data.Special) { $specialNote = 'SPECIAL server (' + $script:Data.Special.Title + '): short report, separate plan needed. ' }
+        $msg = $specialNote + 'Mode=' + $AssessmentMode + ', Checks=' + $script:CheckRuns.Count + ', NotCompleted=' + $failedChecks + $(if ($WriteJson) { ', JSON=' + $script:JsonPath } else { '' }) + '. Retrieve the HTML via the approved SA process.'
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
             $script:ComputerName,'SUCCEEDED',$final.Overall,$script:ReportPath,$script:LogPath,

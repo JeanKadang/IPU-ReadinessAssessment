@@ -291,7 +291,10 @@ Register-Check -Id 'domain' -Name 'Domain role and access' -Script {
     $script:Data.DomainRoleText = Get-DomainRoleText $role ([string]$cs.Domain)
     if ($role -ge 4) {
         $status = 'WARNING'; $rec = 'Domain controller: follow the AD DS upgrade guidance (adprep, FSMO, replication health) and engage the AD team.'
-        if ($BlockDomainControllerIPU) { $status = 'BLOCKER'; $rec = 'Company standard: do not upgrade domain controllers in place. Build a new DC side-by-side, move roles, demote this DC and swap the IP address.' }
+        # With -BlockDomainControllerIPU (the default) a domain controller is
+        # SPECIAL (#152): the SPECIAL section carries the plan; this row is
+        # evidence only.
+        if ($BlockDomainControllerIPU) { $status = 'INFO'; $rec = 'Domain controller: not a standard in-place upgrade (site policy) - see the SPECIAL section.' }
         Add-Result 'DOMAIN_CONTROLLER' 'DomainController' $status $roleNames[$role] ('Domain=' + $cs.Domain) -Recommendation $rec -Source 'Win32_ComputerSystem.DomainRole'
     }
 
@@ -495,13 +498,36 @@ Register-Check -Id 'cluster' -Name 'Failover clustering' -Script {
         return
     }
     $script:Data.IsClustered = $true
-    Add-Result 'CLUSTER' 'ClusterMembership' 'BLOCKER' ('Cluster=' + $cluster.Name) -Recommendation 'Clustered node: use Cluster OS Rolling Upgrade (one version at a time) or a migration plan, not the standalone IPU procedure.' -Source 'Get-Cluster'
-    foreach ($n in @(Get-ClusterNode -ErrorAction SilentlyContinue)) { Add-Result 'CLUSTER' ('Node: ' + $n.Name) 'INFO' ('State=' + $n.State) -Source 'Get-ClusterNode' }
+    # Reported as SPECIAL with its own plan (#152); names are site data.
+    Add-RedactionLiteral ([string]$cluster.Name) 'HOST'
+    $script:Data.ClusterName = [string]$cluster.Name
+    Add-Result 'CLUSTER' 'ClusterMembership' 'INFO' ('Cluster=' + $cluster.Name) -Recommendation 'Cluster node: not a standard in-place upgrade - see the SPECIAL section.' -Source 'Get-Cluster'
+    foreach ($n in @(Get-ClusterNode -ErrorAction SilentlyContinue)) { Add-RedactionLiteral ([string]$n.Name) 'HOST'; Add-Result 'CLUSTER' ('Node: ' + $n.Name) 'INFO' ('State=' + $n.State) -Source 'Get-ClusterNode' }
     foreach ($g in @(Get-ClusterGroup -ErrorAction SilentlyContinue | Sort-Object Name)) { Add-Result 'CLUSTER' ('Group: ' + $g.Name) 'INFO' ('State=' + $g.State) ('Owner=' + $g.OwnerNode) -Source 'Get-ClusterGroup' }
     $q = Get-ClusterQuorum -ErrorAction SilentlyContinue
     if ($q) { Add-Result 'CLUSTER' 'Quorum' 'INFO' ('Type=' + $q.QuorumType) ('Resource=' + $q.QuorumResource) -Source 'Get-ClusterQuorum' }
     foreach ($csv in @(Get-ClusterSharedVolume -ErrorAction SilentlyContinue)) { Add-Result 'CLUSTER' ('CSV: ' + $csv.Name) 'INFO' ('State=' + $csv.State) ('Owner=' + $csv.OwnerNode) -Source 'Get-ClusterSharedVolume' }
     foreach ($r in @(Get-ClusterResource -ErrorAction SilentlyContinue | Where-Object { [string]$_.ResourceType -eq 'Physical Disk' })) { Add-Result 'CLUSTER' ('Disk: ' + $r.Name) 'INFO' ('State=' + $r.State) ('Group=' + $r.OwnerGroup) -Source 'Get-ClusterResource' }
+}
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+Register-Check -Id 'special' -Name 'SPECIAL server (cluster node, domain controller)' -Script {
+    # #152: a cluster node or a domain controller is not a standard IPU. The
+    # main flow has decided the kind after the baseline; this check writes
+    # the SPECIAL row and what the report tells the project and the customer.
+    $kind = [string]$script:Data.SpecialKind
+    if (-not $kind) { return }
+    if ($kind -eq 'Undecided') {
+        Add-Result 'SPECIAL' 'ClusterMembership' 'MANUAL' 'Cluster membership could not be decided' 'The Failover Clustering feature is installed, but the cluster service and the cluster registry key disagree.' -Recommendation 'Check in Failover Cluster Manager whether this server is a cluster node. A cluster node is not a standard in-place upgrade.' -Source 'Get-WindowsFeature, Win32_Service, HKLM:\Cluster'
+        return
+    }
+    $content = Get-SpecialServerContent $kind ([string]$script:Data.SourceRelease) $TargetServerVersion
+    $facts = Get-SpecialServerFact $kind
+    $content | Add-Member -NotePropertyName Facts -NotePropertyValue @($facts) -Force
+    $script:Data.Special = $content
+    $first = @($content.Options | Where-Object { $_.Url }) | Select-Object -First 1
+    Add-Result 'SPECIAL' $content.Title 'SPECIAL' 'Not a standard in-place upgrade: expensive and risky' @($facts) -Recommendation 'Separate plan needed. Tell the project and the customer. See the SPECIAL section for the risks and the options.' -Source 'Domain role, cluster' -Link $first.Url -LinkTitle $first.Title
 }
 
 # ---------------------------------------------------------------------------

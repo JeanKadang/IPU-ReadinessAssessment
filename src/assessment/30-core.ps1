@@ -39,8 +39,10 @@ $script:BaselinePath      = [IO.Path]::Combine($ReportDirectory, $script:SafeCom
 try { $script:NumberCulture = New-Object System.Globalization.CultureInfo($NumberCultureName) }
 catch { $script:NumberCulture = [System.Globalization.CultureInfo]::InvariantCulture }
 
-$script:StatusOrder  = @('BLOCKER','ACTION','WARNING','MANUAL','OK','INFO')
-$script:FindingStatuses = @('BLOCKER','ACTION','WARNING','MANUAL')
+# SPECIAL (#152): not a standard IPU (cluster node, domain controller) - a
+# separate plan, extra time and coordination, more risk. Ranks above BLOCKER.
+$script:StatusOrder  = @('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL','OK','INFO')
+$script:FindingStatuses = @('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL')
 $script:ValidKinds   = @('Finding','Observation','Evidence','Checklist')
 
 # The single definition of report areas. Name = what readers see, Chapter =
@@ -76,6 +78,7 @@ $script:AreaMap = @{
     'UPGRADE_HISTORY'    = @{ Name='Upgrade history';             Chapter='Upgrade Path, Licensing and Windows Health' }
     'EXCHANGE'           = @{ Name='Exchange Server';             Chapter='Workloads and Applications' }
     'SQL'                = @{ Name='SQL Server';                  Chapter='Workloads and Applications' }
+    'SPECIAL'            = @{ Name='Special server';              Chapter='Upgrade Path, Licensing and Windows Health' }
     'DOMAIN_CONTROLLER'  = @{ Name='Domain controller';           Chapter='Workloads and Applications' }
     'WORKLOAD'           = @{ Name='Roles and workloads';         Chapter='Workloads and Applications' }
     'FILE_SHARES'        = @{ Name='File shares';                 Chapter='Workloads and Applications' }
@@ -190,7 +193,7 @@ function Add-Result {
     param(
         [Parameter(Mandatory=$true,Position=0)][string]$Area,
         [Parameter(Mandatory=$true,Position=1)][string]$Item,
-        [Parameter(Position=2)][ValidateSet('BLOCKER','ACTION','WARNING','MANUAL','OK','INFO')][string]$Status = 'INFO',
+        [Parameter(Position=2)][ValidateSet('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL','OK','INFO')][string]$Status = 'INFO',
         [Parameter(Position=3)][object]$Value = '',
         [Parameter(Position=4)][object]$Details = '',
         [string]$Recommendation = '',
@@ -802,4 +805,64 @@ function Read-FileTail {
     return ,$lines
 }
 
+# SPECIAL servers (#152): read-only helpers used by the main flow and the
+# special check. Defined here (script scope), not inside Register-AssessmentCheck.
+function Get-SpecialServerState {
+    # What decides SPECIAL (#152), read once after the baseline. Read-only.
+    $clusterFeature = (Get-FeatureState 'Failover-Clustering') -eq $true
+    $clusSvc = @($script:Data.Services | Where-Object { $_.Name -eq 'ClusSvc' -and $_.StartMode -ne 'Disabled' }).Count -gt 0
+    $clusterKey = [bool](Test-Path 'HKLM:\Cluster')
+    $role = 0; if ($script:Data.CS) { $role = [int]$script:Data.CS.DomainRole }
+    return (Get-SpecialServerDecision $role $clusterFeature $clusSvc $clusterKey $BlockDomainControllerIPU)
+}
 
+function Get-SpecialServerFact {
+    # The facts needed to choose a plan for a SPECIAL server (#152). Every
+    # source is optional: a fact that cannot be read says so.
+    param([string]$Kind)
+    $facts = @()
+    if ($Kind -eq 'Cluster') {
+        if (-not (Test-CommandAvailable 'Get-Cluster')) { return ,@('Cluster cmdlets not available: read the cluster with Failover Cluster Manager.') }
+        try {
+            $c = Get-Cluster -ErrorAction Stop
+            $facts += ('Cluster: ' + $c.Name)
+            $nodes = @(Get-ClusterNode -ErrorAction SilentlyContinue)
+            $facts += ('Nodes (' + $nodes.Count + '): ' + (@($nodes | ForEach-Object { [string]$_.Name + ' (' + $_.State + ')' }) -join ', '))
+            $groups = @(Get-ClusterGroup -ErrorAction SilentlyContinue | Where-Object { [string]$_.GroupType -notmatch '^(Cluster|AvailableStorage)$' })
+            $types = @($groups | Group-Object { [string]$_.GroupType } | ForEach-Object { $_.Name + ' x' + $_.Count })
+            $facts += ('Roles: ' + $(if ($types.Count) { $types -join ', ' } else { 'none' }))
+            $sql = @(Get-ClusterResource -ErrorAction SilentlyContinue | Where-Object { [string]$_.ResourceType -eq 'SQL Server' })
+            if ($sql.Count -gt 0) { $facts += ('SQL Server failover cluster instances: ' + $sql.Count) }
+            $q = Get-ClusterQuorum -ErrorAction SilentlyContinue
+            if ($q) { $facts += ('Quorum: ' + $q.QuorumType + $(if ($q.QuorumResource) { ' (witness ' + $q.QuorumResource + ')' } else { '' })) }
+            $csv = @(Get-ClusterSharedVolume -ErrorAction SilentlyContinue)
+            $facts += ('Cluster Shared Volumes: ' + $csv.Count)
+            if (Test-CommandAvailable 'Get-ClusterStorageSpacesDirect') {
+                try { $s2d = Get-ClusterStorageSpacesDirect -ErrorAction Stop; if ($s2d) { $facts += ('Storage Spaces Direct: ' + $s2d.State) } } catch { Write-Swallowed $_ }
+            }
+        } catch { $facts += ('Cluster details not readable: ' + $_.Exception.Message) }
+    }
+    if ($Kind -eq 'DomainController') {
+        try {
+            $domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()
+            $me = $env:COMPUTERNAME
+            $mine = @()
+            foreach ($r in @(@('PDC emulator', $domain.PdcRoleOwner), @('RID master', $domain.RidRoleOwner), @('Infrastructure master', $domain.InfrastructureRoleOwner), @('Schema master', $domain.Forest.SchemaRoleOwner), @('Domain naming master', $domain.Forest.NamingRoleOwner))) {
+                if ($r[1] -and ([string]$r[1].Name -split '\.')[0] -ieq $me) { $mine += $r[0] }
+            }
+            $facts += ('FSMO roles on this server: ' + $(if ($mine.Count) { $mine -join ', ' } else { 'none' }))
+            $dc = @($domain.DomainControllers | Where-Object { ([string]$_.Name -split '\.')[0] -ieq $me }) | Select-Object -First 1
+            if ($dc) { $facts += ('Global catalog: ' + $(if ($dc.IsGlobalCatalog()) { 'yes' } else { 'no' })) }
+            $facts += ('Domain controllers in the domain: ' + @($domain.DomainControllers).Count)
+        } catch { $facts += ('FSMO roles and global catalog not readable: ' + $_.Exception.Message) }
+        $same = @(@(@('DNS','DNS Server'), @('DHCP','DHCP Server'), @('ADCS-Cert-Authority','Certification Authority')) | Where-Object { (Get-FeatureState $_[0]) -eq $true } | ForEach-Object { $_[1] })
+        $facts += ('Other roles on this server: ' + $(if ($same.Count) { $same -join ', ' } else { 'none of DNS, DHCP, certificate services' }))
+        $repadmin = Join-Path $env:windir 'System32\repadmin.exe'
+        if (Test-Path -LiteralPath $repadmin) {
+            $r = Invoke-NativeCapture $repadmin @('/replsummary') 120
+            $errLines = @($r.Lines | Where-Object { $_ -match 'error|fail' -and $_ -notmatch '^\s*Source DSA|^\s*Destination DSA' })
+            $facts += ('Replication summary (repadmin /replsummary): exit ' + $r.ExitCode + $(if ($errLines.Count) { ', lines with errors: ' + $errLines.Count } else { ', no error lines' }))
+        } else { $facts += 'Replication summary: repadmin not found' }
+    }
+    return ,$facts
+}

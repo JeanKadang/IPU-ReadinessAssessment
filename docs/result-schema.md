@@ -56,6 +56,10 @@ Strings, empty or `null` when the check that sets them did not run.
 | `CDrive` | `Size 100,00 GB, free 55,00 GB` |
 | `CompatScan` | `0xC1900210 - Setup found no compatibility issues.` |
 
+## `Special` (from 4.5.0)
+
+`null` for a standard server. For a SPECIAL server (cluster node, or domain controller with `-BlockDomainControllerIPU`): `Kind` (`Cluster` or `DomainController`), `Title`, `Banner` (the plain-language text for the project and the customer), `Facts`, `Risks`, and `Options` (`Text`, `Url`, `Title`). `Overall` is then `SPECIAL` and `Counts.SPECIAL` is 1.
+
 ## `Results[]`
 
 | Field | Meaning |
