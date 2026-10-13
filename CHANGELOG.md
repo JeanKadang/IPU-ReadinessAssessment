@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- System File Checker output "a system repair is pending which requires reboot" is now a WARNING with reboot advice. It was reported as integrity violations (ACTION) with repair advice, although SFC had checked nothing (#159).
+
 ### Security
 - Redaction now replaces custom AD group and account names in the RDP user-rights rows (`DOMAIN\Name [SID]`, names with spaces and full DNS domain names), and a domain name together with any DNS suffix. Built-in domain groups such as Domain Admins keep their name. A live run had shown custom group names in a redacted report; the smoke test now checks user-rights names too (#156).
 

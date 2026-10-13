@@ -127,6 +127,12 @@ Describe 'Get-DismVerdict' {
 Describe 'Get-SfcVerdict' {
     It 'English clean output' { (Get-SfcVerdict 'Windows Resource Protection did not find any integrity violations.' @()).Status | Should -Be 'OK' }
     It 'English violations' { (Get-SfcVerdict 'Windows Resource Protection found integrity violations.' @()).Status | Should -Be 'ACTION' }
+    It 'a repair waiting for a reboot is a WARNING, not violations (#159)' {
+        $cbs = @('2026-10-09 08:20:00, Info CSI 00000001 [SR] Cannot repair member file [l:10]"x.dll" of y, file is missing')
+        $v = Get-SfcVerdict ('There is a system repair pending which requires reboot to complete.  Restart' + [Environment]::NewLine + 'Windows and run sfc again.') $cbs
+        $v.Status | Should -Be 'WARNING'
+        $v.Basis | Should -Be 'Repair pending reboot'
+    }
     It 'localized output falls back to clean CBS.log' {
         $cbs = @('2026-10-06 09:00:01, Info                  CSI    00000005 [SR] Verifying 100 components',
                  '2026-10-06 09:05:01, Info                  CSI    00000099 [SR] Verify complete')
