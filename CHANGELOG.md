@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+- `-RedactExisting` now replaces file share names and descriptions; a live run had left share names readable in a redacted copy. A test fails when a new collector name source has no matching recovery rule. Servers are numbered `HOST-1..HOST-n` in the file names (#172).
+
 ## [4.4.0] - 2026-10-13
 
 Fixes from a live run of four upgrades (Windows Server 2016 and 2019 to 2025). The build step, the new checks (print servers, network, SPECIAL) and the review items moved to 4.5.0.

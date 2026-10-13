@@ -4245,6 +4245,10 @@ function Get-RedactionLiteralFromResult {
         if ($r.Area -eq 'SERVICES' -and [string]$r.Details -match '(?:^|\|\s*)LogOnAs=([^|]+)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'ACCOUNT' } }
         if ($r.Area -eq 'GROUP_POLICY' -and [string]$r.Item -match '^GPO: (.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'GPO' } }
         if ($r.Area -eq 'GROUP_POLICY' -and [string]$r.Details -match '(?:^|\|\s*)WMI filter: ([^|]+)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'NAME' } }
+        # File shares (#172): the share name from the per-share row, and its
+        # description.
+        if ($r.Area -eq 'FILE_SHARES' -and [string]$r.Item -match '^Share: (.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'NAME' } }
+        if ($r.Area -eq 'FILE_SHARES' -and (@($r.Details) -join ' | ') -match '(?:^|\|\s*)Description=([^|]+)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'NAME' } }
     }
     return ,$found
 }
@@ -4267,6 +4271,11 @@ function Invoke-RedactExisting {
     # servers get different ones. The map is never written to disk.
     $shared = @{ Map = @{}; Counters = @{} }
     $jsonFiles = @($jsonFiles | Sort-Object Name)
+    # Number the servers first, in name order (#172): HOST-1..HOST-n in the
+    # file names, before other host names in the reports take numbers.
+    $names = @()
+    foreach ($jf in $jsonFiles) { try { $names += [string]([IO.File]::ReadAllText($jf.FullName) | ConvertFrom-Json).ComputerName } catch { Write-Swallowed $_ } }
+    foreach ($n in @($names | Where-Object { $_ } | Sort-Object -Unique)) { $null = Get-RedactionPlaceholder $shared 'HOST' $n }
     $stampAll = Get-Date -Format 'yyyyMMdd-HHmmss'
     $done = 0
     foreach ($jf in $jsonFiles) {
