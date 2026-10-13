@@ -1,8 +1,8 @@
 <#
 ===============================================================================
  SCRIPT NAME : Windows-IPU-Readiness-Assessment.ps1
- VERSION     : 4.3.0
- RELEASE DATE: 2026-10-08
+ VERSION     : 4.4.0
+ RELEASE DATE: 2026-10-13
  PURPOSE     : Windows Server in-place upgrade (IPU) readiness assessment and
                post-upgrade verification, with a self-contained HTML report
                and a JSON result file written on the assessed server.
@@ -82,6 +82,15 @@
     load, nothing is collected. The Pester tests use this.
 
 .VERSION HISTORY
+    4.4.0 - Fixes from a live run of four upgrades 2016/2019 -> 2025.
+            Redaction covers custom names in RDP user rights and whole DNS
+            domain names; -RedactExisting keeps one placeholder per server.
+            Post-upgrade comparison separates expected changes (INFO) and
+            disabled services from real problems, and reports RDP NLA
+            turned off. Recovery partition: Setup switch before, removal
+            steps after. Group Policy read from the registry when gpresult
+            has no RSoP data as SYSTEM. SFC "repair pending reboot" and an
+            empty -LgpoExe handled correctly.
     4.3.0 - Findings and requests from a Windows Server 2012 R2 live run.
             Prerequisites check (PowerShell 4.0, .NET 4.5, administrator)
             with a clear stop message; PS 4.0 compatibility checked in CI.
@@ -296,7 +305,7 @@ $script:FeatureLifecycle = @(
 # 3. CORE
 # =============================================================================
 $ProgressPreference = 'SilentlyContinue'
-$script:CollectorVersion  = '4.3.0'
+$script:CollectorVersion  = '4.4.0'
 # Settings a profile file (-ProfileFile) may set. Mode, target, media path,
 # report folder and redaction describe one run, so they stay arguments only.
 $script:ProfileSettingNames = @(
