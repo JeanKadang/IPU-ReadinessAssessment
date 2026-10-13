@@ -739,7 +739,9 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $script:Fake.ClusterQuorum = [pscustomobject]@{ QuorumType = 'NodeAndFileShareMajority'; QuorumResource = 'File Share Witness' }
             Reset-FakeServerKeep
             $script:Data.SpecialKind = 'Cluster'
-            (Invoke-TestCheck 'special').Outcome | Should -Be 'Completed'
+            $run = Invoke-TestCheck 'special'
+            $run.Message | Should -BeNullOrEmpty
+            $run.Outcome | Should -Be 'Completed'
             $r = (Get-Row 'SPECIAL' 'Failover cluster node')[0]
             $r.Status | Should -Be 'SPECIAL'
             $script:Data.Special.Facts | Should -Contain 'Cluster: CL01'
@@ -751,7 +753,9 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $script:Fake.Cim['Win32_ComputerSystem'].DomainRole = 5
             Reset-FakeServerKeep
             $script:Data.SpecialKind = 'DomainController'
-            (Invoke-TestCheck 'special').Outcome | Should -Be 'Completed'
+            $run = Invoke-TestCheck 'special'
+            $run.Message | Should -BeNullOrEmpty
+            $run.Outcome | Should -Be 'Completed'
             (Get-Row 'SPECIAL' 'Domain controller')[0].Status | Should -Be 'SPECIAL'
             @($script:Data.Special.Facts | Where-Object { $_ -like 'Other roles on this server:*' }).Count | Should -Be 1
             @($script:Data.Special.Facts | Where-Object { $_ -like 'Replication summary*' }).Count | Should -Be 1
