@@ -39,8 +39,10 @@ $script:BaselinePath      = [IO.Path]::Combine($ReportDirectory, $script:SafeCom
 try { $script:NumberCulture = New-Object System.Globalization.CultureInfo($NumberCultureName) }
 catch { $script:NumberCulture = [System.Globalization.CultureInfo]::InvariantCulture }
 
-$script:StatusOrder  = @('BLOCKER','ACTION','WARNING','MANUAL','OK','INFO')
-$script:FindingStatuses = @('BLOCKER','ACTION','WARNING','MANUAL')
+# SPECIAL (#152): not a standard IPU (cluster node, domain controller) - a
+# separate plan, extra time and coordination, more risk. Ranks above BLOCKER.
+$script:StatusOrder  = @('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL','OK','INFO')
+$script:FindingStatuses = @('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL')
 $script:ValidKinds   = @('Finding','Observation','Evidence','Checklist')
 
 # The single definition of report areas. Name = what readers see, Chapter =
@@ -76,6 +78,7 @@ $script:AreaMap = @{
     'UPGRADE_HISTORY'    = @{ Name='Upgrade history';             Chapter='Upgrade Path, Licensing and Windows Health' }
     'EXCHANGE'           = @{ Name='Exchange Server';             Chapter='Workloads and Applications' }
     'SQL'                = @{ Name='SQL Server';                  Chapter='Workloads and Applications' }
+    'SPECIAL'            = @{ Name='Special server';              Chapter='Upgrade Path, Licensing and Windows Health' }
     'DOMAIN_CONTROLLER'  = @{ Name='Domain controller';           Chapter='Workloads and Applications' }
     'WORKLOAD'           = @{ Name='Roles and workloads';         Chapter='Workloads and Applications' }
     'FILE_SHARES'        = @{ Name='File shares';                 Chapter='Workloads and Applications' }
@@ -190,7 +193,7 @@ function Add-Result {
     param(
         [Parameter(Mandatory=$true,Position=0)][string]$Area,
         [Parameter(Mandatory=$true,Position=1)][string]$Item,
-        [Parameter(Position=2)][ValidateSet('BLOCKER','ACTION','WARNING','MANUAL','OK','INFO')][string]$Status = 'INFO',
+        [Parameter(Position=2)][ValidateSet('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL','OK','INFO')][string]$Status = 'INFO',
         [Parameter(Position=3)][object]$Value = '',
         [Parameter(Position=4)][object]$Details = '',
         [string]$Recommendation = '',

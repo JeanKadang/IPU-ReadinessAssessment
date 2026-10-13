@@ -37,7 +37,9 @@ $ErrorActionPreference = 'Stop'
 if (-not $OutputFolder) { $OutputFolder = $InputFolder }
 if (-not (Test-Path -LiteralPath $OutputFolder)) { New-Item -ItemType Directory -Path $OutputFolder -Force | Out-Null }
 
-$rank = @{ BLOCKER=1; ACTION=2; WARNING=3; MANUAL=4; OK=5 }
+# SPECIAL (assessment 4.5.0, #152): a cluster node or domain controller with
+# its own plan - listed first.
+$rank = @{ SPECIAL=0; BLOCKER=1; ACTION=2; WARNING=3; MANUAL=4; OK=5 }
 function Encode([object]$v) { if ($null -eq $v) { return '' }; return [System.Net.WebUtility]::HtmlEncode([string]$v) }
 
 # CSV cells are opened in Excel. A value taken from a server (application
@@ -69,13 +71,14 @@ foreach ($f in $files) {
     if ($r.Schema -ne 'IPU-Assessment/1') { $unreadable += ($f.Name + ' (unknown schema)'); continue }
     if ($Mode -ne 'All' -and $r.Mode -ne $Mode) { continue }
 
-    $top = @($r.Results | Where-Object { $_.Kind -eq 'Finding' -and $_.Status -in @('BLOCKER','ACTION') } |
+    $top = @($r.Results | Where-Object { $_.Kind -eq 'Finding' -and $_.Status -in @('SPECIAL','BLOCKER','ACTION') } |
         Sort-Object @{Expression={ $rank[[string]$_.Status] }},Item | ForEach-Object { $_.Status + ': ' + $_.Item })
     $notCompleted = @($r.CheckRuns | Where-Object { $_.Outcome -ne 'Completed' -and $_.Outcome -ne 'Skipped' } | ForEach-Object { $_.Name + ' (' + $_.Outcome + ')' })
     $servers.Add([pscustomobject][ordered]@{
         ComputerName     = $r.ComputerName
         Mode             = $r.Mode
         Overall          = $r.Overall
+        Special          = $(if ($r.Counts.PSObject.Properties['SPECIAL']) { [int]$r.Counts.SPECIAL } else { 0 })
         Blocker          = [int]$r.Counts.BLOCKER
         Action           = [int]$r.Counts.ACTION
         Warning          = [int]$r.Counts.WARNING
@@ -99,7 +102,7 @@ foreach ($f in $files) {
         CollectorVersion = $r.CollectorVersion
         SourceFile       = $f.Name
     })
-    foreach ($x in @($r.Results | Where-Object { $_.Kind -eq 'Finding' -and $_.Status -in @('BLOCKER','ACTION','WARNING','MANUAL') })) {
+    foreach ($x in @($r.Results | Where-Object { $_.Kind -eq 'Finding' -and $_.Status -in @('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL') })) {
         $findings.Add([pscustomobject][ordered]@{
             ComputerName = $r.ComputerName; Mode = $r.Mode; Status = $x.Status; Area = $x.Area; Item = $x.Item
             Value = $x.Value; Details = $x.Details; Recommendation = $x.Recommendation; Command = [string]$x.Command; Link = [string]$x.Link; SourceFile = $f.Name
@@ -124,27 +127,27 @@ $latest | ConvertTo-CsvSafeRow | Export-Csv -LiteralPath $serversCsv -Delimiter 
 $fleetFindings | ConvertTo-CsvSafeRow | Export-Csv -LiteralPath $findingsCsv -Delimiter $Delimiter -NoTypeInformation -Encoding UTF8
 
 # Most common blocking/action items across the fleet.
-$common = @($fleetFindings | Where-Object { $_.Status -in @('BLOCKER','ACTION') } | Group-Object Status,Item | Sort-Object @{Expression={ $rank[[string]$_.Group[0].Status] }},@{Expression='Count';Descending=$true} | Select-Object -First 15)
-$overallCounts = @{}; foreach ($k in @('BLOCKER','ACTION','WARNING','MANUAL','OK')) { $overallCounts[$k] = @($latest | Where-Object { $_.Overall -eq $k }).Count }
+$common = @($fleetFindings | Where-Object { $_.Status -in @('SPECIAL','BLOCKER','ACTION') } | Group-Object Status,Item | Sort-Object @{Expression={ $rank[[string]$_.Group[0].Status] }},@{Expression='Count';Descending=$true} | Select-Object -First 15)
+$overallCounts = @{}; foreach ($k in @('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL','OK')) { $overallCounts[$k] = @($latest | Where-Object { $_.Overall -eq $k }).Count }
 
 $sb = New-Object System.Text.StringBuilder
 [void]$sb.AppendLine('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>IPU Fleet Overview</title>')
 [void]$sb.AppendLine(@'
 <style>
-:root{--ink:#16202e;--muted:#5d6a79;--line:#dde3ea;--bg:#f3f5f8;--navy:#16365f;--blocker:#7a1717;--action:#b42318;--warning:#9a5800;--manual:#5b47a0;--ok:#17703a}
+:root{--ink:#16202e;--muted:#5d6a79;--line:#dde3ea;--bg:#f3f5f8;--navy:#16365f;--special:#0f4c5c;--blocker:#7a1717;--action:#b42318;--warning:#9a5800;--manual:#5b47a0;--ok:#17703a}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 "Segoe UI",Arial,sans-serif}
 .wrap{max-width:1600px;margin:auto;padding:24px 16px}h1{margin:0 0 4px;font-size:22px;color:#fff}.hero{background:var(--navy);color:#d5e1ee;padding:20px 24px;border-radius:12px}
 .cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:14px 0}.card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 14px}.card b{display:block;font-size:22px}.card small{color:var(--muted);text-transform:uppercase;font-size:11px;letter-spacing:.04em}
 section{background:#fff;border:1px solid var(--line);border-radius:10px;margin:14px 0;padding:16px 18px}h2{margin:0 0 10px;font-size:17px;color:var(--navy)}
 .scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:1100px}th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--line);padding:6px 8px}th{background:#eef2f7;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#30475f}
-.badge{display:inline-block;color:#fff;font-weight:700;font-size:11px;padding:2px 8px;border-radius:999px}.s-blocker{background:var(--blocker)}.s-action{background:var(--action)}.s-warning{background:var(--warning)}.s-manual{background:var(--manual)}.s-ok{background:var(--ok)}
+.badge{display:inline-block;color:#fff;font-weight:700;font-size:11px;padding:2px 8px;border-radius:999px}.s-special{background:var(--special)}.s-blocker{background:var(--blocker)}.s-action{background:var(--action)}.s-warning{background:var(--warning)}.s-manual{background:var(--manual)}.s-ok{background:var(--ok)}
 .muted{color:var(--muted)}.nw{white-space:nowrap}
 @media(max-width:900px){.cards{grid-template-columns:repeat(2,1fr)}}
 </style></head><body><div class="wrap">
 '@)
 [void]$sb.AppendLine('<div class="hero"><h1>IPU Fleet Overview</h1><p>' + $latest.Count + ' servers &nbsp;|&nbsp; Generated ' + (Get-Date).ToString('yyyy-MM-dd HH:mm') + ' &nbsp;|&nbsp; Source: ' + (Encode $InputFolder) + '</p></div>')
 [void]$sb.AppendLine('<div class="cards">')
-foreach ($k in @('BLOCKER','ACTION','WARNING','MANUAL','OK')) { [void]$sb.AppendLine('<div class="card"><small>Overall ' + $k + '</small><b>' + $overallCounts[$k] + '</b></div>') }
+foreach ($k in @('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL','OK')) { if ($k -eq 'SPECIAL' -and $overallCounts[$k] -eq 0) { continue }; [void]$sb.AppendLine('<div class="card"><small>Overall ' + $k + '</small><b>' + $overallCounts[$k] + '</b></div>') }
 [void]$sb.AppendLine('</div>')
 if ($unreadable.Count -gt 0) { [void]$sb.AppendLine('<section><h2>Files not read</h2><p>' + (Encode ($unreadable -join ', ')) + '</p></section>') }
 
@@ -158,7 +161,7 @@ foreach ($s in $latest) {
 [void]$sb.AppendLine('</tbody></table></div></section>')
 
 if ($common.Count -gt 0) {
-    [void]$sb.AppendLine('<section><h2>Most common BLOCKER/ACTION items</h2><div class="scroll"><table><thead><tr><th>Status</th><th>Item</th><th>Servers</th><th>Which</th></tr></thead><tbody>')
+    [void]$sb.AppendLine('<section><h2>Most common SPECIAL/BLOCKER/ACTION items</h2><div class="scroll"><table><thead><tr><th>Status</th><th>Item</th><th>Servers</th><th>Which</th></tr></thead><tbody>')
     foreach ($g in $common) {
         $first = $g.Group[0]
         $names = @($g.Group | ForEach-Object ComputerName | Sort-Object -Unique)

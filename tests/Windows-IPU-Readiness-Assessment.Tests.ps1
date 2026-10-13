@@ -49,8 +49,10 @@ Describe 'Get-UpgradePathDecision (Microsoft installation-media table)' {
     It 'suggests the supported target when the path is blocked' {
         (Get-UpgradePathDecision '2012R2' '2022' $false).Text | Should -Match 'Windows Server 2025'
     }
-    It 'blocks clustered nodes regardless of path' {
-        (Get-UpgradePathDecision '2019' '2025' $true).Status | Should -Be 'BLOCKER'
+    It 'points clustered nodes to the SPECIAL section regardless of path (#152)' {
+        $d = Get-UpgradePathDecision '2019' '2025' $true
+        $d.Status | Should -Be 'INFO'
+        $d.Text | Should -Match 'SPECIAL'
     }
 }
 
@@ -829,8 +831,8 @@ Describe 'Edge cases for thin decision functions (#40)' {
             $d.Status | Should -Be 'MANUAL'
             $d.Text | Should -Match '2025 or 2022'
         }
-        It 'a clustered node on the same release is still a BLOCKER' {
-            (Get-UpgradePathDecision '2025' '2025' $true).Status | Should -Be 'BLOCKER'
+        It 'a clustered node on the same release still points to SPECIAL (#152)' {
+            (Get-UpgradePathDecision '2025' '2025' $true).Text | Should -Match 'SPECIAL'
         }
     }
 
@@ -1186,7 +1188,7 @@ Describe 'HTML report accessibility (#28)' {
         Get-ContrastRatio $t['focus'] $t['bg'] | Should -BeGreaterOrEqual 3
     }
     It 'white badge text meets 4.5:1 on every status colour' {
-        foreach ($s in 'blocker', 'action', 'warning', 'manual', 'ok', 'info') {
+        foreach ($s in 'special', 'blocker', 'action', 'warning', 'manual', 'ok', 'info') {
             Get-ContrastRatio '#ffffff' $script:Light[$s] | Should -BeGreaterOrEqual 4.5 -Because $s
         }
     }
@@ -2509,6 +2511,8 @@ Describe 'RedactExisting recovers every name the collector registers (#172)' {
             'if ($sh.Description) { Add-RedactionLiteral ([string]$sh.Description) ''NAME'' }',
             'foreach ($s in @($script:Data.Services | Where-Object { $_.StartName })) { Add-RedactionLiteral ([string]$s.StartName) ''ACCOUNT'' }',
             'if ($user -and $user -notmatch $builtIn) { Add-RedactionLiteral $user ''ACCOUNT'' }',
+            'Add-RedactionLiteral ([string]$cluster.Name) ''HOST''',
+            'foreach ($n in @(Get-ClusterNode -ErrorAction SilentlyContinue)) { Add-RedactionLiteral ([string]$n.Name) ''HOST''; Add-Result ''CLUSTER'' (''Node: '' + $n.Name) ''INFO'' (''State='' + $n.State) -Source ''Get-ClusterNode'' }',
             'if ($act.KmsHost) { foreach ($h in @($act.KmsHost, ($act.KmsHost -split ''\.'')[0]) | Select-Object -Unique) { Add-RedactionLiteral $h ''HOST'' }; $script:Data.KmsEndpoint = $act.KmsEndpoint } elseif ($script:Data.ActivationKind -eq ''KMS'') { $script:Data.KmsEndpoint = ''found via DNS'' }'
         )
         @($sites | Where-Object { $known -notcontains $_ }) | Should -BeNullOrEmpty
@@ -2594,6 +2598,83 @@ Describe 'Activation per channel, with the KMS host and renewal (#171)' {
     }
     It 'RedactExisting recovers the KMS host name' {
         $rows = @([pscustomobject]@{ Area = 'LICENSING'; Item = 'CurrentActivation'; Value = 'Licensed (KMS client), activated by kms01:1688, found via DNS'; Details = @('Channel=Volume:GVLK', 'PartialProductKey=ABCDE', 'KMS host: kms01:1688 (found via DNS)') })
-        (@(Get-RedactionLiteralFromResult $rows) | ForEach-Object { $_.Kind + '=' + $_.Value }) -join ';' | Should -Be 'HOST=kms01'
+        $l = Get-RedactionLiteralFromResult $rows
+        (@($l | ForEach-Object { $_.Kind + '=' + $_.Value }) -join ';') | Should -Be 'HOST=kms01'
+    }
+}
+
+Describe 'SPECIAL servers (#152)' {
+    It '<Case> -> <Kind>' -TestCases @(
+        @{ Case = 'member server';                         Role = 3; Feature = $false; Svc = $false; Key = $false; Block = $true;  Kind = '' }
+        @{ Case = 'domain controller';                     Role = 5; Feature = $false; Svc = $false; Key = $false; Block = $true;  Kind = 'DomainController' }
+        @{ Case = 'domain controller, block switched off'; Role = 4; Feature = $false; Svc = $false; Key = $false; Block = $false; Kind = '' }
+        @{ Case = 'cluster node';                          Role = 3; Feature = $true;  Svc = $true;  Key = $true;  Block = $true;  Kind = 'Cluster' }
+        @{ Case = 'feature only, no cluster';              Role = 3; Feature = $true;  Svc = $false; Key = $false; Block = $true;  Kind = '' }
+        @{ Case = 'signals disagree';                      Role = 3; Feature = $true;  Svc = $true;  Key = $false; Block = $true;  Kind = 'Undecided' }
+    ) {
+        Get-SpecialServerDecision $Role $Feature $Svc $Key $Block | Should -Be $Kind
+    }
+    It 'a cluster several versions behind needs several rolling upgrades, said plainly' {
+        $c = Get-SpecialServerContent 'Cluster' '2016' '2025'
+        $c.Title | Should -Be 'Failover cluster node'
+        $c.Banner | Should -Match 'expensive and risky'
+        $c.Options[0].Text | Should -Match '3 rolling upgrades in a row, or a migration'
+        $c.Options[0].Url | Should -Match '^https://learn\.microsoft\.com/'
+        @($c.Risks | Where-Object { $_ -match 'functional level cannot be undone' }).Count | Should -Be 1
+        (Get-SpecialServerContent 'Cluster' '2022' '2025').Options[0].Text | Should -Not -Match 'rolling upgrades in a row'
+    }
+    It 'a domain controller names the side-by-side way and the USN rollback risk, as options not instructions' {
+        $c = Get-SpecialServerContent 'DomainController' '2016' '2025'
+        $c.Options[0].Text | Should -Match 'add a new domain controller'
+        @($c.Risks | Where-Object { $_ -match 'USN rollback' }).Count | Should -Be 1
+        $c.Options[1].Text | Should -Match 'planned, approved exception'
+    }
+    It 'RedactExisting recovers cluster and node names' {
+        $rows = @(
+            [pscustomobject]@{ Area = 'CLUSTER'; Item = 'ClusterMembership'; Value = 'Cluster=CL01'; Details = '' }
+            [pscustomobject]@{ Area = 'CLUSTER'; Item = 'Node: SRV02'; Value = 'State=Up'; Details = '' }
+        )
+        $l = Get-RedactionLiteralFromResult $rows
+        (@($l | ForEach-Object { $_.Kind + '=' + $_.Value }) -join ';') | Should -Be 'HOST=CL01;HOST=SRV02'
+    }
+    It 'an unknown kind is refused' {
+        { Get-SpecialServerContent 'Printer' } | Should -Throw '*Unknown SPECIAL kind*'
+    }
+    It 'SPECIAL is the overall result when present, above BLOCKER' {
+        $r = @([pscustomobject]@{ Status = 'BLOCKER'; Kind = 'Finding' }, [pscustomobject]@{ Status = 'SPECIAL'; Kind = 'Finding' })
+        Get-OverallStatus $r | Should -Be 'SPECIAL'
+    }
+    It 'the short report keeps only the checks that describe the server' {
+        $ids = Get-SpecialServerCheckId
+        $ids | Should -Contain 'special'
+        $ids | Should -Contain 'baseline'
+        $ids | Should -Not -Contain 'dism'
+        $ids | Should -Not -Contain 'compatscan'
+    }
+    Context 'report' {
+        BeforeAll {
+            $script:Results.Clear(); $script:CheckRuns.Clear()
+            $script:Data.Special = Get-SpecialServerContent 'DomainController' '2016' '2025'
+            $script:Data.Special | Add-Member -NotePropertyName Facts -NotePropertyValue @('FSMO roles on this server: PDC emulator') -Force
+            Add-Result 'SPECIAL' 'Domain controller' 'SPECIAL' 'Not a standard in-place upgrade: expensive and risky'
+            $script:SpecialHtml = New-IPUReportHtml -Results $script:Results.ToArray() -CheckRuns $script:CheckRuns.ToArray() -OverallStatus 'SPECIAL' -CompletedTime (Get-Date)
+        }
+        AfterAll { $script:Data.Remove('Special') }
+        It 'has a SPECIAL section with banner, facts, risks and options with links' {
+            $script:SpecialHtml | Should -Match '<section id="special" class="special">'
+            $script:SpecialHtml | Should -Match 'expensive and risky'
+            $script:SpecialHtml | Should -Match 'FSMO roles on this server: PDC emulator'
+            $script:SpecialHtml | Should -Match '<h3>Risks</h3>'
+            $script:SpecialHtml | Should -Match 'href="https://learn\.microsoft\.com/en-us/windows-server/identity/ad-ds/deploy/upgrade-domain-controllers"'
+        }
+        It 'shows the SPECIAL verdict, card and legend line' {
+            $script:SpecialHtml | Should -Match 'Overall IPU assessment: <span class="badge s-special">SPECIAL</span>'
+            $script:SpecialHtml | Should -Match '<small>SPECIAL</small>'
+            $script:SpecialHtml | Should -Match 'Not a standard in-place upgrade \(cluster node, domain controller\)'
+        }
+        It 'a report without SPECIAL has no SPECIAL card' {
+            $html = New-IPUReportHtml -Results @() -CheckRuns @() -OverallStatus 'OK' -CompletedTime (Get-Date)
+            $html | Should -Not -Match '<small>SPECIAL</small>'
+        }
     }
 }

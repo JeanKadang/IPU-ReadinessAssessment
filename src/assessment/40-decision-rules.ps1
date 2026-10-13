@@ -102,7 +102,8 @@ function Get-UpgradePathDecision {
     param([string]$Source, [string]$Target, [bool]$Clustered = $false)
     $make = { param($s,$t) [pscustomobject]@{ Status=$s; Text=$t } }
     if ($Clustered) {
-        return (& $make 'BLOCKER' 'Clustered node: the standalone IPU procedure does not apply. Use a Cluster OS Rolling Upgrade (one version at a time) or migration plan.')
+        # Reported as SPECIAL with its own plan (#152); not a second finding here.
+        return (& $make 'INFO' 'Clustered node: not a standard in-place upgrade - see the SPECIAL section.')
     }
     if (-not $Source) { return (& $make 'MANUAL' 'The source Windows Server release was not recognized.') }
     if (-not $script:SupportedUpgradePaths.ContainsKey($Target)) {
@@ -1263,6 +1264,76 @@ function Protect-ReportObject {
         return [pscustomobject]$copy
     }
     return $Value
+}
+
+# SPECIAL servers (#152): kinds that are never a standard in-place upgrade.
+# Each kind has its risks and options here, so a new kind is new data.
+$script:WindowsServerReleaseOrder = @('2012R2','2016','2019','2022','2025')
+
+function Get-SpecialServerDecision {
+    # Pure (#152): which SPECIAL kind a server is, from what the baseline
+    # collected. 'Undecided' when the cluster signals disagree: the report
+    # then says MANUAL, never a silent standard report.
+    param([int]$DomainRole, [bool]$ClusterFeature, [bool]$ClusterServiceActive, [bool]$ClusterKey, [bool]$BlockDomainController = $true)
+    if ($DomainRole -ge 4 -and $BlockDomainController) { return 'DomainController' }
+    if ($ClusterFeature -and $ClusterServiceActive -and $ClusterKey) { return 'Cluster' }
+    if ($ClusterFeature -and ($ClusterServiceActive -xor $ClusterKey)) { return 'Undecided' }
+    return ''
+}
+
+function Get-SpecialServerCheckId {
+    # Pure (#152): the checks a SPECIAL short report keeps - what is needed
+    # to describe the server and choose a plan.
+    return ,@('baseline','upgradepath','licensing','platform','performance','domain','cluster','special','storage')
+}
+
+function Get-SpecialServerContent {
+    # Pure (#152): what the report tells the project and the customer about a
+    # SPECIAL server - plain words, risks first, options to evaluate (not
+    # instructions), each option with a Microsoft link.
+    param([Parameter(Mandatory=$true)][string]$Kind, [string]$Source = '', [string]$Target = '')
+    $t = Get-ReleaseDisplayName $Target
+    $banner = 'Not a standard in-place upgrade. This server needs its own plan, extra time and coordination, and carries more risk: expensive and risky. Tell the project and the customer before planning the change.'
+    switch ($Kind) {
+        'Cluster' {
+            $steps = -1
+            $si = $script:WindowsServerReleaseOrder.IndexOf($Source); $ti = $script:WindowsServerReleaseOrder.IndexOf($Target)
+            if ($si -ge 0 -and $ti -ge 0) { $steps = $ti - $si }
+            $rolling = 'Cluster OS Rolling Upgrade: upgrade the nodes one at a time while the cluster keeps running. It moves one Windows Server version at a time.'
+            if ($steps -gt 1) { $rolling += ' From ' + (Get-ReleaseDisplayName $Source) + ' to ' + $t + ' that means ' + $steps + ' rolling upgrades in a row, or a migration instead.' }
+            return [pscustomobject]@{
+                Kind = 'Cluster'; Title = 'Failover cluster node'; Banner = $banner
+                Risks = @(
+                    'Quorum: a node down for the upgrade plus one more failure can stop the whole cluster.',
+                    'Mixed-version period: until every node is upgraded and the cluster functional level is raised, the cluster runs in a compatibility mode; plan to finish quickly.',
+                    'Raising the cluster functional level cannot be undone.',
+                    'Workload and vendor support: SQL Server failover cluster instances, Hyper-V, file server and Storage Spaces Direct each have their own rules and order of steps.',
+                    'The way back is much harder than a VM snapshot: a snapshot of one node does not roll back the cluster.'
+                )
+                Options = @(
+                    [pscustomobject]@{ Text = $rolling; Url = 'https://learn.microsoft.com/en-us/windows-server/failover-clustering/cluster-operating-system-rolling-upgrade'; Title = 'Microsoft: Cluster OS Rolling Upgrade' },
+                    [pscustomobject]@{ Text = 'Build a new cluster on ' + $t + ' and migrate the roles to it (often simpler across several versions).'; Url = 'https://learn.microsoft.com/en-us/windows-server/failover-clustering/cluster-operating-system-rolling-upgrade'; Title = 'Microsoft: Cluster OS Rolling Upgrade (migration alternative)' },
+                    [pscustomobject]@{ Text = 'Leave it on the current release for now (Extended Security Updates where available) and plan a replacement.'; Url = ''; Title = '' }
+                )
+            }
+        }
+        'DomainController' {
+            return [pscustomobject]@{
+                Kind = 'DomainController'; Title = 'Domain controller'; Banner = $banner
+                Risks = @(
+                    'Active Directory database and replication: a failed upgrade affects the whole domain, not just this server.',
+                    'Roles on the same server (FSMO roles, global catalog, DNS, DHCP, certificate services) move or fail with it.',
+                    'The way back: restoring a domain controller from a snapshot or image can cause a USN rollback that silently breaks replication. Virtualization safeguards reduce, but do not remove, this risk.',
+                    'Clients and older servers may depend on protocols the new release no longer allows by default (SMB1, NTLMv1, older TLS).'
+                )
+                Options = @(
+                    [pscustomobject]@{ Text = 'Microsoft''s recommended way: add a new domain controller on ' + $t + ' beside this one, move the roles, then demote and retire this one.'; Url = 'https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/deploy/upgrade-domain-controllers'; Title = 'Microsoft: Upgrade domain controllers to a newer version of Windows Server' },
+                    [pscustomobject]@{ Text = 'In-place upgrade only as a planned, approved exception, with replication health, backups and a tested way back.'; Url = 'https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/detect-and-recover-from-usn-rollback'; Title = 'Microsoft: USN rollback (why snapshots are not a way back)' }
+                )
+            }
+        }
+    }
+    throw ('Unknown SPECIAL kind: ' + $Kind)
 }
 
 function Get-OverallStatus {

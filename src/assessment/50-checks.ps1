@@ -291,7 +291,10 @@ Register-Check -Id 'domain' -Name 'Domain role and access' -Script {
     $script:Data.DomainRoleText = Get-DomainRoleText $role ([string]$cs.Domain)
     if ($role -ge 4) {
         $status = 'WARNING'; $rec = 'Domain controller: follow the AD DS upgrade guidance (adprep, FSMO, replication health) and engage the AD team.'
-        if ($BlockDomainControllerIPU) { $status = 'BLOCKER'; $rec = 'Company standard: do not upgrade domain controllers in place. Build a new DC side-by-side, move roles, demote this DC and swap the IP address.' }
+        # With -BlockDomainControllerIPU (the default) a domain controller is
+        # SPECIAL (#152): the SPECIAL section carries the plan; this row is
+        # evidence only.
+        if ($BlockDomainControllerIPU) { $status = 'INFO'; $rec = 'Domain controller: not a standard in-place upgrade (site policy) - see the SPECIAL section.' }
         Add-Result 'DOMAIN_CONTROLLER' 'DomainController' $status $roleNames[$role] ('Domain=' + $cs.Domain) -Recommendation $rec -Source 'Win32_ComputerSystem.DomainRole'
     }
 
@@ -495,13 +498,96 @@ Register-Check -Id 'cluster' -Name 'Failover clustering' -Script {
         return
     }
     $script:Data.IsClustered = $true
-    Add-Result 'CLUSTER' 'ClusterMembership' 'BLOCKER' ('Cluster=' + $cluster.Name) -Recommendation 'Clustered node: use Cluster OS Rolling Upgrade (one version at a time) or a migration plan, not the standalone IPU procedure.' -Source 'Get-Cluster'
-    foreach ($n in @(Get-ClusterNode -ErrorAction SilentlyContinue)) { Add-Result 'CLUSTER' ('Node: ' + $n.Name) 'INFO' ('State=' + $n.State) -Source 'Get-ClusterNode' }
+    # Reported as SPECIAL with its own plan (#152); names are site data.
+    Add-RedactionLiteral ([string]$cluster.Name) 'HOST'
+    $script:Data.ClusterName = [string]$cluster.Name
+    Add-Result 'CLUSTER' 'ClusterMembership' 'INFO' ('Cluster=' + $cluster.Name) -Recommendation 'Cluster node: not a standard in-place upgrade - see the SPECIAL section.' -Source 'Get-Cluster'
+    foreach ($n in @(Get-ClusterNode -ErrorAction SilentlyContinue)) { Add-RedactionLiteral ([string]$n.Name) 'HOST'; Add-Result 'CLUSTER' ('Node: ' + $n.Name) 'INFO' ('State=' + $n.State) -Source 'Get-ClusterNode' }
     foreach ($g in @(Get-ClusterGroup -ErrorAction SilentlyContinue | Sort-Object Name)) { Add-Result 'CLUSTER' ('Group: ' + $g.Name) 'INFO' ('State=' + $g.State) ('Owner=' + $g.OwnerNode) -Source 'Get-ClusterGroup' }
     $q = Get-ClusterQuorum -ErrorAction SilentlyContinue
     if ($q) { Add-Result 'CLUSTER' 'Quorum' 'INFO' ('Type=' + $q.QuorumType) ('Resource=' + $q.QuorumResource) -Source 'Get-ClusterQuorum' }
     foreach ($csv in @(Get-ClusterSharedVolume -ErrorAction SilentlyContinue)) { Add-Result 'CLUSTER' ('CSV: ' + $csv.Name) 'INFO' ('State=' + $csv.State) ('Owner=' + $csv.OwnerNode) -Source 'Get-ClusterSharedVolume' }
     foreach ($r in @(Get-ClusterResource -ErrorAction SilentlyContinue | Where-Object { [string]$_.ResourceType -eq 'Physical Disk' })) { Add-Result 'CLUSTER' ('Disk: ' + $r.Name) 'INFO' ('State=' + $r.State) ('Group=' + $r.OwnerGroup) -Source 'Get-ClusterResource' }
+}
+
+# ---------------------------------------------------------------------------
+function Get-SpecialServerState {
+    # What decides SPECIAL (#152), read once after the baseline. Read-only.
+    $clusterFeature = (Get-FeatureState 'Failover-Clustering') -eq $true
+    $clusSvc = @($script:Data.Services | Where-Object { $_.Name -eq 'ClusSvc' -and $_.StartMode -ne 'Disabled' }).Count -gt 0
+    $clusterKey = [bool](Test-Path 'HKLM:\Cluster')
+    $role = 0; if ($script:Data.CS) { $role = [int]$script:Data.CS.DomainRole }
+    return (Get-SpecialServerDecision $role $clusterFeature $clusSvc $clusterKey $BlockDomainControllerIPU)
+}
+
+function Get-SpecialServerFact {
+    # The facts needed to choose a plan for a SPECIAL server (#152). Every
+    # source is optional: a fact that cannot be read says so.
+    param([string]$Kind)
+    $facts = @()
+    if ($Kind -eq 'Cluster') {
+        if (-not (Test-CommandAvailable 'Get-Cluster')) { return ,@('Cluster cmdlets not available: read the cluster with Failover Cluster Manager.') }
+        try {
+            $c = Get-Cluster -ErrorAction Stop
+            $facts += ('Cluster: ' + $c.Name)
+            $nodes = @(Get-ClusterNode -ErrorAction SilentlyContinue)
+            $facts += ('Nodes (' + $nodes.Count + '): ' + (@($nodes | ForEach-Object { [string]$_.Name + ' (' + $_.State + ')' }) -join ', '))
+            $groups = @(Get-ClusterGroup -ErrorAction SilentlyContinue | Where-Object { [string]$_.GroupType -notmatch '^(Cluster|AvailableStorage)$' })
+            $types = @($groups | Group-Object { [string]$_.GroupType } | ForEach-Object { $_.Name + ' x' + $_.Count })
+            $facts += ('Roles: ' + $(if ($types.Count) { $types -join ', ' } else { 'none' }))
+            $sql = @(Get-ClusterResource -ErrorAction SilentlyContinue | Where-Object { [string]$_.ResourceType -eq 'SQL Server' })
+            if ($sql.Count -gt 0) { $facts += ('SQL Server failover cluster instances: ' + $sql.Count) }
+            $q = Get-ClusterQuorum -ErrorAction SilentlyContinue
+            if ($q) { $facts += ('Quorum: ' + $q.QuorumType + $(if ($q.QuorumResource) { ' (witness ' + $q.QuorumResource + ')' } else { '' })) }
+            $csv = @(Get-ClusterSharedVolume -ErrorAction SilentlyContinue)
+            $facts += ('Cluster Shared Volumes: ' + $csv.Count)
+            if (Test-CommandAvailable 'Get-ClusterStorageSpacesDirect') {
+                try { $s2d = Get-ClusterStorageSpacesDirect -ErrorAction Stop; if ($s2d) { $facts += ('Storage Spaces Direct: ' + $s2d.State) } } catch { Write-Swallowed $_ }
+            }
+        } catch { $facts += ('Cluster details not readable: ' + $_.Exception.Message) }
+    }
+    if ($Kind -eq 'DomainController') {
+        try {
+            $domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()
+            $me = $env:COMPUTERNAME
+            $mine = @()
+            foreach ($r in @(@('PDC emulator', $domain.PdcRoleOwner), @('RID master', $domain.RidRoleOwner), @('Infrastructure master', $domain.InfrastructureRoleOwner), @('Schema master', $domain.Forest.SchemaRoleOwner), @('Domain naming master', $domain.Forest.NamingRoleOwner))) {
+                if ($r[1] -and ([string]$r[1].Name -split '\.')[0] -ieq $me) { $mine += $r[0] }
+            }
+            $facts += ('FSMO roles on this server: ' + $(if ($mine.Count) { $mine -join ', ' } else { 'none' }))
+            $dc = @($domain.DomainControllers | Where-Object { ([string]$_.Name -split '\.')[0] -ieq $me }) | Select-Object -First 1
+            if ($dc) { $facts += ('Global catalog: ' + $(if ($dc.IsGlobalCatalog()) { 'yes' } else { 'no' })) }
+            $facts += ('Domain controllers in the domain: ' + @($domain.DomainControllers).Count)
+        } catch { $facts += ('FSMO roles and global catalog not readable: ' + $_.Exception.Message) }
+        $same = @(@(@('DNS','DNS Server'), @('DHCP','DHCP Server'), @('ADCS-Cert-Authority','Certification Authority')) | Where-Object { (Get-FeatureState $_[0]) -eq $true } | ForEach-Object { $_[1] })
+        $facts += ('Other roles on this server: ' + $(if ($same.Count) { $same -join ', ' } else { 'none of DNS, DHCP, certificate services' }))
+        $repadmin = Join-Path $env:windir 'System32\repadmin.exe'
+        if (Test-Path -LiteralPath $repadmin) {
+            $r = Invoke-NativeCapture $repadmin @('/replsummary') 120
+            $errLines = @($r.Lines | Where-Object { $_ -match 'error|fail' -and $_ -notmatch '^\s*Source DSA|^\s*Destination DSA' })
+            $facts += ('Replication summary (repadmin /replsummary): exit ' + $r.ExitCode + $(if ($errLines.Count) { ', lines with errors: ' + $errLines.Count } else { ', no error lines' }))
+        } else { $facts += 'Replication summary: repadmin not found' }
+    }
+    return ,$facts
+}
+
+# ---------------------------------------------------------------------------
+Register-Check -Id 'special' -Name 'SPECIAL server (cluster node, domain controller)' -Script {
+    # #152: a cluster node or a domain controller is not a standard IPU. The
+    # main flow has decided the kind after the baseline; this check writes
+    # the SPECIAL row and what the report tells the project and the customer.
+    $kind = [string]$script:Data.SpecialKind
+    if (-not $kind) { return }
+    if ($kind -eq 'Undecided') {
+        Add-Result 'SPECIAL' 'ClusterMembership' 'MANUAL' 'Cluster membership could not be decided' 'The Failover Clustering feature is installed, but the cluster service and the cluster registry key disagree.' -Recommendation 'Check in Failover Cluster Manager whether this server is a cluster node. A cluster node is not a standard in-place upgrade.' -Source 'Get-WindowsFeature, Win32_Service, HKLM:\Cluster'
+        return
+    }
+    $content = Get-SpecialServerContent $kind ([string]$script:Data.SourceRelease) $TargetServerVersion
+    $facts = Get-SpecialServerFact $kind
+    $content | Add-Member -NotePropertyName Facts -NotePropertyValue @($facts) -Force
+    $script:Data.Special = $content
+    $first = @($content.Options | Where-Object { $_.Url }) | Select-Object -First 1
+    Add-Result 'SPECIAL' $content.Title 'SPECIAL' 'Not a standard in-place upgrade: expensive and risky' @($facts) -Recommendation 'Separate plan needed. Tell the project and the customer. See the SPECIAL section for the risks and the options.' -Source 'Domain role, cluster' -Link $first.Url -LinkTitle $first.Title
 }
 
 # ---------------------------------------------------------------------------

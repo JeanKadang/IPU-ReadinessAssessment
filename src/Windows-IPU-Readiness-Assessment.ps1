@@ -344,8 +344,10 @@ $script:BaselinePath      = [IO.Path]::Combine($ReportDirectory, $script:SafeCom
 try { $script:NumberCulture = New-Object System.Globalization.CultureInfo($NumberCultureName) }
 catch { $script:NumberCulture = [System.Globalization.CultureInfo]::InvariantCulture }
 
-$script:StatusOrder  = @('BLOCKER','ACTION','WARNING','MANUAL','OK','INFO')
-$script:FindingStatuses = @('BLOCKER','ACTION','WARNING','MANUAL')
+# SPECIAL (#152): not a standard IPU (cluster node, domain controller) - a
+# separate plan, extra time and coordination, more risk. Ranks above BLOCKER.
+$script:StatusOrder  = @('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL','OK','INFO')
+$script:FindingStatuses = @('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL')
 $script:ValidKinds   = @('Finding','Observation','Evidence','Checklist')
 
 # The single definition of report areas. Name = what readers see, Chapter =
@@ -381,6 +383,7 @@ $script:AreaMap = @{
     'UPGRADE_HISTORY'    = @{ Name='Upgrade history';             Chapter='Upgrade Path, Licensing and Windows Health' }
     'EXCHANGE'           = @{ Name='Exchange Server';             Chapter='Workloads and Applications' }
     'SQL'                = @{ Name='SQL Server';                  Chapter='Workloads and Applications' }
+    'SPECIAL'            = @{ Name='Special server';              Chapter='Upgrade Path, Licensing and Windows Health' }
     'DOMAIN_CONTROLLER'  = @{ Name='Domain controller';           Chapter='Workloads and Applications' }
     'WORKLOAD'           = @{ Name='Roles and workloads';         Chapter='Workloads and Applications' }
     'FILE_SHARES'        = @{ Name='File shares';                 Chapter='Workloads and Applications' }
@@ -495,7 +498,7 @@ function Add-Result {
     param(
         [Parameter(Mandatory=$true,Position=0)][string]$Area,
         [Parameter(Mandatory=$true,Position=1)][string]$Item,
-        [Parameter(Position=2)][ValidateSet('BLOCKER','ACTION','WARNING','MANUAL','OK','INFO')][string]$Status = 'INFO',
+        [Parameter(Position=2)][ValidateSet('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL','OK','INFO')][string]$Status = 'INFO',
         [Parameter(Position=3)][object]$Value = '',
         [Parameter(Position=4)][object]$Details = '',
         [string]$Recommendation = '',
@@ -1212,7 +1215,8 @@ function Get-UpgradePathDecision {
     param([string]$Source, [string]$Target, [bool]$Clustered = $false)
     $make = { param($s,$t) [pscustomobject]@{ Status=$s; Text=$t } }
     if ($Clustered) {
-        return (& $make 'BLOCKER' 'Clustered node: the standalone IPU procedure does not apply. Use a Cluster OS Rolling Upgrade (one version at a time) or migration plan.')
+        # Reported as SPECIAL with its own plan (#152); not a second finding here.
+        return (& $make 'INFO' 'Clustered node: not a standard in-place upgrade - see the SPECIAL section.')
     }
     if (-not $Source) { return (& $make 'MANUAL' 'The source Windows Server release was not recognized.') }
     if (-not $script:SupportedUpgradePaths.ContainsKey($Target)) {
@@ -2375,6 +2379,76 @@ function Protect-ReportObject {
     return $Value
 }
 
+# SPECIAL servers (#152): kinds that are never a standard in-place upgrade.
+# Each kind has its risks and options here, so a new kind is new data.
+$script:WindowsServerReleaseOrder = @('2012R2','2016','2019','2022','2025')
+
+function Get-SpecialServerDecision {
+    # Pure (#152): which SPECIAL kind a server is, from what the baseline
+    # collected. 'Undecided' when the cluster signals disagree: the report
+    # then says MANUAL, never a silent standard report.
+    param([int]$DomainRole, [bool]$ClusterFeature, [bool]$ClusterServiceActive, [bool]$ClusterKey, [bool]$BlockDomainController = $true)
+    if ($DomainRole -ge 4 -and $BlockDomainController) { return 'DomainController' }
+    if ($ClusterFeature -and $ClusterServiceActive -and $ClusterKey) { return 'Cluster' }
+    if ($ClusterFeature -and ($ClusterServiceActive -xor $ClusterKey)) { return 'Undecided' }
+    return ''
+}
+
+function Get-SpecialServerCheckId {
+    # Pure (#152): the checks a SPECIAL short report keeps - what is needed
+    # to describe the server and choose a plan.
+    return ,@('baseline','upgradepath','licensing','platform','performance','domain','cluster','special','storage')
+}
+
+function Get-SpecialServerContent {
+    # Pure (#152): what the report tells the project and the customer about a
+    # SPECIAL server - plain words, risks first, options to evaluate (not
+    # instructions), each option with a Microsoft link.
+    param([Parameter(Mandatory=$true)][string]$Kind, [string]$Source = '', [string]$Target = '')
+    $t = Get-ReleaseDisplayName $Target
+    $banner = 'Not a standard in-place upgrade. This server needs its own plan, extra time and coordination, and carries more risk: expensive and risky. Tell the project and the customer before planning the change.'
+    switch ($Kind) {
+        'Cluster' {
+            $steps = -1
+            $si = $script:WindowsServerReleaseOrder.IndexOf($Source); $ti = $script:WindowsServerReleaseOrder.IndexOf($Target)
+            if ($si -ge 0 -and $ti -ge 0) { $steps = $ti - $si }
+            $rolling = 'Cluster OS Rolling Upgrade: upgrade the nodes one at a time while the cluster keeps running. It moves one Windows Server version at a time.'
+            if ($steps -gt 1) { $rolling += ' From ' + (Get-ReleaseDisplayName $Source) + ' to ' + $t + ' that means ' + $steps + ' rolling upgrades in a row, or a migration instead.' }
+            return [pscustomobject]@{
+                Kind = 'Cluster'; Title = 'Failover cluster node'; Banner = $banner
+                Risks = @(
+                    'Quorum: a node down for the upgrade plus one more failure can stop the whole cluster.',
+                    'Mixed-version period: until every node is upgraded and the cluster functional level is raised, the cluster runs in a compatibility mode; plan to finish quickly.',
+                    'Raising the cluster functional level cannot be undone.',
+                    'Workload and vendor support: SQL Server failover cluster instances, Hyper-V, file server and Storage Spaces Direct each have their own rules and order of steps.',
+                    'The way back is much harder than a VM snapshot: a snapshot of one node does not roll back the cluster.'
+                )
+                Options = @(
+                    [pscustomobject]@{ Text = $rolling; Url = 'https://learn.microsoft.com/en-us/windows-server/failover-clustering/cluster-operating-system-rolling-upgrade'; Title = 'Microsoft: Cluster OS Rolling Upgrade' },
+                    [pscustomobject]@{ Text = 'Build a new cluster on ' + $t + ' and migrate the roles to it (often simpler across several versions).'; Url = 'https://learn.microsoft.com/en-us/windows-server/failover-clustering/cluster-operating-system-rolling-upgrade'; Title = 'Microsoft: Cluster OS Rolling Upgrade (migration alternative)' },
+                    [pscustomobject]@{ Text = 'Leave it on the current release for now (Extended Security Updates where available) and plan a replacement.'; Url = ''; Title = '' }
+                )
+            }
+        }
+        'DomainController' {
+            return [pscustomobject]@{
+                Kind = 'DomainController'; Title = 'Domain controller'; Banner = $banner
+                Risks = @(
+                    'Active Directory database and replication: a failed upgrade affects the whole domain, not just this server.',
+                    'Roles on the same server (FSMO roles, global catalog, DNS, DHCP, certificate services) move or fail with it.',
+                    'The way back: restoring a domain controller from a snapshot or image can cause a USN rollback that silently breaks replication. Virtualization safeguards reduce, but do not remove, this risk.',
+                    'Clients and older servers may depend on protocols the new release no longer allows by default (SMB1, NTLMv1, older TLS).'
+                )
+                Options = @(
+                    [pscustomobject]@{ Text = 'Microsoft''s recommended way: add a new domain controller on ' + $t + ' beside this one, move the roles, then demote and retire this one.'; Url = 'https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/deploy/upgrade-domain-controllers'; Title = 'Microsoft: Upgrade domain controllers to a newer version of Windows Server' },
+                    [pscustomobject]@{ Text = 'In-place upgrade only as a planned, approved exception, with replication health, backups and a tested way back.'; Url = 'https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/detect-and-recover-from-usn-rollback'; Title = 'Microsoft: USN rollback (why snapshots are not a way back)' }
+                )
+            }
+        }
+    }
+    throw ('Unknown SPECIAL kind: ' + $Kind)
+}
+
 function Get-OverallStatus {
     param([object[]]$Results)
     $findings = @($Results | Where-Object { $_.Kind -eq 'Finding' })
@@ -2685,7 +2759,10 @@ Register-Check -Id 'domain' -Name 'Domain role and access' -Script {
     $script:Data.DomainRoleText = Get-DomainRoleText $role ([string]$cs.Domain)
     if ($role -ge 4) {
         $status = 'WARNING'; $rec = 'Domain controller: follow the AD DS upgrade guidance (adprep, FSMO, replication health) and engage the AD team.'
-        if ($BlockDomainControllerIPU) { $status = 'BLOCKER'; $rec = 'Company standard: do not upgrade domain controllers in place. Build a new DC side-by-side, move roles, demote this DC and swap the IP address.' }
+        # With -BlockDomainControllerIPU (the default) a domain controller is
+        # SPECIAL (#152): the SPECIAL section carries the plan; this row is
+        # evidence only.
+        if ($BlockDomainControllerIPU) { $status = 'INFO'; $rec = 'Domain controller: not a standard in-place upgrade (site policy) - see the SPECIAL section.' }
         Add-Result 'DOMAIN_CONTROLLER' 'DomainController' $status $roleNames[$role] ('Domain=' + $cs.Domain) -Recommendation $rec -Source 'Win32_ComputerSystem.DomainRole'
     }
 
@@ -2889,13 +2966,96 @@ Register-Check -Id 'cluster' -Name 'Failover clustering' -Script {
         return
     }
     $script:Data.IsClustered = $true
-    Add-Result 'CLUSTER' 'ClusterMembership' 'BLOCKER' ('Cluster=' + $cluster.Name) -Recommendation 'Clustered node: use Cluster OS Rolling Upgrade (one version at a time) or a migration plan, not the standalone IPU procedure.' -Source 'Get-Cluster'
-    foreach ($n in @(Get-ClusterNode -ErrorAction SilentlyContinue)) { Add-Result 'CLUSTER' ('Node: ' + $n.Name) 'INFO' ('State=' + $n.State) -Source 'Get-ClusterNode' }
+    # Reported as SPECIAL with its own plan (#152); names are site data.
+    Add-RedactionLiteral ([string]$cluster.Name) 'HOST'
+    $script:Data.ClusterName = [string]$cluster.Name
+    Add-Result 'CLUSTER' 'ClusterMembership' 'INFO' ('Cluster=' + $cluster.Name) -Recommendation 'Cluster node: not a standard in-place upgrade - see the SPECIAL section.' -Source 'Get-Cluster'
+    foreach ($n in @(Get-ClusterNode -ErrorAction SilentlyContinue)) { Add-RedactionLiteral ([string]$n.Name) 'HOST'; Add-Result 'CLUSTER' ('Node: ' + $n.Name) 'INFO' ('State=' + $n.State) -Source 'Get-ClusterNode' }
     foreach ($g in @(Get-ClusterGroup -ErrorAction SilentlyContinue | Sort-Object Name)) { Add-Result 'CLUSTER' ('Group: ' + $g.Name) 'INFO' ('State=' + $g.State) ('Owner=' + $g.OwnerNode) -Source 'Get-ClusterGroup' }
     $q = Get-ClusterQuorum -ErrorAction SilentlyContinue
     if ($q) { Add-Result 'CLUSTER' 'Quorum' 'INFO' ('Type=' + $q.QuorumType) ('Resource=' + $q.QuorumResource) -Source 'Get-ClusterQuorum' }
     foreach ($csv in @(Get-ClusterSharedVolume -ErrorAction SilentlyContinue)) { Add-Result 'CLUSTER' ('CSV: ' + $csv.Name) 'INFO' ('State=' + $csv.State) ('Owner=' + $csv.OwnerNode) -Source 'Get-ClusterSharedVolume' }
     foreach ($r in @(Get-ClusterResource -ErrorAction SilentlyContinue | Where-Object { [string]$_.ResourceType -eq 'Physical Disk' })) { Add-Result 'CLUSTER' ('Disk: ' + $r.Name) 'INFO' ('State=' + $r.State) ('Group=' + $r.OwnerGroup) -Source 'Get-ClusterResource' }
+}
+
+# ---------------------------------------------------------------------------
+function Get-SpecialServerState {
+    # What decides SPECIAL (#152), read once after the baseline. Read-only.
+    $clusterFeature = (Get-FeatureState 'Failover-Clustering') -eq $true
+    $clusSvc = @($script:Data.Services | Where-Object { $_.Name -eq 'ClusSvc' -and $_.StartMode -ne 'Disabled' }).Count -gt 0
+    $clusterKey = [bool](Test-Path 'HKLM:\Cluster')
+    $role = 0; if ($script:Data.CS) { $role = [int]$script:Data.CS.DomainRole }
+    return (Get-SpecialServerDecision $role $clusterFeature $clusSvc $clusterKey $BlockDomainControllerIPU)
+}
+
+function Get-SpecialServerFact {
+    # The facts needed to choose a plan for a SPECIAL server (#152). Every
+    # source is optional: a fact that cannot be read says so.
+    param([string]$Kind)
+    $facts = @()
+    if ($Kind -eq 'Cluster') {
+        if (-not (Test-CommandAvailable 'Get-Cluster')) { return ,@('Cluster cmdlets not available: read the cluster with Failover Cluster Manager.') }
+        try {
+            $c = Get-Cluster -ErrorAction Stop
+            $facts += ('Cluster: ' + $c.Name)
+            $nodes = @(Get-ClusterNode -ErrorAction SilentlyContinue)
+            $facts += ('Nodes (' + $nodes.Count + '): ' + (@($nodes | ForEach-Object { [string]$_.Name + ' (' + $_.State + ')' }) -join ', '))
+            $groups = @(Get-ClusterGroup -ErrorAction SilentlyContinue | Where-Object { [string]$_.GroupType -notmatch '^(Cluster|AvailableStorage)$' })
+            $types = @($groups | Group-Object { [string]$_.GroupType } | ForEach-Object { $_.Name + ' x' + $_.Count })
+            $facts += ('Roles: ' + $(if ($types.Count) { $types -join ', ' } else { 'none' }))
+            $sql = @(Get-ClusterResource -ErrorAction SilentlyContinue | Where-Object { [string]$_.ResourceType -eq 'SQL Server' })
+            if ($sql.Count -gt 0) { $facts += ('SQL Server failover cluster instances: ' + $sql.Count) }
+            $q = Get-ClusterQuorum -ErrorAction SilentlyContinue
+            if ($q) { $facts += ('Quorum: ' + $q.QuorumType + $(if ($q.QuorumResource) { ' (witness ' + $q.QuorumResource + ')' } else { '' })) }
+            $csv = @(Get-ClusterSharedVolume -ErrorAction SilentlyContinue)
+            $facts += ('Cluster Shared Volumes: ' + $csv.Count)
+            if (Test-CommandAvailable 'Get-ClusterStorageSpacesDirect') {
+                try { $s2d = Get-ClusterStorageSpacesDirect -ErrorAction Stop; if ($s2d) { $facts += ('Storage Spaces Direct: ' + $s2d.State) } } catch { Write-Swallowed $_ }
+            }
+        } catch { $facts += ('Cluster details not readable: ' + $_.Exception.Message) }
+    }
+    if ($Kind -eq 'DomainController') {
+        try {
+            $domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()
+            $me = $env:COMPUTERNAME
+            $mine = @()
+            foreach ($r in @(@('PDC emulator', $domain.PdcRoleOwner), @('RID master', $domain.RidRoleOwner), @('Infrastructure master', $domain.InfrastructureRoleOwner), @('Schema master', $domain.Forest.SchemaRoleOwner), @('Domain naming master', $domain.Forest.NamingRoleOwner))) {
+                if ($r[1] -and ([string]$r[1].Name -split '\.')[0] -ieq $me) { $mine += $r[0] }
+            }
+            $facts += ('FSMO roles on this server: ' + $(if ($mine.Count) { $mine -join ', ' } else { 'none' }))
+            $dc = @($domain.DomainControllers | Where-Object { ([string]$_.Name -split '\.')[0] -ieq $me }) | Select-Object -First 1
+            if ($dc) { $facts += ('Global catalog: ' + $(if ($dc.IsGlobalCatalog()) { 'yes' } else { 'no' })) }
+            $facts += ('Domain controllers in the domain: ' + @($domain.DomainControllers).Count)
+        } catch { $facts += ('FSMO roles and global catalog not readable: ' + $_.Exception.Message) }
+        $same = @(@(@('DNS','DNS Server'), @('DHCP','DHCP Server'), @('ADCS-Cert-Authority','Certification Authority')) | Where-Object { (Get-FeatureState $_[0]) -eq $true } | ForEach-Object { $_[1] })
+        $facts += ('Other roles on this server: ' + $(if ($same.Count) { $same -join ', ' } else { 'none of DNS, DHCP, certificate services' }))
+        $repadmin = Join-Path $env:windir 'System32\repadmin.exe'
+        if (Test-Path -LiteralPath $repadmin) {
+            $r = Invoke-NativeCapture $repadmin @('/replsummary') 120
+            $errLines = @($r.Lines | Where-Object { $_ -match 'error|fail' -and $_ -notmatch '^\s*Source DSA|^\s*Destination DSA' })
+            $facts += ('Replication summary (repadmin /replsummary): exit ' + $r.ExitCode + $(if ($errLines.Count) { ', lines with errors: ' + $errLines.Count } else { ', no error lines' }))
+        } else { $facts += 'Replication summary: repadmin not found' }
+    }
+    return ,$facts
+}
+
+# ---------------------------------------------------------------------------
+Register-Check -Id 'special' -Name 'SPECIAL server (cluster node, domain controller)' -Script {
+    # #152: a cluster node or a domain controller is not a standard IPU. The
+    # main flow has decided the kind after the baseline; this check writes
+    # the SPECIAL row and what the report tells the project and the customer.
+    $kind = [string]$script:Data.SpecialKind
+    if (-not $kind) { return }
+    if ($kind -eq 'Undecided') {
+        Add-Result 'SPECIAL' 'ClusterMembership' 'MANUAL' 'Cluster membership could not be decided' 'The Failover Clustering feature is installed, but the cluster service and the cluster registry key disagree.' -Recommendation 'Check in Failover Cluster Manager whether this server is a cluster node. A cluster node is not a standard in-place upgrade.' -Source 'Get-WindowsFeature, Win32_Service, HKLM:\Cluster'
+        return
+    }
+    $content = Get-SpecialServerContent $kind ([string]$script:Data.SourceRelease) $TargetServerVersion
+    $facts = Get-SpecialServerFact $kind
+    $content | Add-Member -NotePropertyName Facts -NotePropertyValue @($facts) -Force
+    $script:Data.Special = $content
+    $first = @($content.Options | Where-Object { $_.Url }) | Select-Object -First 1
+    Add-Result 'SPECIAL' $content.Title 'SPECIAL' 'Not a standard in-place upgrade: expensive and risky' @($facts) -Recommendation 'Separate plan needed. Tell the project and the customer. See the SPECIAL section for the risks and the options.' -Source 'Domain role, cluster' -Link $first.Url -LinkTitle $first.Title
 }
 
 # ---------------------------------------------------------------------------
@@ -4064,7 +4224,7 @@ function New-IPUReportHtml {
     $findings = @($Results | Where-Object { $_.Kind -eq 'Finding' })
     $counts = @{}
     foreach ($s in $script:FindingStatuses) { $counts[$s] = @($findings | Where-Object { $_.Status -eq $s }).Count }
-    $decision = @($findings | Where-Object { $_.Status -in @('BLOCKER','ACTION') } | Sort-Object @{Expression={Get-StatusRank $_.Status}},Area,Item)
+    $decision = @($findings | Where-Object { $_.Status -in @('SPECIAL','BLOCKER','ACTION') } | Sort-Object @{Expression={Get-StatusRank $_.Status}},Area,Item)
     $planning = @($findings | Where-Object { $_.Status -in @('WARNING','MANUAL') } | Sort-Object @{Expression={Get-StatusRank $_.Status}},Area,Item)
     $checklist = @($Results | Where-Object { $_.Kind -eq 'Checklist' })
     $coverage = Get-CoverageNotice $CheckRuns (Get-ReleaseDisplayName $TargetServerVersion)
@@ -4128,7 +4288,7 @@ function New-IPUReportHtml {
     [void]$sb.AppendLine(@'
 <style>
 /* Colour tokens. Contrast (WCAG 2.1) is checked by the tests: text >= 4.5:1, focus outline >= 3:1, in both themes. */
-:root{--ink:#16202e;--muted:#5d6a79;--line:#dde3ea;--bg:#f3f5f8;--panel:#ffffff;--navy:#16365f;--heading:#16365f;--th-bg:#eef2f7;--th-ink:#30475f;--focus:#16365f;--partial-bg:#fff4d6;--partial-ink:#5c4400;--partial-line:#e6c46a;--blocker:#7a1717;--action:#b42318;--warning:#9a5800;--manual:#5b47a0;--ok:#17703a;--info:#4a6578}
+:root{--ink:#16202e;--muted:#5d6a79;--line:#dde3ea;--bg:#f3f5f8;--panel:#ffffff;--navy:#16365f;--heading:#16365f;--th-bg:#eef2f7;--th-ink:#30475f;--focus:#16365f;--partial-bg:#fff4d6;--partial-ink:#5c4400;--partial-line:#e6c46a;--special:#0f4c5c;--blocker:#7a1717;--action:#b42318;--warning:#9a5800;--manual:#5b47a0;--ok:#17703a;--info:#4a6578}
 @media (prefers-color-scheme: dark){:root{--ink:#e6edf5;--muted:#a9b6c4;--line:#2c3947;--bg:#0e141b;--panel:#16202b;--heading:#a9c8f0;--th-bg:#1e2a37;--th-ink:#c5d3e0;--focus:#8fb8ff;--partial-bg:#3a2e0b;--partial-ink:#ffe08a;--partial-line:#7a6220}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 "Segoe UI",Arial,sans-serif}
 .wrap{max-width:1440px;margin:auto;padding:24px 16px}
@@ -4148,14 +4308,14 @@ section,details{background:var(--panel);border:1px solid var(--line);border-radi
 section{padding:18px 20px}h2{font-size:18px;margin:0 0 6px;color:var(--heading)}.lead{color:var(--muted);margin:0 0 12px}
 summary{cursor:pointer;font-size:16px;font-weight:600;color:var(--heading);padding:14px 20px}summary:focus-visible{outline:3px solid var(--focus);outline-offset:2px;border-radius:8px}details>div{padding:0 20px 18px}
 .badge{display:inline-block;color:#fff;font-weight:700;font-size:11px;letter-spacing:.03em;padding:3px 8px;border-radius:999px;white-space:nowrap}
-.s-blocker{background:var(--blocker)}.s-action{background:var(--action)}.s-warning{background:var(--warning)}.s-manual{background:var(--manual)}.s-ok{background:var(--ok)}.s-info{background:var(--info)}
+.s-special{background:var(--special)}.s-blocker{background:var(--blocker)}.s-action{background:var(--action)}.s-warning{background:var(--warning)}.s-manual{background:var(--manual)}.s-ok{background:var(--ok)}.s-info{background:var(--info)}
 .scroll{width:100%;overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:860px}
 th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--line);padding:8px}
 th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
 .nw{white-space:nowrap}.txt{overflow-wrap:anywhere}.item{min-width:150px;overflow-wrap:break-word}.cb{width:64px;white-space:nowrap;color:var(--muted)}.cb span[aria-hidden]{font-size:18px}.cbt{font-size:11px}
 .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 24px}.fact{border-bottom:1px solid var(--line);padding:8px 0}.fact b{display:block;color:var(--muted);font-size:12px;font-weight:600}
-.legend p{margin:6px 0}.muted{color:var(--muted)}footer{padding:16px 2px;color:var(--muted);font-size:12px}
+.special{border-left:6px solid var(--special)}.special h3{font-size:15px;margin:14px 0 4px;color:var(--heading)}.special-banner{font-size:15px}.legend p{margin:6px 0}.muted{color:var(--muted)}footer{padding:16px 2px;color:var(--muted);font-size:12px}
 @media(max-width:900px){.cards{grid-template-columns:repeat(2,1fr)}.facts{grid-template-columns:1fr}}
 @media print{.copy{display:none!important}a.ext::after{content:" (" attr(href) ")";font-size:9px;overflow-wrap:anywhere}:root{--ink:#16202e;--muted:#5d6a79;--line:#dde3ea;--bg:#ffffff;--panel:#ffffff;--heading:#16365f;--th-bg:#eef2f7;--th-ink:#30475f;--partial-bg:#fff4d6;--partial-ink:#5c4400;--partial-line:#e6c46a}body{background:#fff;color:#16202e}.wrap{max-width:none;padding:0}details{break-inside:avoid}.scroll{overflow:visible}table{min-width:0;font-size:10px}}
 </style></head><body><div class="wrap">
@@ -4176,7 +4336,7 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
     foreach ($note in @($coverage.ByChoice)) { [void]$sb.AppendLine('<div class="note"><strong>Not run by choice:</strong> ' + (& $e $note) + '</div>') }
 
     # Counter cards link to the rows behind them (#77); a zero is not a link.
-    $cardTarget = @{ BLOCKER = 'decision'; ACTION = 'decision'; WARNING = 'planning'; MANUAL = 'planning' }
+    $cardTarget = @{ SPECIAL = 'special'; BLOCKER = 'decision'; ACTION = 'decision'; WARNING = 'planning'; MANUAL = 'planning' }
     $card = {
         param([string]$Label, $Count, [string]$Anchor, [string]$What)
         if ($Anchor -and [int]("0" + ([string]$Count -replace '\s.*$','')) -gt 0) {
@@ -4185,7 +4345,9 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
         return ('<div class="card"><small>' + (& $e $Label) + '</small><b>' + (& $e ([string]$Count)) + '</b></div>')
     }
     [void]$sb.AppendLine('<div class="cards">')
-    foreach ($s in $script:FindingStatuses) { [void]$sb.AppendLine((& $card $s $counts[$s] $cardTarget[$s] ($s + ' findings'))) }
+    # The SPECIAL card only when there is one (#152), so the usual six cards
+    # keep their layout.
+    foreach ($s in $script:FindingStatuses) { if ($s -eq 'SPECIAL' -and $counts[$s] -eq 0) { continue }; [void]$sb.AppendLine((& $card $s $counts[$s] $cardTarget[$s] ($s + ' findings'))) }
     [void]$sb.AppendLine((& $card 'Checklist items' $checklist.Count 'checklist' 'checklist items'))
     [void]$sb.AppendLine((& $card 'Checks run' (([string]@($CheckRuns | Where-Object { $_.Outcome -eq 'Completed' }).Count) + ' / ' + @($CheckRuns).Count) 'coverage' 'checks completed') + '</div>')
 
@@ -4198,11 +4360,30 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
 
     # Status meaning right after the Summary, before the tables that use it (#96).
     [void]$sb.AppendLine('<section class="legend"><h2>Status meaning</h2>')
+    [void]$sb.AppendLine('<p>' + (New-StatusBadge 'SPECIAL') + ' Not a standard in-place upgrade (cluster node, domain controller): a separate plan, extra time and coordination, more risk. Tell the project and the customer.</p>')
     [void]$sb.AppendLine('<p>' + (New-StatusBadge 'BLOCKER') + ' The selected IPU path or standard procedure does not apply.</p>')
     [void]$sb.AppendLine('<p>' + (New-StatusBadge 'ACTION') + ' Must be fixed or investigated before IPU.</p>')
     [void]$sb.AppendLine('<p>' + (New-StatusBadge 'WARNING') + ' Planning risk.</p>')
     [void]$sb.AppendLine('<p>' + (New-StatusBadge 'MANUAL') + ' Needs human or external verification, or the check could not complete.</p>')
     [void]$sb.AppendLine('<p>' + (New-StatusBadge 'OK') + ' Check passed. ' + (New-StatusBadge 'INFO') + ' Documentation only. Rows marked <em>Observation</em> in the sections below have a status for visibility but do not affect the overall result.</p></section>')
+
+    # SPECIAL server (#152): plain words for the project and the customer,
+    # the facts to choose a plan, the risks, then the options to evaluate.
+    $special = $script:Data.Special
+    if ($special) {
+        [void]$sb.AppendLine('<section id="special" class="special"><h2>' + (New-StatusBadge 'SPECIAL') + ' ' + (& $e $special.Title) + ' - not a standard in-place upgrade</h2>')
+        [void]$sb.AppendLine('<p class="special-banner"><strong>' + (& $e $special.Banner) + '</strong></p>')
+        [void]$sb.AppendLine('<h3>What this server is</h3><ul>')
+        foreach ($f in @($special.Facts)) { [void]$sb.AppendLine('<li>' + (& $e $f) + '</li>') }
+        [void]$sb.AppendLine('</ul><h3>Risks</h3><ul>')
+        foreach ($r in @($special.Risks)) { [void]$sb.AppendLine('<li>' + (& $e $r) + '</li>') }
+        [void]$sb.AppendLine('</ul><h3>Options to evaluate</h3><ul>')
+        foreach ($o in @($special.Options)) {
+            $link = ''; if ($o.Url) { $link = ' <a class="ext" href="' + (& $e $o.Url) + '" rel="noopener">' + (& $e $o.Title) + '</a>' }
+            [void]$sb.AppendLine('<li>' + (& $e $o.Text) + $link + '</li>')
+        }
+        [void]$sb.AppendLine('</ul><p class="lead">This report is short on purpose: the standard checks were not run, because the standard procedure does not apply. Plan this server separately.</p></section>')
+    }
 
     if ($isPost) { [void]$sb.AppendLine('<section id="decision"><h2>Must be resolved</h2><p class="lead">Problems found after the upgrade, including what changed compared with the pre-upgrade snapshot.</p>') }
     else { [void]$sb.AppendLine('<section id="decision"><h2>IPU decision - must be resolved</h2><p class="lead">BLOCKER: this server cannot follow the standard IPU path as configured. ACTION: must be fixed or investigated before the change.</p>') }
@@ -4322,6 +4503,7 @@ function New-AssessmentJsonObject {
         Results             = @($Results | Select-Object CheckId,Area,Item,Status,Kind,Value,Details,Recommendation,Source,Command,CommandKind,Link,LinkTitle)
         CheckRuns           = @($script:CheckRuns.ToArray() | Select-Object Id,Name,Phase,Outcome,Duration,Message)
         Snapshot            = [pscustomobject]$snapshot
+        Special             = $(if ($script:Data.Special) { [pscustomobject][ordered]@{ Kind = $script:Data.Special.Kind; Title = $script:Data.Special.Title; Banner = $script:Data.Special.Banner; Facts = @($script:Data.Special.Facts); Risks = @($script:Data.Special.Risks); Options = @($script:Data.Special.Options | ForEach-Object { [pscustomobject][ordered]@{ Text = $_.Text; Url = $_.Url; Title = $_.Title } }) } } else { $null })
     }
 }
 
@@ -4336,6 +4518,9 @@ function Get-RedactionLiteralFromResult {
         if ($r.Area -eq 'SERVICES' -and [string]$r.Details -match '(?:^|\|\s*)LogOnAs=([^|]+)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'ACCOUNT' } }
         if ($r.Area -eq 'GROUP_POLICY' -and [string]$r.Item -match '^GPO: (.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'GPO' } }
         if ($r.Area -eq 'GROUP_POLICY' -and [string]$r.Details -match '(?:^|\|\s*)WMI filter: ([^|]+)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'NAME' } }
+        # Cluster and node names (#152).
+        if ($r.Area -eq 'CLUSTER' -and [string]$r.Item -match '^Node: (.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'HOST' } }
+        if ($r.Area -eq 'CLUSTER' -and $r.Item -eq 'ClusterMembership' -and [string]$r.Value -match '^Cluster=(.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'HOST' } }
         # The KMS host that activated the server (#171).
         if ($r.Area -eq 'LICENSING' -and (@($r.Details) -join ' | ') -match 'KMS host: ([^\s:|(]+)') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'HOST' } }
         # File shares (#172): the share name from the per-share row, and its
@@ -4571,6 +4756,22 @@ function Invoke-Assessment {
     Register-AssessmentCheck
     $skip = @()
     if ($AssessmentMode -eq 'Post') { $skip = @('checklist','compatscan') }
+    # The baseline first: it decides whether this is a SPECIAL server (#152).
+    $baselineCheck = @($script:Checks | Where-Object { $_.Id -eq 'baseline' }) | Select-Object -First 1
+    if ($baselineCheck) { Invoke-Check $baselineCheck; $skip += 'baseline' }
+    $script:Data.SpecialKind = ''
+    if ($AssessmentMode -ne 'Post') {
+        try { $script:Data.SpecialKind = Get-SpecialServerState } catch { $script:Data.SpecialKind = 'Undecided'; Write-Swallowed $_ }
+    }
+    if ($script:Data.SpecialKind -eq 'Cluster' -or $script:Data.SpecialKind -eq 'DomainController') {
+        # Short report: only what is needed to choose a plan.
+        $keep = Get-SpecialServerCheckId
+        Write-AssessmentLog 'INFO' 'SPECIAL' ('Kind=' + $script:Data.SpecialKind + ' | short report with checks: ' + ($keep -join ','))
+        foreach ($c in @($script:Checks | Where-Object { $keep -notcontains $_.Id -and $skip -notcontains $_.Id })) {
+            $script:CheckRuns.Add([pscustomobject]@{ Id=$c.Id; Name=$c.Name; Phase=$c.Phase; Outcome='Skipped'; Duration='00:00:00'; Seconds=0; Message='Not applicable: SPECIAL server, short report' })
+            $skip += $c.Id
+        }
+    }
     foreach ($check in @($script:Checks | Where-Object { $_.Phase -eq 'Fast' -and $skip -notcontains $_.Id })) { Invoke-Check $check }
     if ($AssessmentMode -eq 'Post') { Invoke-PostUpgradeComparison }
 
@@ -4591,7 +4792,9 @@ function Invoke-Assessment {
     $failedChecks = @($script:CheckRuns | Where-Object { $_.Outcome -ne 'Completed' }).Count
     try {
         $final = Write-AssessmentReport
-        $msg = 'Mode=' + $AssessmentMode + ', Checks=' + $script:CheckRuns.Count + ', NotCompleted=' + $failedChecks + $(if ($WriteJson) { ', JSON=' + $script:JsonPath } else { '' }) + '. Retrieve the HTML via the approved SA process.'
+        $specialNote = ''
+        if ($script:Data.Special) { $specialNote = 'SPECIAL server (' + $script:Data.Special.Title + '): short report, separate plan needed. ' }
+        $msg = $specialNote + 'Mode=' + $AssessmentMode + ', Checks=' + $script:CheckRuns.Count + ', NotCompleted=' + $failedChecks + $(if ($WriteJson) { ', JSON=' + $script:JsonPath } else { '' }) + '. Retrieve the HTML via the approved SA process.'
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
             $script:ComputerName,'SUCCEEDED',$final.Overall,$script:ReportPath,$script:LogPath,
