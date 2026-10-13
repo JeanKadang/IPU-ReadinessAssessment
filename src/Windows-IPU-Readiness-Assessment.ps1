@@ -1611,6 +1611,7 @@ $script:DocLinks = @{
     InPlaceUpgrade = @{ Url = 'https://learn.microsoft.com/en-us/windows-server/get-started/perform-in-place-upgrade'; Title = 'Microsoft: Perform an in-place upgrade of Windows Server' }
     SetupOptions   = @{ Url = 'https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-command-line-options'; Title = 'Microsoft: Windows Setup command-line options (/Compat ScanOnly)' }
     AppCmd         = @{ Url = 'https://learn.microsoft.com/en-us/iis/get-started/getting-started-with-iis/getting-started-with-appcmdexe'; Title = 'Microsoft: Getting started with AppCmd.exe (backups)' }
+    WinReResize    = @{ Url = 'https://support.microsoft.com/en-us/topic/kb5028997-instructions-to-manually-resize-your-partition-to-install-the-winre-update-400faa27-9343-461c-ada9-24c8229763bf'; Title = 'Microsoft KB5028997: WinRE partition, reagentc and diskpart steps' }
     TrendAgents    = @{ Url = 'https://docs.trendmicro.com/en-us/documentation/article/trend-vision-one-agent-platform-compatibility'; Title = 'Trend Micro: agent platform compatibility' }
 }
 
@@ -1626,9 +1627,60 @@ function Get-RecommendationCommand {
         'FolderAcl'     { return [pscustomobject]@{ Kind = 'Change'; Command = ('icacls "' + $Values.Path + '" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F') } }
         'EnableNla'     { return [pscustomobject]@{ Kind = 'Change'; Command = 'Get-CimInstance -Namespace root\cimv2\TerminalServices -ClassName Win32_TSGeneralSetting -Filter "TerminalName=''RDP-tcp''" | Invoke-CimMethod -MethodName SetUserAuthenticationRequired -Arguments @{ UserAuthenticationRequired = 1 }' } }
         'LbfoTeams'     { return [pscustomobject]@{ Kind = 'Check'; Command = 'Get-NetLbfoTeam | Format-List Name, Status, TeamingMode, LoadBalancingAlgorithm, Members' } }
+        'SetupNoRecoveryPartition' { return [pscustomobject]@{ Kind = 'Change'; Command = 'setup.exe /ResizeRecoveryPartition Disable' } }
+        'RemoveRecoveryPartition' {
+            # Run line by line; the diskpart lines go inside diskpart (#161).
+            $lines = @('reagentc /info', 'reagentc /disable', 'diskpart', ('  select disk ' + $Values.Disk), ('  select partition ' + $Values.Partition), '  delete partition override', '  select volume c', '  extend', '  exit', 'reagentc /enable', 'reagentc /info')
+            return [pscustomobject]@{ Kind = 'Change'; Command = ($lines -join [Environment]::NewLine) }
+        }
         'CFreeSpace'    { return [pscustomobject]@{ Kind = 'Check'; Command = 'Get-Volume -DriveLetter C | Format-List DriveLetter, FileSystemLabel, @{ n = ''SizeGB''; e = { [math]::Round($_.Size / 1GB, 1) } }, @{ n = ''FreeGB''; e = { [math]::Round($_.SizeRemaining / 1GB, 1) } }' } }
     }
     throw ('Unknown recommendation command: ' + $Id)
+}
+
+# Smallest recovery partition that held the Windows Server 2025 WinRE in a
+# live run (#161): Setup created 901 MB partitions with 147 MB free.
+$script:WinReMinPartitionMB = 900
+
+function ConvertFrom-ReagentcInfo {
+    # Pure (#161): status and location from "reagentc /info". The location
+    # (\\?\GLOBALROOT\device\harddiskN\partitionM\...) is language
+    # neutral; the status words are read in English only.
+    param([string]$Text)
+    $r = [pscustomobject]@{ Enabled = $null; Disk = $null; Partition = $null }
+    if (-not $Text) { return $r }
+    if ($Text -match 'harddisk(\d+)\\partition(\d+)') { $r.Disk = [int]$Matches[1]; $r.Partition = [int]$Matches[2] }
+    if ($Text -match 'Windows RE status:\s*Enabled') { $r.Enabled = $true } elseif ($Text -match 'Windows RE status:\s*Disabled') { $r.Enabled = $false }
+    return $r
+}
+
+function Get-RecoveryPartitionDecision {
+    # Pure (#161). Partitions of the C: disk: PartitionNumber, Offset,
+    # SizeMB, IsRecovery. A recovery partition after C: blocks extending C:
+    # (Setup creates one when no recovery partition is big enough for the new
+    # WinRE). Before the upgrade, predict that and point to the Setup switch.
+    param([object[]]$Partitions, [int]$CPartitionNumber, $WinRePartition = $null, [string]$Mode = 'Pre')
+    $c = @($Partitions | Where-Object { [int]$_.PartitionNumber -eq $CPartitionNumber }) | Select-Object -First 1
+    $recovery = @($Partitions | Where-Object { $_.IsRecovery })
+    $after = @($recovery | Where-Object { $c -and [double]$_.Offset -gt [double]$c.Offset } | Sort-Object Offset)
+    if ($after.Count -gt 0) {
+        $p = $after[0]
+        if ($null -ne $WinRePartition) { $hit = @($after | Where-Object { [int]$_.PartitionNumber -eq [int]$WinRePartition }) | Select-Object -First 1; if ($hit) { $p = $hit } }
+        $holds = ''; if ($null -ne $WinRePartition -and [int]$WinRePartition -eq [int]$p.PartitionNumber) { $holds = ' WinRE is on it.' }
+        return [pscustomobject]@{ Status = 'WARNING'; Kind = 'AfterC'; PartitionNumber = [int]$p.PartitionNumber
+            Value = ('Recovery partition P' + $p.PartitionNumber + ' (' + [math]::Round([double]$p.SizeMB) + ' MB) directly after C:')
+            Text = ('This partition blocks extending C: later.' + $holds + ' If C: must be extendable, remove it in a change with a snapshot: move WinRE to C: first (reagentc /disable), delete only this partition, extend C:, then reagentc /enable. Never skip reagentc /disable: deleting the partition first deletes the only copy of WinRE. Leave a recovery partition at the start of the disk alone. See the user guide, "Recovery partition after an upgrade".') }
+    }
+    if ($Mode -eq 'Pre') {
+        $big = @($recovery | Where-Object { [double]$_.SizeMB -ge $script:WinReMinPartitionMB })
+        if ($big.Count -eq 0) {
+            $what = 'No recovery partition'; if ($recovery.Count -gt 0) { $what = 'Recovery partition smaller than ' + $script:WinReMinPartitionMB + ' MB' }
+            return [pscustomobject]@{ Status = 'WARNING'; Kind = 'LikelyNew'; PartitionNumber = $null
+                Value = ($what + ': Setup will likely add one after C:')
+                Text = 'Without a recovery partition big enough for the new WinRE, Setup shrinks C: and creates a new recovery partition directly after it, which blocks extending C: later. Start Setup with /ResizeRecoveryPartition Disable to prevent this.' }
+        }
+    }
+    return [pscustomobject]@{ Status = 'INFO'; Kind = 'Fine'; PartitionNumber = $null; Value = 'No recovery partition after C:'; Text = '' }
 }
 
 function Get-DomainRoleText {
@@ -2639,6 +2691,31 @@ Register-Check -Id 'storage' -Name 'Storage' -Script {
     } else {
         Add-Result 'STORAGE' 'PartitionAfterC' 'OK' 'No' -Source 'Get-Partition'
     }
+    # Recovery partition layout (#161): reagentc /info is read-only.
+    $winRe = $null
+    $ra = Invoke-NativeCapture (Join-Path $env:windir 'System32\reagentc.exe') @('/info') 60
+    if ($ra.TimedOut -or $ra.Error -or ($null -ne $ra.ExitCode -and [int]$ra.ExitCode -ne 0)) {
+        Add-Result 'STORAGE' 'WinREStatus' 'MANUAL' 'reagentc /info failed' ([string]$ra.Error + ' ExitCode=' + $ra.ExitCode) -Recommendation 'Run "reagentc /info" as administrator to see where WinRE is before changing partitions.' -Kind 'Observation' -Source 'reagentc /info'
+    } else {
+        $winRe = ConvertFrom-ReagentcInfo $ra.Output
+        if ($null -ne $winRe.Partition -or $null -ne $winRe.Enabled) {
+            $where = 'Location not reported'; if ($null -ne $winRe.Partition) { $where = 'Disk' + $winRe.Disk + ' P' + $winRe.Partition }
+            $state = 'Unknown'; if ($winRe.Enabled -eq $true) { $state = 'Enabled' } elseif ($winRe.Enabled -eq $false) { $state = 'Disabled' }
+            Add-Result 'STORAGE' 'WinREStatus' 'INFO' ($state + ', ' + $where) -Source 'reagentc /info'
+        }
+    }
+    $layout = @(Get-Partition -DiskNumber $cp.DiskNumber -ErrorAction SilentlyContinue | ForEach-Object {
+        [pscustomobject]@{ PartitionNumber = $_.PartitionNumber; Offset = [double]$_.Offset; SizeMB = [double]$_.Size / 1MB; IsRecovery = (([string]$_.GptType -eq '{de94bba4-06d1-4d40-a16a-bfd50179d6ac}') -or ([string]$_.Type -eq 'Recovery') -or ([int]$_.MbrType -eq 39)) }
+    })
+    $wrePart = $null; if ($winRe -and $winRe.Disk -eq $cp.DiskNumber) { $wrePart = $winRe.Partition }
+    $rd = Get-RecoveryPartitionDecision $layout ([int]$cp.PartitionNumber) $wrePart $AssessmentMode
+    if ($rd.Kind -eq 'AfterC') {
+        Add-Result 'STORAGE' 'RecoveryPartitionAfterC' $rd.Status $rd.Value -Recommendation $rd.Text -Source 'Get-Partition, reagentc /info' -Command (Get-RecommendationCommand 'RemoveRecoveryPartition' @{ Disk = $cp.DiskNumber; Partition = $rd.PartitionNumber }).Command -CommandKind 'Change' -Link $script:DocLinks.WinReResize.Url -LinkTitle $script:DocLinks.WinReResize.Title
+    } elseif ($rd.Kind -eq 'LikelyNew') {
+        Add-Result 'STORAGE' 'RecoveryPartitionAfterC' $rd.Status $rd.Value -Recommendation $rd.Text -Source 'Get-Partition' -Command (Get-RecommendationCommand 'SetupNoRecoveryPartition').Command -CommandKind 'Change' -Link $script:DocLinks.SetupOptions.Url -LinkTitle $script:DocLinks.SetupOptions.Title
+    } else {
+        Add-Result 'STORAGE' 'RecoveryPartitionAfterC' 'OK' $rd.Value -Source 'Get-Partition'
+    }
     try {
         $sup = Get-PartitionSupportedSize -DriveLetter C -ErrorAction Stop
         Add-Result 'STORAGE' 'CExtendableNowGB' 'INFO' (Format-Number (($sup.SizeMax - $cp.Size)/1GB)) 'Currently available contiguous space only.' -Source 'Get-PartitionSupportedSize'
@@ -3325,7 +3402,7 @@ Register-Check -Id 'checklist' -Name 'Standard change checklist' -Script {
     $lic = Get-TargetLicensingDecision ([string]$script:Data.ActivationKind) ([string]$script:Data.KmsEndpoint) $TargetServerVersion
     Add-Result 'CHECKLIST' 'Target licensing' 'MANUAL' $lic.Value -Recommendation $lic.Text -Kind 'Checklist'
     $media = $script:Data.RecommendedMedia; if (-not $media) { $media = 'See Upgrade path section' }
-    Add-Result 'CHECKLIST' 'Installation media' 'MANUAL' $media -Recommendation 'Use media with the exact edition, installation type and language listed. Optional pre-flight: setup.exe /auto upgrade /compat scanonly with the same media.' -Kind 'Checklist'
+    Add-Result 'CHECKLIST' 'Installation media' 'MANUAL' $media -Recommendation 'Use media with the exact edition, installation type and language listed. Start Setup with /ResizeRecoveryPartition Disable, so Setup does not shrink C: to add a recovery partition after it (#161). Optional pre-flight: setup.exe /auto upgrade /compat scanonly with the same media.' -Kind 'Checklist' -Command (Get-RecommendationCommand 'SetupNoRecoveryPartition').Command -CommandKind 'Change' -Link $script:DocLinks.SetupOptions.Url -LinkTitle $script:DocLinks.SetupOptions.Title
     Add-Result 'CHECKLIST' 'Application owner sign-off' 'MANUAL' 'Required for every listed workload' -Recommendation 'Get sign-off from each workload owner, including a post-upgrade test plan.' -Kind 'Checklist'
     Add-Result 'CHECKLIST' 'Monitoring and management agents' 'MANUAL' 'Backend communication cannot be proven locally' -Recommendation 'Confirm SA, UD and Operations agents are reporting in the backend before the change; verify again afterwards.' -Kind 'Checklist'
 }
