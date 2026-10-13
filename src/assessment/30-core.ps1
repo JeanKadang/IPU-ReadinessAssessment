@@ -283,13 +283,19 @@ function Invoke-Check {
     $script:CurrentCheckId = 'core'
 }
 
+# Extra SIDs for restricted folders. Always empty in a real run; the test
+# suite adds the current user when it runs unelevated, so it can still use
+# and clean up the folders it creates (#126).
+$script:ExtraRestrictedSids = @()
+
 function New-RestrictedDirectorySecurity {
     # SYSTEM and Administrators full control, inheritance from the parent
     # removed. Built from SIDs so it works on every OS language.
+    param([string[]]$ExtraSids = $script:ExtraRestrictedSids)
     $security = New-Object System.Security.AccessControl.DirectorySecurity
     $security.SetAccessRuleProtection($true, $false)
     $inherit = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
-    foreach ($sid in @('S-1-5-18', 'S-1-5-32-544')) {
+    foreach ($sid in (@('S-1-5-18', 'S-1-5-32-544') + @($ExtraSids | Where-Object { $_ }) | Select-Object -Unique)) {
         $identity = New-Object System.Security.Principal.SecurityIdentifier($sid)
         $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity, [System.Security.AccessControl.FileSystemRights]::FullControl, $inherit, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)
         $security.AddAccessRule($rule)
