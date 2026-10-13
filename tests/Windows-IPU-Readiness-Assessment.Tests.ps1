@@ -9,6 +9,12 @@ param()
 BeforeAll {
     $env:IPU_ASSESSMENT_LIBRARY_ONLY = '1'
     . (Join-Path $PSScriptRoot '..\src\Windows-IPU-Readiness-Assessment.ps1')
+    # Unelevated runs (#126): keep the current user on the folders the tests
+    # restrict, so they can be used and cleaned up. Elevated runs are as before.
+    if ($env:OS -eq 'Windows_NT') {
+        $me = [Security.Principal.WindowsIdentity]::GetCurrent()
+        if (-not (New-Object Security.Principal.WindowsPrincipal($me)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { $script:ExtraRestrictedSids = @($me.User.Value) }
+    }
 }
 
 AfterAll { Remove-Item Env:\IPU_ASSESSMENT_LIBRARY_ONLY -ErrorAction SilentlyContinue }
@@ -579,10 +585,16 @@ Describe 'Output folder access (#12)' {
     }
 
     It 'builds a protected ACL with only SYSTEM and Administrators (Windows)' -Skip:($env:OS -ne 'Windows_NT') {
-        $sec = New-RestrictedDirectorySecurity
+        $sec = New-RestrictedDirectorySecurity -ExtraSids @()
         $sec.AreAccessRulesProtected | Should -BeTrue
         $sids = @($sec.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { [string]$_.IdentityReference } | Sort-Object)
         ($sids -join ',') | Should -Be 'S-1-5-18,S-1-5-32-544'
+    }
+    It 'adds extra SIDs only when given (the unelevated test run, #126)' -Skip:($env:OS -ne 'Windows_NT') {
+        $sec = New-RestrictedDirectorySecurity -ExtraSids @('S-1-5-21-1-2-3-1001', 'S-1-5-18')
+        $sids = @($sec.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { [string]$_.IdentityReference } | Sort-Object)
+        ($sids -join ',') | Should -Be 'S-1-5-18,S-1-5-21-1-2-3-1001,S-1-5-32-544'
+        $script:ExtraRestrictedSids.GetType().IsArray | Should -BeTrue
     }
     It 'applies the ACL to a real folder (Windows)' -Skip:($env:OS -ne 'Windows_NT') {
         $p = Join-Path $TestDrive 'real-acl'

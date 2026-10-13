@@ -161,8 +161,8 @@ Invoke-Pester .\tests -Output Detailed
 ```
 
 Tests load the script in library mode (`IPU_ASSESSMENT_LIBRARY_ONLY=1`): functions only, nothing is collected
-from the machine. They need Windows, and some tests create folders limited to SYSTEM and Administrators, so run
-the full suite in an **elevated** session (CI does). Add `-ExcludeTagFilter Integration` to skip the tests that
+from the machine. They need Windows and run the same in an elevated or a normal (unelevated) session: CI runs the
+whole suite both ways (#126). Add `-ExcludeTagFilter Integration` to skip the tests that
 start real processes. If your machine enforces a signed-script policy, start the session with
 `pwsh -ExecutionPolicy Bypass` (process scope only). Details: [user guide, Running the tests](docs/user-guide.md#13-running-the-tests).
 

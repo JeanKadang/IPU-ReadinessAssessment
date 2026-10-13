@@ -65,6 +65,19 @@ jobs:
         run: |
           if ('${{ matrix.coverage }}' -eq 'true') { ./build/Invoke-CiTests.ps1 -Coverage -MinimumCoverage 85 } else { ./build/Invoke-CiTests.ps1 }
 
+  pester-unelevated:
+    # #126: the suite as a standard user (no admin token), as on a
+    # contributor's workstation. Windows PowerShell 5.1.
+    name: pester (unelevated)
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run Pester as a standard user
+        run: ./build/Invoke-UnelevatedTests.ps1
+
   smoke:
     # Runs the real script end to end on the runner (Pre, then Post against
     # the Pre result) and validates the JSON against docs/result-schema.json.
@@ -117,7 +130,7 @@ jobs:
     # the weekly run and every push to main (#123): main was red on two
     # merges in a row without anyone noticing.
     name: notify (failed run on main)
-    needs: [pester, smoke, lint]
+    needs: [pester, pester-unelevated, smoke, lint]
     if: >-
       always() && (
         (github.event_name == 'schedule' && contains(needs.*.result, 'failure')) ||
