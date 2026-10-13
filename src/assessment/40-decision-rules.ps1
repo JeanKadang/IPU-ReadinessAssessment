@@ -379,6 +379,144 @@ function ConvertTo-ServiceBaseName {
     return ($Name -replace '_[0-9a-fA-F]{4,}$', '')
 }
 
+function Get-NetBiosSettingText {
+    # Pure (#149): Win32_NetworkAdapterConfiguration.TcpipNetbiosOptions in words.
+    param($Option)
+    switch ([string]$Option) {
+        '0' { return 'Default (set by DHCP)' }
+        '1' { return 'Enabled' }
+        '2' { return 'Disabled' }
+        default { return 'Unknown' }
+    }
+}
+
+function ConvertTo-NetworkAdapterRecord {
+    # Pure (#149): one enabled adapter's IP configuration as a plain record
+    # for the report row, the snapshot and the per-adapter comparison. The
+    # MAC address is the key, because Setup can rename adapters.
+    param($Config, [string]$Name, $VlanId = $null)
+    $addresses = @($Config.IPAddress | Where-Object { $_ })
+    $ipv4 = @($addresses | Where-Object { [string]$_ -match '^\d+\.\d+\.\d+\.\d+$' } | ForEach-Object { [string]$_ })
+    $ipv6 = @($addresses | Where-Object { [string]$_ -match ':' } | ForEach-Object { [string]$_ })
+    $masks = @($Config.IPSubnet | Where-Object { [string]$_ -match '^\d+\.\d+\.\d+\.\d+$' } | ForEach-Object { [string]$_ })
+    $wins = @(@($Config.WINSPrimaryServer, $Config.WINSSecondaryServer) | Where-Object { $_ } | ForEach-Object { [string]$_ })
+    $vlan = ''
+    if ($null -ne $VlanId -and [string]$VlanId -ne '' -and [string]$VlanId -ne '0') { $vlan = [string]$VlanId }
+    $metric = ''
+    if ($null -ne $Config.IPConnectionMetric) { $metric = [string]$Config.IPConnectionMetric }
+    return [pscustomobject]@{
+        Name          = $Name
+        Mac           = (([string]$Config.MACAddress).ToUpperInvariant() -replace '-', ':')
+        IPv4          = $ipv4
+        Mask          = $masks
+        IPv6          = $ipv6
+        Gateway       = @($Config.DefaultIPGateway | Where-Object { $_ } | ForEach-Object { [string]$_ })
+        Dns           = @($Config.DNSServerSearchOrder | Where-Object { $_ } | ForEach-Object { [string]$_ })
+        Suffix        = [string]$Config.DNSDomain
+        SuffixSearch  = @($Config.DNSDomainSuffixSearchOrder | Where-Object { $_ } | ForEach-Object { [string]$_ })
+        RegisterInDns = [bool]$Config.FullDNSRegistrationEnabled
+        RegisterSuffix = [bool]$Config.DomainDNSRegistrationEnabled
+        Wins          = $wins
+        NetBios       = Get-NetBiosSettingText $Config.TcpipNetbiosOptions
+        Metric        = $metric
+        Dhcp          = [bool]$Config.DHCPEnabled
+        Vlan          = $vlan
+    }
+}
+
+function ConvertTo-MacKey {
+    # Pure (#149): 00-50-56-AA-00-01 and 00:50:56:aa:00:01 are the same adapter.
+    param([string]$Mac)
+    return (($Mac -replace '[^0-9A-Fa-f]', '').ToUpperInvariant())
+}
+
+function Get-NetworkAdapterDetail {
+    # Pure (#149): the report details of one adapter record.
+    param($Adapter)
+    $onOff = { param($b) if ($b) { 'Yes' } else { 'No' } }
+    $d = @(
+        ('Gateway=' + (@($Adapter.Gateway) -join ',')),
+        ('DNS=' + (@($Adapter.Dns) -join ',')),
+        ('DHCP=' + [bool]$Adapter.Dhcp),
+        ('MAC=' + [string]$Adapter.Mac)
+    )
+    if (@($Adapter.IPv6).Count -gt 0) { $d += ('IPv6=' + (@($Adapter.IPv6) -join ',')) }
+    $d += ('DNS suffix=' + $(if ($Adapter.Suffix) { [string]$Adapter.Suffix } else { '(none)' }))
+    if (@($Adapter.SuffixSearch).Count -gt 0) { $d += ('Suffix search list=' + (@($Adapter.SuffixSearch) -join ',')) }
+    $d += ('Register in DNS=' + (& $onOff $Adapter.RegisterInDns) + ', with suffix=' + (& $onOff $Adapter.RegisterSuffix))
+    $d += ('WINS=' + $(if (@($Adapter.Wins).Count -gt 0) { @($Adapter.Wins) -join ',' } else { '(none)' }))
+    $d += ('NetBIOS over TCP/IP=' + [string]$Adapter.NetBios)
+    if ($Adapter.Metric) { $d += ('Metric=' + [string]$Adapter.Metric) }
+    if ($Adapter.Vlan) { $d += ('VLAN=' + [string]$Adapter.Vlan) }
+    return ,$d
+}
+
+function Compare-NetworkAdapter {
+    # Pure (#149): compares the adapters before and after the upgrade, matched
+    # by MAC address (Setup can rename adapters). One row per changed adapter,
+    # with every difference in the details and the worst status. Addresses
+    # lost on a static adapter are an ACTION; on DHCP a WARNING (a new lease).
+    param($Before, $After)
+    $rows = @()
+    $make = { param($st,$item,$val,$det,$rec) [pscustomobject]@{ Status=$st; Item=$item; Value=$val; Details=$det; Recommendation=$rec } }
+    $list = { param($v) $x = @($v | Where-Object { $_ } | ForEach-Object { [string]$_ }); if ($x.Count -eq 0) { '(none)' } else { $x -join ',' } }
+    $set = { param($v) (@($v | Where-Object { $_ } | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object -Unique) -join ',') }
+    $rank = { param($s) $script:StatusOrder.IndexOf($s) }
+    $restore = 'Compare with the network evidence file saved before the upgrade (ipconfig /all, netsh interface dump) and put back what should not have changed. Test name resolution and access from a client.'
+    $now = @{}
+    foreach ($a in @($After | Where-Object { $_ -and $_.Mac })) { $now[(ConvertTo-MacKey ([string]$a.Mac))] = $a }
+    $seen = @{}
+    foreach ($b in @($Before | Where-Object { $_ -and $_.Mac })) {
+        $key = ConvertTo-MacKey ([string]$b.Mac)
+        $seen[$key] = $true
+        if (-not $now.ContainsKey($key)) {
+            if (@($b.IPv4 | Where-Object { $_ }).Count -gt 0) {
+                $rows += (& $make 'ACTION' ('Network adapter missing after upgrade: ' + $b.Name) ('MAC=' + [string]$b.Mac) ('Before: IPv4=' + (& $list $b.IPv4) + '; Gateway=' + (& $list $b.Gateway) + '; DNS=' + (& $list $b.Dns) + '; DHCP=' + [bool]$b.Dhcp) ('No enabled adapter has this MAC address now. Check Device Manager and the virtual hardware, then restore the IP configuration on the right adapter. ' + $restore))
+            }
+            continue
+        }
+        $a = $now[$key]
+        # A list and a hashtable, so the helper below (a child scope) can add to them.
+        $changes = New-Object System.Collections.Generic.List[string]
+        $state = @{ Worst = 'INFO' }
+        $staticNow = (-not [bool]$b.Dhcp -or -not [bool]$a.Dhcp)
+        $addrStatus = $(if ($staticNow) { 'ACTION' } else { 'WARNING' })
+        $add = {
+            param($st, $text)
+            $changes.Add([string]$text)
+            if ((& $rank $st) -lt (& $rank $state.Worst)) { $state.Worst = $st }
+        }
+        if ([bool]$b.Dhcp -ne [bool]$a.Dhcp) { & $add 'ACTION' ('DHCP: before ' + [bool]$b.Dhcp + ', now ' + [bool]$a.Dhcp) }
+        $lost4 = @(@($b.IPv4) | Where-Object { $_ -and @($a.IPv4) -notcontains $_ })
+        if ($lost4.Count -gt 0) { & $add $addrStatus ('IPv4: before ' + (& $list $b.IPv4) + ', now ' + (& $list $a.IPv4)) }
+        if ((& $set $b.Gateway) -ne (& $set $a.Gateway)) { & $add $addrStatus ('Gateway: before ' + (& $list $b.Gateway) + ', now ' + (& $list $a.Gateway)) }
+        # DNS server order matters for resolution, so the lists are compared in order.
+        if ((& $list $b.Dns) -ne (& $list $a.Dns)) { & $add 'WARNING' ('DNS servers: before ' + (& $list $b.Dns) + ', now ' + (& $list $a.Dns)) }
+        $global6 = { param($v) @($v | Where-Object { $_ -and [string]$_ -notmatch '^fe80:' }) }
+        $lost6 = @(& $global6 $b.IPv6 | Where-Object { @($a.IPv6) -notcontains $_ })
+        if ($lost6.Count -gt 0) { & $add 'WARNING' ('IPv6: before ' + (& $list (& $global6 $b.IPv6)) + ', now ' + (& $list (& $global6 $a.IPv6))) }
+        if ([string]$b.Suffix -ne [string]$a.Suffix) { & $add 'WARNING' ('DNS suffix: before ' + (& $list $b.Suffix) + ', now ' + (& $list $a.Suffix)) }
+        if ((& $list $b.SuffixSearch) -ne (& $list $a.SuffixSearch)) { & $add 'WARNING' ('Suffix search list: before ' + (& $list $b.SuffixSearch) + ', now ' + (& $list $a.SuffixSearch)) }
+        if ([bool]$b.RegisterInDns -ne [bool]$a.RegisterInDns) { & $add 'WARNING' ('Register in DNS: before ' + [bool]$b.RegisterInDns + ', now ' + [bool]$a.RegisterInDns) }
+        if ((& $set $b.Wins) -ne (& $set $a.Wins)) { & $add 'WARNING' ('WINS: before ' + (& $list $b.Wins) + ', now ' + (& $list $a.Wins)) }
+        if ($b.NetBios -and $a.NetBios -and [string]$b.NetBios -ne [string]$a.NetBios) { & $add 'WARNING' ('NetBIOS over TCP/IP: before ' + $b.NetBios + ', now ' + $a.NetBios) }
+        if ([string]$b.Vlan -ne [string]$a.Vlan) { & $add 'ACTION' ('VLAN: before ' + (& $list $b.Vlan) + ', now ' + (& $list $a.Vlan)) }
+        if ($b.Metric -and $a.Metric -and [string]$b.Metric -ne [string]$a.Metric) { & $add 'INFO' ('Metric: before ' + $b.Metric + ', now ' + $a.Metric) }
+        if ([string]$b.Name -ne [string]$a.Name) { & $add 'INFO' ('Name: before ' + $b.Name + ', now ' + $a.Name) }
+        $worst = $state.Worst
+        if ($changes.Count -eq 0) { continue }
+        $rec = $restore
+        if ($worst -eq 'INFO') { $rec = 'Only the name or metric changed. Update scripts or monitoring that use the adapter name.' }
+        $rows += (& $make $worst ('Network adapter changed: ' + $a.Name) ('MAC=' + [string]$a.Mac) (@($changes) -join '; ') $rec)
+    }
+    $new = @(@($After | Where-Object { $_ -and $_.Mac }) | Where-Object { -not $seen.ContainsKey((ConvertTo-MacKey ([string]$_.Mac))) })
+    if ($new.Count -gt 0) {
+        $rows += (& $make 'INFO' 'Network adapters new after upgrade' ('Count=' + $new.Count) ((@($new | ForEach-Object { [string]$_.Name + ' (MAC=' + [string]$_.Mac + ')' })) -join ', ') 'Adapters with a MAC address not seen before the upgrade. Expected when virtual hardware was changed; otherwise check that the IP configuration is on the right adapter.')
+    }
+    # Plain output (not ,$rows): callers wrap it in @(), and no rows is no output.
+    return $rows
+}
+
 function Compare-IPUSnapshot {
     # Pure: compares the pre-upgrade snapshot with the current one and returns
     # the differences an engineer must look at after the upgrade.
@@ -434,6 +572,12 @@ function Compare-IPUSnapshot {
     }
     if ($Before.Uac -and $After.Uac -and [string]$Before.Uac -ne [string]$After.Uac) {
         $diff += (& $make 'WARNING' 'UAC changed' ([string]$After.Uac) ('Before: ' + [string]$Before.Uac) 'User Account Control is set differently after the upgrade. Confirm the change is intended (usually set by Group Policy).')
+    }
+    # Per adapter, matched by MAC, when both runs have the adapter list
+    # (#149, from 4.5.0); otherwise the flat address lists of older baselines.
+    if (@($Before.Adapters | Where-Object { $_ }).Count -gt 0 -and $null -ne $After.Adapters) {
+        foreach ($r in @(Compare-NetworkAdapter $Before.Adapters $After.Adapters)) { $diff += $r }
+        $lists = @($lists | Where-Object { $_.Prop -ne 'IPv4' -and $_.Prop -ne 'Dns' })
     }
     foreach ($l in $lists) {
         $b = @($Before.($l.Prop) | Where-Object { $_ })

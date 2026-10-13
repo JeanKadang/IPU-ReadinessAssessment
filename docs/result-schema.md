@@ -97,6 +97,7 @@ Lists may be empty or `null`.
 | `Ports` | Listening ports below 49152, for example `TCP:443` |
 | `Routes` | Static routes, for example `10.50.0.0/16 via 10.20.30.1` |
 | `IPv4`, `Dns` | IPv4 addresses and DNS servers of enabled adapters |
+| `Adapters` | Per enabled adapter (from 4.5.0): `Name`, `Mac`, `IPv4`, `Mask`, `IPv6`, `Gateway`, `Dns`, `Suffix`, `SuffixSearch`, `RegisterInDns`, `RegisterSuffix`, `Wins`, `NetBios`, `Metric`, `Dhcp`, `Vlan`. The post-upgrade comparison matches adapters by `Mac` |
 | `Hosts` | Active hosts-file entries |
 | `Tasks` | Non-Microsoft scheduled tasks, for example `\Example\Nightly export` |
 | `Ou` | The computer object's distinguished name in AD (from 4.3.0); the post-upgrade comparison reports a move |
