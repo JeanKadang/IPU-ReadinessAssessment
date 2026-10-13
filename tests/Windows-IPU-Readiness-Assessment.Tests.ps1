@@ -2834,246 +2834,6 @@ Describe 'Save-NetworkEvidence (#149)' {
     }
 }
 
-Describe 'Redaction covers every collected kind (#124)' {
-    # A synthetic worst case: every kind of name and address the collector
-    # reports, with random values (a new seed per run, shown on failure), run
-    # through the live JSON path, the live HTML path and -RedactExisting.
-    # The test fails when any input value survives in any of them.
-    BeforeAll {
-        $script:RedSeed = Get-Random -Maximum 2147483647
-        $rng = New-Object System.Random $script:RedSeed
-        function New-Word([int]$Length = 8) { -join (1..$Length | ForEach-Object { [char](97 + $rng.Next(26)) }) }
-        function New-Octet { 1 + $rng.Next(253) }
-        function New-Hex([int]$Length) { -join (1..$Length | ForEach-Object { '0123456789abcdef'[$rng.Next(16)] }) }
-        $label = New-Word 7
-        $nb = $label.ToUpperInvariant()
-        $fqdn = $label + '.corp.test'
-        $computer = 'SRV' + (New-Word 6).ToUpperInvariant()
-        $v = [ordered]@{
-            Computer = $computer; Domain = $fqdn; NetBios = $nb
-            TaskAccount = 'adm-' + (New-Word); ServiceDomainAccount = 'svc_' + (New-Word); ServiceLocalAccount = 'loc' + (New-Word)
-            WordAccount = 'Installer'                                  # the #114 shape: an account that is an ordinary word
-            UpnUser = 'u' + (New-Word); Gpo = 'GPO ' + (New-Word) + ' Baseline'; WmiFilter = 'Filter ' + (New-Word)
-            Share = 'Share' + (New-Word); ShareDescription = 'Team ' + (New-Word) + ' data'
-            Cluster = 'CL' + (New-Word 5).ToUpperInvariant(); Node = 'ND' + (New-Word 5).ToUpperInvariant()
-            KmsHost = 'kms' + (New-Word 5); Ou = 'OU' + (New-Word); Org = 'Org ' + (New-Word)
-            HostCom = (New-Word) + '.com'; HostDk = (New-Word) + '.dk'; HostLocal = (New-Word) + '.local'; HostInternal = (New-Word) + '.internal'; HostInDomain = (New-Word) + '.' + $fqdn
-            IPv4 = '10.' + (New-Octet) + '.' + (New-Octet) + '.' + (New-Octet); IPv4Gateway = '172.16.' + (New-Octet) + '.' + (New-Octet)
-            IPv6 = '2001:db8:' + (New-Hex 4) + '::' + (New-Hex 3); LinkLocal = 'fe80::' + (New-Hex 4) + ':' + (New-Hex 4)
-            Mac = ((1..6 | ForEach-Object { New-Hex 2 }) -join '-').ToUpperInvariant()
-            Sid = 'S-1-5-21-' + $rng.Next(100000, 999999) + '-' + $rng.Next(100000, 999999) + '-' + $rng.Next(100000, 999999) + '-1105'
-            Thumbprint = (New-Hex 40).ToUpperInvariant()
-            Printer = 'PR-' + (New-Word); PrinterShare = 'PS' + (New-Word); PrinterPort = 'port_' + (New-Word); PrinterHost = 'prn' + (New-Word 5) + '.' + $fqdn
-        }
-        $script:RedValues = $v
-        $script:RedSavedComputer = $script:ComputerName
-        $script:ComputerName = $computer
-        $script:Data = @{}
-        # What the collector registers while it runs (the Add-RedactionLiteral call sites).
-        Add-RedactionLiteral ($nb + '\' + $v.TaskAccount) 'ACCOUNT'
-        Add-RedactionLiteral ($nb + '\' + $v.ServiceDomainAccount) 'ACCOUNT'
-        Add-RedactionLiteral ('.\' + $v.ServiceLocalAccount) 'ACCOUNT'
-        Add-RedactionLiteral ($nb + '\' + $v.WordAccount) 'ACCOUNT'
-        Add-RedactionLiteral $v.Gpo 'GPO'; Add-RedactionLiteral $v.WmiFilter 'NAME'
-        Add-RedactionLiteral $v.Share 'NAME'; Add-RedactionLiteral $v.ShareDescription 'NAME'
-        Add-RedactionLiteral $v.Cluster 'HOST'; Add-RedactionLiteral $v.Node 'HOST'
-        Add-RedactionLiteral ($v.KmsHost + '.' + $fqdn) 'HOST'; Add-RedactionLiteral $v.KmsHost 'HOST'
-        Add-RedactionLiteral $v.Printer 'NAME'; Add-RedactionLiteral $v.PrinterShare 'NAME'; Add-RedactionLiteral $v.PrinterPort 'NAME'; Add-RedactionLiteral $v.PrinterHost 'HOST'
-        $script:Results.Clear(); $script:CheckRuns.Clear()
-        Add-Result 'ACCESS' 'DomainMembership' 'INFO' ('Domain=' + $fqdn) ('NetBIOS=' + $nb)
-        Add-Result 'ACCESS' 'ComputerObjectOu' 'INFO' ('CN=' + $computer + ',OU=' + $v.Ou + ',OU=Servers,DC=' + $label + ',DC=corp,DC=test')
-        Add-Result 'TASKS' '\Ops\Export' 'INFO' ('RunAs=' + $nb + '\' + $v.TaskAccount)
-        Add-Result 'SERVICES' 'AppSvc' 'INFO' 'AppSvc' ('State=Running | StartMode=Auto | LogOnAs=' + $nb + '\' + $v.ServiceDomainAccount)
-        Add-Result 'SERVICES' 'LocalSvc' 'INFO' 'LocalSvc' ('State=Running | StartMode=Auto | LogOnAs=.\' + $v.ServiceLocalAccount)
-        Add-Result 'SERVICES' 'Setup helper' 'INFO' 'Setup helper' ('State=Running | StartMode=Auto | LogOnAs=' + $nb + '\' + $v.WordAccount)
-        Add-Result 'SERVICES' 'UpnSvc' 'INFO' 'UpnSvc' ('State=Running | StartMode=Auto | LogOnAs=' + $v.UpnUser + '@' + $fqdn)
-        Add-Result 'GROUP_POLICY' ('GPO: ' + $v.Gpo) 'WARNING' 'Applied' @(('WMI filter: ' + $v.WmiFilter), ('Linked at ' + $fqdn + '/Servers/' + $v.Ou))
-        Add-Result 'GROUP_POLICY' 'ADGroup' 'INFO' ($nb + '\Patch Ring 2') ('SID=' + $v.Sid)
-        Add-Result 'FILE_SHARES' ('Share: ' + $v.Share) 'INFO' ('D:\' + $v.Share) @(('Path=D:\' + $v.Share), ('Description=' + $v.ShareDescription), ('Share permissions: ' + $nb + '\' + $v.TaskAccount + ': Full'))
-        Add-Result 'CLUSTER' 'ClusterMembership' 'INFO' ('Cluster=' + $v.Cluster)
-        Add-Result 'CLUSTER' ('Node: ' + $v.Node) 'INFO' 'State=Up'
-        Add-Result 'LICENSING' 'WindowsActivation' 'OK' 'Licensed (KMS)' ('KMS host: ' + $v.KmsHost + '.' + $fqdn + ':1688 (found via DNS)')
-        Add-Result 'NETWORK' 'Ethernet0' 'INFO' ('IPv4=' + $v.IPv4 + ' / 255.255.255.0') @(('Gateway=' + $v.IPv4Gateway), ('DNS=' + $v.IPv4Gateway), ('MAC=' + $v.Mac), ('IPv6=' + $v.IPv6 + ',' + $v.LinkLocal), ('DNS suffix=' + $fqdn))
-        Add-Result 'PKI' 'Certificate' 'INFO' ('CN=' + $v.HostInDomain + ', O=' + $v.Org) ('Thumbprint=' + $v.Thumbprint)
-        Add-Result 'PRINTING' ('Printer: ' + $v.Printer) 'INFO' ('Driver=Example PCL6; Port=' + $v.PrinterPort) @(('Share=' + $v.PrinterShare), 'Published in AD=True')
-        Add-Result 'PRINTING' ('Port: ' + $v.PrinterPort) 'WARNING' 'LPR port monitor' @(('Address=' + $v.PrinterHost), 'Queue=labels')
-        Add-Result 'NETWORK_DEPENDENCY' 'Hosts line 1' 'INFO' ('Address=' + $v.IPv4) ('Names=' + $v.HostCom + ',' + $v.HostDk + ',' + $v.HostLocal + ',' + $v.HostInternal)
-        $script:CheckRuns.Add([pscustomobject]@{ Id = 'baseline'; Name = 'Baseline inventory'; Phase = 'Fast'; Outcome = 'Completed'; Duration = '00:00:01'; Seconds = 1; Message = '' })
-        $script:RedRows = $script:Results.ToArray()
-        $script:RedObject = [ordered]@{
-            Schema = 'IPU-Assessment/1'; ComputerName = $computer; Mode = 'Pre'; Overall = 'WARNING'
-            Facts = [ordered]@{ DomainRole = 'Member server'; ComputerObjectOu = ('OU=' + $v.Ou + ',DC=' + $label + ',DC=corp,DC=test'); KmsHost = $v.KmsHost }
-            Results = $script:RedRows; CheckRuns = $script:CheckRuns.ToArray()
-            Snapshot = [ordered]@{ IPv4 = @($v.IPv4); Dns = @($v.IPv4Gateway); Shares = @($v.Share); Gpos = @($v.Gpo); Groups = @($nb + '\Patch Ring 2'); Ou = ('OU=' + $v.Ou + ',DC=' + $label + ',DC=corp,DC=test')
-                Adapters = @([pscustomobject]@{ Name = 'Ethernet0'; Mac = $v.Mac; IPv4 = @($v.IPv4); IPv6 = @($v.IPv6); Gateway = @($v.IPv4Gateway); Dns = @($v.IPv4Gateway); Suffix = $fqdn }) }
-        }
-        $script:RedHtml = New-IPUReportHtml -Results $script:RedRows -CheckRuns $script:CheckRuns.ToArray() -OverallStatus 'WARNING' -CompletedTime (Get-Date)
-        function Get-Survivor([string]$Text) {
-            @($script:RedValues.Keys | Where-Object { $Text.IndexOf([string]$script:RedValues[$_], [StringComparison]::OrdinalIgnoreCase) -ge 0 } | ForEach-Object { $_ + '=' + $script:RedValues[$_] })
-        }
-    }
-    AfterAll { $script:ComputerName = $script:RedSavedComputer; $script:Data = @{} }
-
-    It 'the input really contains every value (the test is not empty)' {
-        $plain = ($script:RedObject | ConvertTo-Json -Depth 8) + $script:RedHtml
-        @($script:RedValues.Keys | Where-Object { $plain.IndexOf([string]$script:RedValues[$_], [StringComparison]::OrdinalIgnoreCase) -lt 0 }) | Should -BeNullOrEmpty
-    }
-    It 'live run, JSON: no input value survives' {
-        $ctx = New-RedactionContext $script:RedValues.Computer $script:RedValues.Domain
-        foreach ($k in @($script:Data.RedactLiterals.Keys)) { $ctx.Literals[$k] = $script:Data.RedactLiterals[$k] }
-        $json = (Protect-ReportObject $script:RedObject $ctx) | ConvertTo-Json -Depth 8
-        Get-Survivor $json | Should -BeNullOrEmpty -Because ('seed ' + $script:RedSeed)
-    }
-    It 'live run, HTML: no input value survives' {
-        $ctx = New-RedactionContext $script:RedValues.Computer $script:RedValues.Domain
-        foreach ($k in @($script:Data.RedactLiterals.Keys)) { $ctx.Literals[$k] = $script:Data.RedactLiterals[$k] }
-        Get-Survivor (Protect-ReportText $script:RedHtml $ctx) | Should -BeNullOrEmpty -Because ('seed ' + $script:RedSeed)
-    }
-    It '-RedactExisting, JSON and HTML: no input value survives (names recovered from the rows)' {
-        $dir = Join-Path $TestDrive 'worst-case'
-        New-Item -ItemType Directory -Path $dir | Out-Null
-        $base = Join-Path $dir ($script:RedValues.Computer + '-IPU-Assessment')
-        [IO.File]::WriteAllText($base + '.json', ($script:RedObject | ConvertTo-Json -Depth 8))
-        [IO.File]::WriteAllText($base + '.html', $script:RedHtml)
-        Invoke-RedactExisting $dir | Should -Be 0
-        $out = @(Get-ChildItem -LiteralPath $dir -Filter 'REDACTED-*')
-        $out.Count | Should -Be 2
-        foreach ($f in $out) {
-            Get-Survivor ([IO.File]::ReadAllText($f.FullName)) | Should -BeNullOrEmpty -Because ($f.Extension + ', seed ' + $script:RedSeed)
-            $f.Name | Should -Not -Match ([regex]::Escape($script:RedValues.Computer))
-        }
-    }
-    It 'fails when a value is left in (the check itself works)' {
-        Get-Survivor ('text with ' + $script:RedValues.Share + ' inside') | Should -Be @('Share=' + $script:RedValues.Share)
-    }
-}
-
-Describe 'Print servers (#148)' {
-    It 'port kind: <Desc> / <Monitor> / <Protocol> -> <Kind>' -TestCases @(
-        @{ Desc = 'Standard TCP/IP Port'; Monitor = 'TCPMON.DLL'; Protocol = '1'; Kind = 'Standard TCP/IP (RAW)' }
-        @{ Desc = 'Standard TCP/IP Port'; Monitor = 'TCPMON.DLL'; Protocol = '2'; Kind = 'Standard TCP/IP (LPR protocol)' }
-        @{ Desc = 'LPR Port'; Monitor = 'LPR Port'; Protocol = ''; Kind = 'LPR port monitor' }
-        @{ Desc = 'WSD Port'; Monitor = 'WSD Port'; Protocol = ''; Kind = 'WSD' }
-        @{ Desc = 'Local Port'; Monitor = 'Local Port'; Protocol = ''; Kind = 'Local' }
-        @{ Desc = 'Virtual printer port for USB'; Monitor = 'USB Monitor'; Protocol = ''; Kind = 'USB' }
-        @{ Desc = 'Example Secure Port'; Monitor = 'Example Port Monitor'; Protocol = ''; Kind = 'Other: Example Secure Port' }
-    ) {
-        Get-PrinterPortKind $Desc $Monitor $Protocol | Should -Be $Kind
-    }
-    It 'backup space: 1.5 x the driver store + 1 GB, at the boundary' {
-        $need = [long](1.5 * 2GB) + [long]1GB
-        (Get-PrintBackupSpaceDecision ([long]2GB) $need).Proceed | Should -BeTrue
-        (Get-PrintBackupSpaceDecision ([long]2GB) ($need - 1)).Proceed | Should -BeFalse
-        (Get-PrintBackupSpaceDecision ([long]2GB) $need).RequiredBytes | Should -Be $need
-        (Get-PrintBackupSpaceDecision ([long]0) ([long]1GB)).Proceed | Should -BeTrue
-        (Get-PrintBackupSpaceDecision ([long]0) ([long]1GB - 1)).Proceed | Should -BeFalse
-    }
-    It 'third-party port monitors and print processors are WARNINGs; Microsoft ones are not' {
-        $items = @(
-            [pscustomobject]@{ Type = 'PortMonitor'; Name = 'Local Port'; Driver = 'localspl.dll'; Company = 'Microsoft Corporation' }
-            [pscustomobject]@{ Type = 'PortMonitor'; Name = 'Example Port Monitor'; Driver = 'exmon.dll'; Company = 'Example Inc' }
-            [pscustomobject]@{ Type = 'PrintProcessor'; Name = 'exproc'; Driver = 'exproc.dll'; Company = '' }
-        )
-        $rows = @(Get-PrintComponentDecision $items 'Windows Server 2025')
-        ($rows | ForEach-Object { $_.Status + ' ' + $_.Item }) -join '; ' | Should -Be 'WARNING Port monitor: Example Port Monitor; WARNING Print processor: exproc'
-        $rows[1].Details | Should -Match 'unknown'
-        $ok = @(Get-PrintComponentDecision @($items[0]) 'Windows Server 2025')
-        $ok[0].Status | Should -Be 'OK'
-    }
-    It 'third-party drivers: WARNING, with the Windows Update note only for 2025' {
-        $drivers = @(
-            [pscustomobject]@{ Name = 'Example PCL6'; Environment = 'Windows x64'; Major = '3'; Manufacturer = 'Example Inc' }
-            [pscustomobject]@{ Name = 'Microsoft IPP Class Driver'; Environment = 'Windows x64'; Major = '4'; Manufacturer = 'Microsoft' }
-            [pscustomobject]@{ Name = 'Microsoft Print To PDF'; Environment = 'Windows x64'; Major = '4'; Manufacturer = 'Microsoft' }
-        )
-        $r = @(Get-PrinterDriverDecision $drivers 'Windows Server 2025' '2025')
-        $r[0].Status | Should -Be 'WARNING'
-        $r[0].Value | Should -Be 'Third-party=1 of 2 (x64)'
-        $r[0].Details | Should -Be 'Example PCL6 (v3, Example Inc)'
-        $r[0].Recommendation | Should -Match 'Windows Update'
-        (@(Get-PrinterDriverDecision $drivers 'Windows Server 2022' '2022'))[0].Recommendation | Should -Not -Match 'Windows Update'
-        (@(Get-PrinterDriverDecision @($drivers[1]) 'Windows Server 2025' '2025'))[0].Status | Should -Be 'OK'
-    }
-    It 'a printer with another driver after the upgrade is named' {
-        $before = @([pscustomobject]@{ Printer = 'P1'; Driver = 'Example PCL6' }, [pscustomobject]@{ Printer = 'P2'; Driver = 'Example PS' })
-        $after = @([pscustomobject]@{ Printer = 'P1'; Driver = 'Microsoft IPP Class Driver' }, [pscustomobject]@{ Printer = 'P2'; Driver = 'Example PS' })
-        $c = Compare-PrinterDriver $before $after
-        @($c) | Should -Be @('P1: Example PCL6 -> Microsoft IPP Class Driver')
-    }
-    It 'the post-upgrade comparison reports missing printers and ports (ACTION) and changed drivers (WARNING)' {
-        $before = [pscustomobject]@{ Printers = @('P1', 'P2'); PrinterPorts = @('IP_10.20.40.11', 'IP_10.20.40.12'); PrinterDrivers = @([pscustomobject]@{ Printer = 'P1'; Driver = 'Example PCL6' }) }
-        $after = [pscustomobject]@{ Printers = @('P1'); PrinterPorts = @('IP_10.20.40.11'); PrinterDrivers = @([pscustomobject]@{ Printer = 'P1'; Driver = 'Microsoft IPP Class Driver' }) }
-        $d = Compare-IPUSnapshot $before $after
-        (@($d | Where-Object { $_.Item -eq 'Printers missing after upgrade' }))[0].Status | Should -Be 'ACTION'
-        (@($d | Where-Object { $_.Item -eq 'Printers missing after upgrade' }))[0].Details | Should -Be 'P2'
-        (@($d | Where-Object { $_.Item -eq 'Printer ports missing after upgrade' }))[0].Status | Should -Be 'ACTION'
-        (@($d | Where-Object { $_.Item -eq 'Printer drivers changed' }))[0].Status | Should -Be 'WARNING'
-    }
-    It 'the export command for a manual run' {
-        Get-PrintBackupCommand 'E:\Export\' 'SRV01' | Should -Be '%windir%\System32\spool\tools\PrintBrm.exe -B -F E:\Export\SRV01-printers.printerExport'
-    }
-    It 'reads printers from CIM when the PrintManagement module is missing' {
-        Mock Test-CommandAvailable { $false }
-        Mock Get-CimRequired { @([pscustomobject]@{ Name = 'P1'; ShareName = 'P1S'; Shared = $true; Published = $false; DriverName = 'Example PCL6'; PortName = 'IP_10.20.40.11' }) } -ParameterFilter { $Class -eq 'Win32_Printer' }
-        Mock Get-CimSafe { @([pscustomobject]@{ Name = 'IP_10.20.40.11'; HostAddress = '10.20.40.11'; PortNumber = 9100; Protocol = 1; Queue = '' }) } -ParameterFilter { $Class -eq 'Win32_TCPIPPrinterPort' }
-        Mock Get-CimSafe { @([pscustomobject]@{ Name = 'Example PCL6,3,Windows x64'; SupportedPlatform = 'Windows x64'; Version = 3 }) } -ParameterFilter { $Class -eq 'Win32_PrinterDriver' }
-        $inv = Get-PrinterInventory
-        $inv.Printers[0].ShareName | Should -Be 'P1S'
-        $inv.Ports[0].Address | Should -Be '10.20.40.11'
-        $inv.Drivers[0].Name | Should -Be 'Example PCL6'
-        $inv.Drivers[0].Major | Should -Be '3'
-        $inv.Drivers[0].Environment | Should -Be 'Windows x64'
-    }
-    It 'RedactExisting recovers printer, share and port names and port host names' {
-        $rows = @(
-            [pscustomobject]@{ Area = 'PRINTING'; Item = 'Printer: Floor2-Color'; Value = 'Driver=Example PCL6; Port=IP_10.20.40.11'; Details = @('Share=Floor2C', 'Published in AD=True') }
-            [pscustomobject]@{ Area = 'PRINTING'; Item = 'Printer: Local-Only'; Value = 'Driver=Example PCL6; Port=LPT1:'; Details = @('Share=(not shared)', 'Published in AD=False') }
-            [pscustomobject]@{ Area = 'PRINTING'; Item = 'Port: lpr-label'; Value = 'LPR port monitor'; Details = @('Address=labelhost.corp.example.test', 'Queue=labels') }
-            [pscustomobject]@{ Area = 'PRINTING'; Item = 'Port: IP_10.20.40.11'; Value = 'Standard TCP/IP (RAW)'; Details = @('Address=10.20.40.11:9100') }
-        )
-        $l = Get-RedactionLiteralFromResult $rows
-        (@($l | ForEach-Object { $_.Kind + '=' + $_.Value }) -join '; ') | Should -Be 'NAME=Floor2-Color; NAME=Floor2C; NAME=Local-Only; NAME=lpr-label; HOST=labelhost.corp.example.test; NAME=IP_10.20.40.11'
-    }
-}
-
-Describe 'Read-only system helpers (#127: every function runs in a test)' {
-    It 'Get-PrerequisiteState never throws and reads this host' {
-        $s = Get-PrerequisiteState
-        $s.PowerShellVersion | Should -Be $PSVersionTable.PSVersion
-        $s.DotNetRelease | Should -BeOfType [int]
-        $s.IsElevated | Should -BeOfType [bool]
-        , @($s.MissingModules) | Should -BeOfType [object[]]
-    }
-    It 'Get-AdComputerDn returns a DN or throws with a message (never an empty name)' {
-        $r = try { Get-AdComputerDn } catch { 'threw: ' + $_.Exception.Message }
-        $r | Should -Match '^(CN=.+|threw: .+)'
-    }
-    It 'Get-GpoListRegistryEntry reads the GPO-List keys in numeric order' {
-        Mock Get-ChildItem { @([pscustomobject]@{ PSChildName = '10'; PSPath = 'k10' }, [pscustomobject]@{ PSChildName = '2'; PSPath = 'k2' }) }
-        Mock Get-ItemProperty { if ($LiteralPath -eq 'k2') { [pscustomobject]@{ DisplayName = 'Second'; GPOName = '{2}'; Link = 'Local' } } else { [pscustomobject]@{ DisplayName = 'Tenth'; GPOName = '{10}'; Link = 'Local' } } }
-        $list = Get-GpoListRegistryEntry
-        ($list | ForEach-Object { $_.DisplayName }) -join ',' | Should -Be 'Second,Tenth'
-    }
-    It 'Get-FileCompanyName: empty for a missing file, the company for a real one' {
-        Get-FileCompanyName '' | Should -Be ''
-        Get-FileCompanyName (Join-Path $TestDrive 'missing.dll') | Should -Be ''
-        $exe = (Get-Process -Id $PID).Path
-        Get-FileCompanyName $exe | Should -BeOfType [string]
-    }
-    It 'Get-PrintDriverStoreSize adds up every file under spool\drivers' {
-        Mock Get-ChildItem { @([pscustomobject]@{ Length = 1000 }, [pscustomobject]@{ Length = 2500 }) }
-        Get-PrintDriverStoreSize | Should -Be 3500
-    }
-    It 'Get-PrintMonitorInventory lists port monitors and print processors with their company' {
-        Mock Get-ChildItem { @([pscustomobject]@{ PSChildName = 'Local Port'; PSPath = 'mon1' }) } -ParameterFilter { $LiteralPath -like '*\Monitors' }
-        Mock Get-ChildItem { @([pscustomobject]@{ PSChildName = 'winprint'; PSPath = 'pp1' }) } -ParameterFilter { $LiteralPath -like '*Print Processors' }
-        Mock Get-ItemProperty { if ($LiteralPath -eq 'mon1') { [pscustomobject]@{ Driver = 'localspl.dll' } } else { [pscustomobject]@{ Driver = 'winprint.dll' } } }
-        Mock Get-FileCompanyName { 'Microsoft Corporation' }
-        $items = Get-PrintMonitorInventory
-        ($items | ForEach-Object { $_.Type + ':' + $_.Name + ':' + $_.Driver + ':' + $_.Company }) -join ';' | Should -Be 'PortMonitor:Local Port:localspl.dll:Microsoft Corporation;PrintProcessor:winprint:winprint.dll:Microsoft Corporation'
-    }
-}
-
 Describe 'Dated facts have a source and a recent check (#132)' {
     It 'every fact table is listed with a date and an https source' {
         foreach ($name in 'SupportedUpgradePaths', 'SqlSupportedOnTarget', 'ReleaseEndOfSupport', 'FeatureLifecycle', 'VMwareToolsMinimum', 'ExpectedWindowsChanges', 'WinReMinPartitionMB', 'DocLinks') {
@@ -3228,5 +2988,119 @@ Describe 'Read-only system helpers (#127: every function runs in a test)' {
         Mock Get-FileCompanyName { 'Microsoft Corporation' }
         $items = Get-PrintMonitorInventory
         ($items | ForEach-Object { $_.Type + ':' + $_.Name + ':' + $_.Driver + ':' + $_.Company }) -join ';' | Should -Be 'PortMonitor:Local Port:localspl.dll:Microsoft Corporation;PrintProcessor:winprint:winprint.dll:Microsoft Corporation'
+    }
+}
+
+Describe 'Redaction covers every collected kind (#124)' {
+    # A synthetic worst case: every kind of name and address the collector
+    # reports, with random values (a new seed per run, shown on failure), run
+    # through the live JSON path, the live HTML path and -RedactExisting.
+    # The test fails when any input value survives in any of them.
+    BeforeAll {
+        $script:RedSeed = Get-Random -Maximum 2147483647
+        $rng = New-Object System.Random $script:RedSeed
+        function New-Word([int]$Length = 8) { -join (1..$Length | ForEach-Object { [char](97 + $rng.Next(26)) }) }
+        function New-Octet { 1 + $rng.Next(253) }
+        function New-Hex([int]$Length) { -join (1..$Length | ForEach-Object { '0123456789abcdef'[$rng.Next(16)] }) }
+        $label = New-Word 7
+        $nb = $label.ToUpperInvariant()
+        $fqdn = $label + '.corp.test'
+        $computer = 'SRV' + (New-Word 6).ToUpperInvariant()
+        $v = [ordered]@{
+            Computer = $computer; Domain = $fqdn; NetBios = $nb
+            TaskAccount = 'adm-' + (New-Word); ServiceDomainAccount = 'svc_' + (New-Word); ServiceLocalAccount = 'loc' + (New-Word)
+            WordAccount = 'Installer'                                  # the #114 shape: an account that is an ordinary word
+            UpnUser = 'u' + (New-Word); Gpo = 'GPO ' + (New-Word) + ' Baseline'; WmiFilter = 'Filter ' + (New-Word)
+            Share = 'Share' + (New-Word); ShareDescription = 'Team ' + (New-Word) + ' data'
+            Cluster = 'CL' + (New-Word 5).ToUpperInvariant(); Node = 'ND' + (New-Word 5).ToUpperInvariant()
+            KmsHost = 'kms' + (New-Word 5); Ou = 'OU' + (New-Word); Org = 'Org ' + (New-Word)
+            HostCom = (New-Word) + '.com'; HostDk = (New-Word) + '.dk'; HostLocal = (New-Word) + '.local'; HostInternal = (New-Word) + '.internal'; HostInDomain = (New-Word) + '.' + $fqdn
+            IPv4 = '10.' + (New-Octet) + '.' + (New-Octet) + '.' + (New-Octet); IPv4Gateway = '172.16.' + (New-Octet) + '.' + (New-Octet)
+            IPv6 = '2001:db8:' + (New-Hex 4) + '::' + (New-Hex 3); LinkLocal = 'fe80::' + (New-Hex 4) + ':' + (New-Hex 4)
+            Mac = ((1..6 | ForEach-Object { New-Hex 2 }) -join '-').ToUpperInvariant()
+            Sid = 'S-1-5-21-' + $rng.Next(100000, 999999) + '-' + $rng.Next(100000, 999999) + '-' + $rng.Next(100000, 999999) + '-1105'
+            Thumbprint = (New-Hex 40).ToUpperInvariant()
+            Printer = 'PR-' + (New-Word); PrinterShare = 'PS' + (New-Word); PrinterPort = 'port_' + (New-Word); PrinterHost = 'prn' + (New-Word 5) + '.' + $fqdn
+        }
+        $script:RedValues = $v
+        $script:RedSavedComputer = $script:ComputerName
+        $script:ComputerName = $computer
+        $script:Data = @{}
+        # What the collector registers while it runs (the Add-RedactionLiteral call sites).
+        Add-RedactionLiteral ($nb + '\' + $v.TaskAccount) 'ACCOUNT'
+        Add-RedactionLiteral ($nb + '\' + $v.ServiceDomainAccount) 'ACCOUNT'
+        Add-RedactionLiteral ('.\' + $v.ServiceLocalAccount) 'ACCOUNT'
+        Add-RedactionLiteral ($nb + '\' + $v.WordAccount) 'ACCOUNT'
+        Add-RedactionLiteral $v.Gpo 'GPO'; Add-RedactionLiteral $v.WmiFilter 'NAME'
+        Add-RedactionLiteral $v.Share 'NAME'; Add-RedactionLiteral $v.ShareDescription 'NAME'
+        Add-RedactionLiteral $v.Cluster 'HOST'; Add-RedactionLiteral $v.Node 'HOST'
+        Add-RedactionLiteral ($v.KmsHost + '.' + $fqdn) 'HOST'; Add-RedactionLiteral $v.KmsHost 'HOST'
+        Add-RedactionLiteral $v.Printer 'NAME'; Add-RedactionLiteral $v.PrinterShare 'NAME'; Add-RedactionLiteral $v.PrinterPort 'NAME'; Add-RedactionLiteral $v.PrinterHost 'HOST'
+        $script:Results.Clear(); $script:CheckRuns.Clear()
+        Add-Result 'ACCESS' 'DomainMembership' 'INFO' ('Domain=' + $fqdn) ('NetBIOS=' + $nb)
+        Add-Result 'ACCESS' 'ComputerObjectOu' 'INFO' ('CN=' + $computer + ',OU=' + $v.Ou + ',OU=Servers,DC=' + $label + ',DC=corp,DC=test')
+        Add-Result 'TASKS' '\Ops\Export' 'INFO' ('RunAs=' + $nb + '\' + $v.TaskAccount)
+        Add-Result 'SERVICES' 'AppSvc' 'INFO' 'AppSvc' ('State=Running | StartMode=Auto | LogOnAs=' + $nb + '\' + $v.ServiceDomainAccount)
+        Add-Result 'SERVICES' 'LocalSvc' 'INFO' 'LocalSvc' ('State=Running | StartMode=Auto | LogOnAs=.\' + $v.ServiceLocalAccount)
+        Add-Result 'SERVICES' 'Setup helper' 'INFO' 'Setup helper' ('State=Running | StartMode=Auto | LogOnAs=' + $nb + '\' + $v.WordAccount)
+        Add-Result 'SERVICES' 'UpnSvc' 'INFO' 'UpnSvc' ('State=Running | StartMode=Auto | LogOnAs=' + $v.UpnUser + '@' + $fqdn)
+        Add-Result 'GROUP_POLICY' ('GPO: ' + $v.Gpo) 'WARNING' 'Applied' @(('WMI filter: ' + $v.WmiFilter), ('Linked at ' + $fqdn + '/Servers/' + $v.Ou))
+        Add-Result 'GROUP_POLICY' 'ADGroup' 'INFO' ($nb + '\Patch Ring 2') ('SID=' + $v.Sid)
+        Add-Result 'FILE_SHARES' ('Share: ' + $v.Share) 'INFO' ('D:\' + $v.Share) @(('Path=D:\' + $v.Share), ('Description=' + $v.ShareDescription), ('Share permissions: ' + $nb + '\' + $v.TaskAccount + ': Full'))
+        Add-Result 'CLUSTER' 'ClusterMembership' 'INFO' ('Cluster=' + $v.Cluster)
+        Add-Result 'CLUSTER' ('Node: ' + $v.Node) 'INFO' 'State=Up'
+        Add-Result 'LICENSING' 'WindowsActivation' 'OK' 'Licensed (KMS)' ('KMS host: ' + $v.KmsHost + '.' + $fqdn + ':1688 (found via DNS)')
+        Add-Result 'NETWORK' 'Ethernet0' 'INFO' ('IPv4=' + $v.IPv4 + ' / 255.255.255.0') @(('Gateway=' + $v.IPv4Gateway), ('DNS=' + $v.IPv4Gateway), ('MAC=' + $v.Mac), ('IPv6=' + $v.IPv6 + ',' + $v.LinkLocal), ('DNS suffix=' + $fqdn))
+        Add-Result 'PKI' 'Certificate' 'INFO' ('CN=' + $v.HostInDomain + ', O=' + $v.Org) ('Thumbprint=' + $v.Thumbprint)
+        Add-Result 'PRINTING' ('Printer: ' + $v.Printer) 'INFO' ('Driver=Example PCL6; Port=' + $v.PrinterPort) @(('Share=' + $v.PrinterShare), 'Published in AD=True')
+        Add-Result 'PRINTING' ('Port: ' + $v.PrinterPort) 'WARNING' 'LPR port monitor' @(('Address=' + $v.PrinterHost), 'Queue=labels')
+        Add-Result 'NETWORK_DEPENDENCY' 'Hosts line 1' 'INFO' ('Address=' + $v.IPv4) ('Names=' + $v.HostCom + ',' + $v.HostDk + ',' + $v.HostLocal + ',' + $v.HostInternal)
+        $script:CheckRuns.Add([pscustomobject]@{ Id = 'baseline'; Name = 'Baseline inventory'; Phase = 'Fast'; Outcome = 'Completed'; Duration = '00:00:01'; Seconds = 1; Message = '' })
+        $script:RedRows = $script:Results.ToArray()
+        $script:RedObject = [ordered]@{
+            Schema = 'IPU-Assessment/1'; ComputerName = $computer; Mode = 'Pre'; Overall = 'WARNING'
+            Facts = [ordered]@{ DomainRole = 'Member server'; ComputerObjectOu = ('OU=' + $v.Ou + ',DC=' + $label + ',DC=corp,DC=test'); KmsHost = $v.KmsHost }
+            Results = $script:RedRows; CheckRuns = $script:CheckRuns.ToArray()
+            Snapshot = [ordered]@{ IPv4 = @($v.IPv4); Dns = @($v.IPv4Gateway); Shares = @($v.Share); Gpos = @($v.Gpo); Groups = @($nb + '\Patch Ring 2'); Ou = ('OU=' + $v.Ou + ',DC=' + $label + ',DC=corp,DC=test')
+                Adapters = @([pscustomobject]@{ Name = 'Ethernet0'; Mac = $v.Mac; IPv4 = @($v.IPv4); IPv6 = @($v.IPv6); Gateway = @($v.IPv4Gateway); Dns = @($v.IPv4Gateway); Suffix = $fqdn }) }
+        }
+        $script:RedHtml = New-IPUReportHtml -Results $script:RedRows -CheckRuns $script:CheckRuns.ToArray() -OverallStatus 'WARNING' -CompletedTime (Get-Date)
+        function Get-Survivor([string]$Text) {
+            @($script:RedValues.Keys | Where-Object { $Text.IndexOf([string]$script:RedValues[$_], [StringComparison]::OrdinalIgnoreCase) -ge 0 } | ForEach-Object { $_ + '=' + $script:RedValues[$_] })
+        }
+    }
+    AfterAll { $script:ComputerName = $script:RedSavedComputer; $script:Data = @{} }
+
+    It 'the input really contains every value (the test is not empty)' {
+        $plain = ($script:RedObject | ConvertTo-Json -Depth 8) + $script:RedHtml
+        @($script:RedValues.Keys | Where-Object { $plain.IndexOf([string]$script:RedValues[$_], [StringComparison]::OrdinalIgnoreCase) -lt 0 }) | Should -BeNullOrEmpty
+    }
+    It 'live run, JSON: no input value survives' {
+        $ctx = New-RedactionContext $script:RedValues.Computer $script:RedValues.Domain
+        foreach ($k in @($script:Data.RedactLiterals.Keys)) { $ctx.Literals[$k] = $script:Data.RedactLiterals[$k] }
+        $json = (Protect-ReportObject $script:RedObject $ctx) | ConvertTo-Json -Depth 8
+        Get-Survivor $json | Should -BeNullOrEmpty -Because ('seed ' + $script:RedSeed)
+    }
+    It 'live run, HTML: no input value survives' {
+        $ctx = New-RedactionContext $script:RedValues.Computer $script:RedValues.Domain
+        foreach ($k in @($script:Data.RedactLiterals.Keys)) { $ctx.Literals[$k] = $script:Data.RedactLiterals[$k] }
+        Get-Survivor (Protect-ReportText $script:RedHtml $ctx) | Should -BeNullOrEmpty -Because ('seed ' + $script:RedSeed)
+    }
+    It '-RedactExisting, JSON and HTML: no input value survives (names recovered from the rows)' {
+        $dir = Join-Path $TestDrive 'worst-case'
+        New-Item -ItemType Directory -Path $dir | Out-Null
+        $base = Join-Path $dir ($script:RedValues.Computer + '-IPU-Assessment')
+        [IO.File]::WriteAllText($base + '.json', ($script:RedObject | ConvertTo-Json -Depth 8))
+        [IO.File]::WriteAllText($base + '.html', $script:RedHtml)
+        Invoke-RedactExisting $dir | Should -Be 0
+        $out = @(Get-ChildItem -LiteralPath $dir -Filter 'REDACTED-*')
+        $out.Count | Should -Be 2
+        foreach ($f in $out) {
+            Get-Survivor ([IO.File]::ReadAllText($f.FullName)) | Should -BeNullOrEmpty -Because ($f.Extension + ', seed ' + $script:RedSeed)
+            $f.Name | Should -Not -Match ([regex]::Escape($script:RedValues.Computer))
+        }
+    }
+    It 'fails when a value is left in (the check itself works)' {
+        Get-Survivor ('text with ' + $script:RedValues.Share + ' inside') | Should -Be @('Share=' + $script:RedValues.Share)
     }
 }
