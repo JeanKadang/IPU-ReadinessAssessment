@@ -1915,6 +1915,13 @@ function New-RedactionContext {
 
 # Names that never identify a site: built-in accounts and groups (#100).
 $script:RedactionWellKnownNames = '^(SYSTEM|LocalSystem|LOCAL SERVICE|LocalService|NETWORK SERVICE|NetworkService|INTERACTIVE|Users|Administrators|Administrator|Everyone|Guest|Authenticated Users|Default Domain Policy|Default Domain Controllers Policy|Local Group Policy)$'
+# Domain-relative RIDs of built-in domain accounts and groups (#156):
+# Administrator, Guest, krbtgt, Domain Admins/Users/Guests/Computers/
+# Controllers, Cert Publishers, Schema/Enterprise Admins, Group Policy
+# Creator Owners, Read-only DCs, Cloneable DCs, Protected Users, Key Admins,
+# Enterprise Key Admins, RAS and IAS Servers, Allowed/Denied RODC Password
+# Replication Group.
+$script:RedactionWellKnownRids = @(500,501,502,512,513,514,515,516,517,518,519,520,521,522,525,526,527,553,571,572)
 # Public documentation and vendor domains kept in redacted reports (#100).
 $script:RedactionKeepDomains = @('microsoft.com','windows.com','windowsupdate.com','trendmicro.com','broadcom.com','vmware.com','asp.net','microsoft.net','oracle.com','sap.com','citrix.com','apache.org','mysql.com','postgresql.org','ibm.com','veeam.com','commvault.com','crowdstrike.com','sentinelone.com','sophos.com','eset.com','kaspersky.com','trellix.com','mcafee.com','cisco.com','broadcom.net','tenable.com','nxlog.co','opentext.com')
 
@@ -1944,6 +1951,18 @@ function Get-RedactionPlaceholder {
         $Context.Map[$key] = $Kind + '-' + $n
     }
     return $Context.Map[$key]
+}
+
+function Get-RedactionDomainKey {
+    # One domain, one placeholder (#156): "CORP", "corp.example.test" and
+    # "CORP.LOCALDOM" all map to the run's domain when their first label is
+    # the domain's first label. Pure.
+    param([hashtable]$Context, [string]$Name)
+    if ($Context.DomainFqdn) {
+        $first = ($Context.DomainFqdn -split '\.')[0]
+        if ($Name -ieq $Context.DomainFqdn -or ($Name -split '\.')[0] -ieq $first) { return $Context.DomainFqdn }
+    }
+    return $Name
 }
 
 function Protect-ReportText {
@@ -1987,6 +2006,20 @@ function Protect-ReportText {
     }, $ic)
     # MAC addresses
     $t = [regex]::Replace($t, '\b([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b', { param($m) Get-RedactionPlaceholder $ctx 'MAC' $m.Value })
+    # Resolved user-rights entries "DOMAIN\Name [S-1-5-21-...]" (#156). The
+    # name can contain spaces and the domain can be a full DNS name, so the
+    # word rules below miss them. Well-known domain RIDs (Domain Admins,
+    # Group Policy Creator Owners, ...) keep their name; the domain part is
+    # always replaced.
+    $t = [regex]::Replace($t, '(?<![^\s|>(,;])([^\s|<>\[\]\\(,;][^|<>\[\]\r\n\\]*?)\\([^|<>\[\]\r\n\\]+?) \[(S-1-5-21-\d+-\d+-\d+-(\d+))\]', {
+        param($m)
+        $d = $m.Groups[1].Value
+        if ($d -match '^(NT AUTHORITY|BUILTIN|NT SERVICE)$') { return $m.Value }
+        $domKind = 'DOMAIN'; if ($d -ieq $ctx.ComputerName) { $domKind = 'HOST' }
+        $rid = [int64]$m.Groups[4].Value
+        if ($script:RedactionWellKnownRids -contains $rid) { return (Get-RedactionPlaceholder $ctx $domKind (Get-RedactionDomainKey $ctx $d)) + '\' + $m.Groups[2].Value + ' [' + $m.Groups[3].Value + ']' }
+        return (Get-RedactionPlaceholder $ctx 'ACCOUNT' ($d + '\' + $m.Groups[2].Value)) + ' [' + $m.Groups[3].Value + ']'
+    })
     # Domain SIDs (well-known S-1-5-32-*, S-1-5-18 etc. are kept)
     $t = [regex]::Replace($t, '\bS-1-5-21(-\d+){3,4}\b', { param($m) Get-RedactionPlaceholder $ctx 'SID' $m.Value })
     # DOMAIN\user. Not after \ : or / (path segments). The domain part must be
@@ -1995,6 +2028,8 @@ function Protect-ReportText {
     $t = [regex]::Replace($t, '(?<![\\:/\w.-])([A-Za-z0-9][A-Za-z0-9-]{1,14})\\([A-Za-z0-9._$-]{1,64})', {
         param($m)
         $d = $m.Groups[1].Value
+        # Already handled by the user-rights rule (#156): a well-known name.
+        if ($d -match '^(DOMAIN|HOST)-\d+$') { return $m.Value }
         if ($m.Groups[2].Value -match '^(ACCOUNT|HOST|DOMAIN|NAME|GPO)-\d+$') { return (Get-RedactionPlaceholder $ctx 'DOMAIN' $d) + '\' + $m.Groups[2].Value }
         $known = @($ctx.NetBios | Where-Object { $_ -and $_ -ieq $d }).Count -gt 0
         $caps = ($d -cmatch '^[A-Z0-9-]+$') -and ($d -notmatch $skip) -and ($d -match '[A-Z]')
@@ -2007,7 +2042,9 @@ function Protect-ReportText {
     if ($ctx.DomainFqdn) {
         $dom = [regex]::Escape($ctx.DomainFqdn)
         $t = [regex]::Replace($t, '\b[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.' + $dom + '\b', { param($m) Get-RedactionPlaceholder $ctx 'HOST' $m.Value }, $ic)
-        $t = [regex]::Replace($t, '\b' + $dom + '\b', { param($m) Get-RedactionPlaceholder $ctx 'DOMAIN' $m.Value }, $ic)
+        # With any DNS suffix that follows (#156), so "CORP.LOCALDOM" is
+        # replaced as a whole when only "corp" is known.
+        $t = [regex]::Replace($t, '\b' + $dom + '(?:\.[A-Za-z0-9-]+)*\b', { param($m) Get-RedactionPlaceholder $ctx 'DOMAIN' (Get-RedactionDomainKey $ctx $m.Value) }, $ic)
     }
     # Any other host name with a public or internal top-level domain (#100),
     # except documentation and vendor domains used in report links.
@@ -2021,7 +2058,14 @@ function Protect-ReportText {
     foreach ($n in @($ctx.NetBios)) {
         if (-not $n) { continue }
         $kind = 'DOMAIN'; if ($n -ieq $ctx.ComputerName) { $kind = 'HOST' }
-        $t = [regex]::Replace($t, '(?<![\w-])' + [regex]::Escape($n) + '(?![\w])', { param($m) Get-RedactionPlaceholder $ctx $kind $m.Value }, $ic)
+        # A domain name takes its DNS suffix with it ("CORP.LOCALDOM" as a
+        # whole), so no part of the real name is left behind (#156).
+        $tail = ''; if ($kind -eq 'DOMAIN') { $tail = '(?:\.[A-Za-z0-9-]+)*' }
+        $t = [regex]::Replace($t, '(?<![\w-])' + [regex]::Escape($n) + $tail + '(?![\w])', {
+            param($m)
+            if ($kind -eq 'HOST') { return Get-RedactionPlaceholder $ctx 'HOST' $m.Value }
+            return Get-RedactionPlaceholder $ctx 'DOMAIN' (Get-RedactionDomainKey $ctx $m.Value)
+        }, $ic)
     }
     # Group Policy link paths: every OU after the (already replaced) domain (#100)
     $t = [regex]::Replace($t, '(?<!WinNT://)\b(DOMAIN-\d+|HOST-\d+)((?:/[^/|;<>"\[\]\r\n]*[^/|;<>"\[\]\r\n\s])+)', {

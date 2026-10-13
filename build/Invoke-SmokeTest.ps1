@@ -174,6 +174,18 @@ try {
             }
         }
         Assert-That ($leaked.Count -eq 0) ('Redacted output has none of the runner''s ' + $accounts.Count + ' service and task account names' + $(if ($leaked.Count) { ' (leaked ' + $leaked.Count + ')' } else { '' }))
+        # User-rights entries (#156): names behind a domain SID that is not a
+        # built-in account or group must not reach the redacted output.
+        $rightsNames = @()
+        if ($preJson) {
+            foreach ($r in @($preJson.Results | Where-Object { $_.Area -eq 'RDP' -and $_.Item -match '^Se.*Right$' })) {
+                foreach ($m in [regex]::Matches([string]$r.Value, '\\([^|\[\]\\]+?) \[S-1-5-21-\d+-\d+-\d+-(\d+)\]')) {
+                    if (@(500,501,502,512,513,514,515,516,517,518,519,520,521,522,525,526,527,553,571,572) -notcontains [int64]$m.Groups[2].Value) { $rightsNames += $m.Groups[1].Value.Trim() }
+                }
+            }
+        }
+        $rightsLeaked = @($rightsNames | Sort-Object -Unique | Where-Object { $n = $_; @($texts | Where-Object { $_.IndexOf($n, [StringComparison]::OrdinalIgnoreCase) -ge 0 }).Count -gt 0 })
+        Assert-That ($rightsLeaked.Count -eq 0) ('Redacted output has none of the ' + @($rightsNames | Sort-Object -Unique).Count + ' site-specific user-rights names' + $(if ($rightsLeaked.Count) { ' (leaked ' + $rightsLeaked.Count + ')' } else { '' }))
         $redObj = Test-ResultJson $redJson[0].FullName 'Pre'
         if ($redObj) { Assert-That ([bool]$redObj.Redacted) 'Redacted JSON has Redacted = true' }
     }

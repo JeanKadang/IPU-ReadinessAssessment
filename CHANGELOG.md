@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+- Redaction now replaces custom AD group and account names in the RDP user-rights rows (`DOMAIN\Name [SID]`, names with spaces and full DNS domain names), and a domain name together with any DNS suffix. Built-in domain groups such as Domain Admins keep their name. A live run had shown custom group names in a redacted report; the smoke test now checks user-rights names too (#156).
+
 ### Decisions
 - ADR 0002 supersedes ADR 0001: the source may be kept in parts that a build step joins into the single `.ps1` that SA runs, and CI tests the built file. Nothing changes for operators. Until the build step lands (#151) the script stays one file (#125).
 

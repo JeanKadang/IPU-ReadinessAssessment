@@ -2274,3 +2274,32 @@ Describe 'Target licensing per activation channel (#102)' {
     }
 }
 
+Describe 'Redaction of user-rights entries (#156)' {
+    BeforeAll {
+        $script:RightsIn = 'CORP.LOCALDOM\Group Policy Creator Owners [S-1-5-21-1111111111-2222222222-3333333333-520] | CORP.LOCALDOM\ACME-T0-Privileged Accounts-All [S-1-5-21-1111111111-2222222222-3333333333-11234] | CORP\Acme Server Admins [S-1-5-21-1111111111-2222222222-3333333333-11235] | BUILTIN\Administrators [S-1-5-32-544] | NT AUTHORITY\LOCAL SERVICE'
+    }
+    It 'replaces custom group names with spaces and a full domain name' {
+        $out = Protect-ReportText $script:RightsIn (New-RedactionContext 'SRV01' 'corp')
+        $out | Should -Not -Match 'ACME|Acme|Privileged|LOCALDOM|CORP'
+        $out | Should -Not -Match 'S-1-5-21'
+    }
+    It 'keeps built-in domain groups and local built-ins readable' {
+        $out = Protect-ReportText $script:RightsIn (New-RedactionContext 'SRV01' 'corp')
+        $out | Should -Match 'DOMAIN-\d+\\Group Policy Creator Owners \[SID-\d+\]'
+        $out | Should -Match 'BUILTIN\\Administrators \[S-1-5-32-544\]'
+        $out | Should -Match 'NT AUTHORITY\\LOCAL SERVICE'
+    }
+    It 'replaces a domain with an unknown DNS suffix as a whole' {
+        $out = Protect-ReportText 'The user "CORP.LOCALDOM\SRV01$" does not have RSoP data.' (New-RedactionContext 'SRV01' 'corp')
+        $out | Should -Be 'The user "DOMAIN-1\HOST-1$" does not have RSoP data.'
+    }
+    It 'gives the NetBIOS name, the DNS name and a suffixed form one placeholder' {
+        $ctx = New-RedactionContext 'SRV01' 'corp.example.test'
+        $out = Protect-ReportText 'Domain=corp.example.test | CORP\Domain Admins [S-1-5-21-1-2-3-512] | CORP.LOCALDOM\x' $ctx
+        @([regex]::Matches($out, 'DOMAIN-\d+') | ForEach-Object { $_.Value } | Sort-Object -Unique).Count | Should -Be 1
+    }
+    It 'treats a local account on this server as an account' {
+        $out = Protect-ReportText 'SRV01\localadmin [S-1-5-21-9-9-9-1001]' (New-RedactionContext 'SRV01' 'corp.example.test')
+        $out | Should -Match '^ACCOUNT-\d+ \[SID-\d+\]$'
+    }
+}
