@@ -517,6 +517,109 @@ function Compare-NetworkAdapter {
     return $rows
 }
 
+# Print servers (#148). Inbox virtual printers that every server has; they
+# are not print-server work and are left out of the inventory.
+$script:VirtualPrinterDrivers = '^(Microsoft Print To PDF|Microsoft XPS Document Writer( v4)?|Microsoft Shared Fax Driver|Send to Microsoft OneNote.*|Microsoft Software Printer Driver|Remote Desktop Easy Print)$'
+$script:PrinterDriverDocUrl = 'https://learn.microsoft.com/en-us/windows-hardware/drivers/print/end-of-servicing-plan-for-third-party-printer-drivers-on-windows'
+
+function Get-PrinterPortKind {
+    # Pure (#148): the kind of a printer port, from its description, its
+    # port monitor and (for Standard TCP/IP ports) the protocol.
+    param([string]$Description, [string]$Monitor, [string]$Protocol)
+    $t = $Description + ' ' + $Monitor
+    if ($t -match 'LPR Port|LPRMON') { return 'LPR port monitor' }
+    if ($t -match 'Standard TCP/IP|TCPMON') {
+        if ($Protocol -match '^(2|LPR)$') { return 'Standard TCP/IP (LPR protocol)' }
+        return 'Standard TCP/IP (RAW)'
+    }
+    if ($t -match 'WSD') { return 'WSD' }
+    if ($t -match 'USB') { return 'USB' }
+    if ($t -match 'Internet Port|IPP|inetpp') { return 'Internet (IPP)' }
+    if ($t -match 'Local Port|Local Monitor|localspl') { return 'Local' }
+    if ($Description) { return ('Other: ' + $Description) }
+    return 'Other'
+}
+
+function Get-PrintComponentDecision {
+    # Pure (#148): port monitors and print processors that are not from
+    # Microsoft. They load into the spooler and are a common cause of failed
+    # upgrades and of a spooler that crashes afterwards.
+    param($Items, [string]$TargetName)
+    $rows = @()
+    $make = { param($st,$item,$val,$det,$rec) [pscustomobject]@{ Status=$st; Item=$item; Value=$val; Details=$det; Recommendation=$rec } }
+    $third = @($Items | Where-Object { $_ -and [string]$_.Company -notmatch '^Microsoft' })
+    foreach ($i in $third) {
+        $label = $(if ($i.Type -eq 'PrintProcessor') { 'Print processor: ' } else { 'Port monitor: ' }) + $i.Name
+        $company = $(if ($i.Company) { [string]$i.Company } else { 'unknown (file not found or no version information)' })
+        $rows += (& $make 'WARNING' $label ('Driver=' + $i.Driver) ('Company=' + $company) ('Not from Microsoft. Get the vendor''s version for ' + $TargetName + ' and update it before the upgrade, or remove it after confirming no printer uses it. Third-party port monitors and print processors are a common cause of failed upgrades and spooler crashes afterwards.'))
+    }
+    if ($third.Count -eq 0) { $rows += (& $make 'OK' 'PrintComponents' 'Only Windows port monitors and print processors' ('Checked=' + @($Items | Where-Object { $_ }).Count) '') }
+    return $rows
+}
+
+function Get-PrinterDriverDecision {
+    # Pure (#148): the driver summary row. Third-party drivers need the
+    # vendor's confirmation for the target; Windows Server 2025 gets no new
+    # third-party printer drivers from Windows Update (installed ones keep
+    # working). Drivers only for 32-bit clients are named, not a problem.
+    param($Drivers, [string]$TargetName, [string]$TargetRelease)
+    $rows = @()
+    $make = { param($st,$item,$val,$det,$rec) [pscustomobject]@{ Status=$st; Item=$item; Value=$val; Details=$det; Recommendation=$rec } }
+    $all = @($Drivers | Where-Object { $_ -and $_.Name -and [string]$_.Name -notmatch $script:VirtualPrinterDrivers })
+    $x64 = @($all | Where-Object { [string]$_.Environment -match 'x64' })
+    $third = @($x64 | Where-Object { [string]$_.Manufacturer -notmatch '^Microsoft' -and [string]$_.Name -notmatch '^Microsoft ' })
+    $x64Names = @($x64 | ForEach-Object { [string]$_.Name })
+    $x86Only = @($all | Where-Object { [string]$_.Environment -match 'x86' -and $x64Names -notcontains [string]$_.Name } | ForEach-Object { [string]$_.Name } | Sort-Object -Unique)
+    $note = ''
+    if ($TargetRelease -eq '2025') { $note = ' From 15 January 2026 Microsoft no longer publishes new third-party printer drivers to Windows Update for Windows Server 2025; installed drivers keep working, so keep the vendor packages.' }
+    if ($third.Count -gt 0) {
+        $names = @($third | ForEach-Object { [string]$_.Name + ' (v' + $_.Major + $(if ($_.Manufacturer) { ', ' + $_.Manufacturer } else { '' }) + ')' } | Sort-Object -Unique)
+        $rows += (& $make 'WARNING' 'PrinterDrivers' ('Third-party=' + $third.Count + ' of ' + $x64.Count + ' (x64)') ($names -join ', ') ('Confirm with each vendor that the driver supports ' + $TargetName + ', and have the driver packages at hand in case the upgrade drops one.' + $note))
+    } else {
+        $rows += (& $make 'OK' 'PrinterDrivers' ('Windows drivers only (' + $x64.Count + ' x64)') '' '')
+    }
+    if ($x86Only.Count -gt 0) {
+        $rows += (& $make 'INFO' 'PrinterDriversX86Only' ('Count=' + $x86Only.Count) ($x86Only -join ', ') 'Drivers for 32-bit clients only (Point and Print). Not used by the server itself; check they are still needed.')
+    }
+    return $rows
+}
+
+function Get-PrintBackupSpaceDecision {
+    # Pure (#148): PrintBrm exports every driver package, so the export can
+    # be a few MB or several GB. It runs only when the drive has 1.5 times
+    # the size of spool\drivers plus 1 GB free.
+    param([long]$DriverBytes, [long]$FreeBytes)
+    $required = [long][math]::Ceiling($DriverBytes * 1.5) + [long]1GB
+    $gb = { param($b) [math]::Round(([double]$b / 1GB), 2) }
+    return [pscustomobject]@{
+        Proceed = ($FreeBytes -ge $required)
+        EstimateBytes = $DriverBytes
+        RequiredBytes = $required
+        FreeBytes = $FreeBytes
+        Text = ('Estimate ' + (& $gb $DriverBytes) + ' GB (spool\drivers), needs ' + (& $gb $required) + ' GB free, ' + (& $gb $FreeBytes) + ' GB free')
+    }
+}
+
+function Get-PrintBackupCommand {
+    # Pure (#148): the export command shown when the backup is not taken here.
+    param([string]$Folder = 'D:\PrintBackup', [string]$Computer = '%COMPUTERNAME%')
+    return ('%windir%\System32\spool\tools\PrintBrm.exe -B -F ' + $Folder.TrimEnd('\') + '\' + $Computer + '-printers.printerExport')
+}
+
+function Compare-PrinterDriver {
+    # Pure (#148): printers that still exist after the upgrade but use
+    # another driver. Lists of {Printer; Driver}.
+    param($Before, $After)
+    $now = @{}
+    foreach ($a in @($After | Where-Object { $_ -and $_.Printer })) { $now[[string]$a.Printer] = [string]$a.Driver }
+    $changed = @()
+    foreach ($b in @($Before | Where-Object { $_ -and $_.Printer })) {
+        $p = [string]$b.Printer
+        if ($now.ContainsKey($p) -and $now[$p] -ne [string]$b.Driver) { $changed += ($p + ': ' + $b.Driver + ' -> ' + $now[$p]) }
+    }
+    return ,$changed
+}
+
 function Compare-IPUSnapshot {
     # Pure: compares the pre-upgrade snapshot with the current one and returns
     # the differences an engineer must look at after the upgrade.
@@ -560,6 +663,8 @@ function Compare-IPUSnapshot {
         @{ Name='Windows features';  Prop='Features';     Status='WARNING'; Rec='Features removed by Setup. Confirm nothing depends on them.' },
         @{ Name='Scheduled tasks';   Prop='Tasks';        Status='WARNING'; Rec='Re-create missing tasks and confirm their run-as credentials.' },
         @{ Name='Applied GPOs';      Prop='Gpos';         Status='WARNING'; Rec='These GPOs applied before the upgrade and no longer do. Check their WMI filters (often a Windows version filter) and security filtering.' },
+        @{ Name='Printers';          Prop='Printers';     Status='ACTION';  Rec='These printers existed before the upgrade. Restore them from the PrintBrm backup (PrintBrm -R -F <file>) or re-create them, then print a test page and test from a client.' },
+        @{ Name='Printer ports';     Prop='PrinterPorts'; Status='ACTION';  Rec='These printer ports existed before the upgrade. Re-create them (address and protocol are in the pre-upgrade report) or restore the PrintBrm backup.' },
         @{ Name='File shares';       Prop='Shares';       Status='ACTION';  Rec='These folders were shared before the upgrade. Re-create the shares with their permissions (see the pre-upgrade report) and test access from a client.' },
         @{ Name='AD groups';         Prop='Groups';       Status='WARNING'; Rec='The computer was in these groups before. Check the AD group memberships (patch rings, GPO filtering, certificate enrolment).' }
     )
@@ -610,6 +715,11 @@ function Compare-IPUSnapshot {
             $lost = @($lost | Where-Object { $explainedPorts -notcontains $_ })
         }
         if ($lost.Count -gt 0) { $diff += (& $make $l.Status ($l.Name + ' missing after upgrade') ('Count=' + $lost.Count) ($lost -join ', ') $l.Rec) }
+    }
+    # Printers that now use another driver (#148).
+    if ($null -ne $Before.PrinterDrivers -and $null -ne $After.PrinterDrivers) {
+        $changedDrivers = Compare-PrinterDriver $Before.PrinterDrivers $After.PrinterDrivers
+        if (@($changedDrivers).Count -gt 0) { $diff += (& $make 'WARNING' 'Printer drivers changed' ('Count=' + @($changedDrivers).Count) (@($changedDrivers) -join ', ') 'The upgrade gave these printers another driver (often a Microsoft class driver). Print a test page and check trays, finishing and driver settings; reinstall the vendor driver if needed.') }
     }
     # Group Policy can also start applying after the upgrade (#80). Only
     # compared when the baseline has the list (4.2.0 and later).

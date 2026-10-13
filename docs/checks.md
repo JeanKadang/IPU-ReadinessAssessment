@@ -1,6 +1,6 @@
 # Checks reference
 
-The assessment runs 33 checks, in the order below. Each check writes rows to the report under one or more
+The assessment runs 36 checks. The tables group them by report chapter; slow checks run last. Each check writes rows to the report under one or more
 **areas**. A check that throws is reported as `MANUAL` in *Collector coverage* ("Check did not complete");
 the absence of findings in that area is then **not** evidence of readiness.
 
@@ -39,6 +39,8 @@ check is added without one.
 | `sql` SQL Server | Database Engine, Reporting Services and Analysis Services instances and versions | `BLOCKER` SQL version not supported on the target (for example SQL Server 2017 on 2025; the text names a target that supports it); `OK`; `MANUAL` version not found |
 | `workloads` Roles and workloads | Installed roles, application workloads from the detection patterns (SharePoint, Oracle, SAP, Citrix, Java, Tomcat, ...), features removed or deprecated in the target | `WARNING` per workload or role that needs its owner; `ACTION` a feature removed in the target (for example SMTP Server, PowerShell 2.0 on 2025); `WARNING` observation for deprecated features; `MANUAL` when roles cannot be listed |
 | `fileshares` File shares | SMB shares (`Get-SmbShare`) with path, description and share permissions (`Get-SmbShareAccess`); default administrative shares are left out, `print$` only with the Print Server role | `WARNING` when folders are shared (test access after the upgrade, keep the list); `INFO` no shares; `MANUAL` observation when the role is installed but the SmbShare cmdlets are missing |
+| `printers` Print server: printers, ports and drivers (#148) | Print Server role or shared printers; printers (share, driver, port, published), the ports they use and every LPR port (address, protocol, queue), drivers (v3/v4, x64/x86, manufacturer), port monitors and print processors with the company of their DLL; `Get-Printer` and friends, CIM as fallback. Inbox virtual printers (Print to PDF, XPS, fax, OneNote) are left out | `WARNING` print server (keep the backup, test each shared printer after the upgrade); `WARNING` third-party drivers (vendor support for the target; for Windows Server 2025 the Windows Update note); `WARNING` per third-party port monitor or print processor; `WARNING` observation LPR port monitor port or LPD Service (deprecated); `INFO` drivers for 32-bit clients only; `MANUAL` printers not readable; `OK` not a print server |
+| `printbackup` Print server backup (slow, #148) | `PrintBrm.exe -B -F <evidence folder>\<Computer>-printers.printerExport` (reads the spooler configuration only); space estimate from `spool\drivers`; timeout *PrintBackupTimeoutMinutes*, counted against the slow-check budget | `OK` export saved (copy it off the server); `MANUAL` skipped for lack of space (needs 1.5 x `spool\drivers` + 1 GB free), switched off (*EnablePrintBackup*), PrintBrm missing or failed, or timed out; skipped when not a print server and after the upgrade |
 | `iis` IIS | Web Server role, sites and bindings; copies the IIS configuration files into the evidence folder (*EnableIISConfigEvidence*) | `WARNING` IIS installed (run `appcmd add backup` right before the change); `OK` configuration copied (path and SHA-256); `MANUAL` copy failed; `WARNING` observation shared configuration; `OK` not installed |
 | `rds` Remote Desktop Services roles | Session Host and Licensing roles, licensing mode and servers | `ACTION` session host or licensing server; `OK` |
 
@@ -93,7 +95,12 @@ pre-upgrade JSON from the same folder and reports:
 | RDP Network Level Authentication on before, off now | `ACTION` |
 | .NET Framework 3.5 removed by the upgrade (with the reinstall command) | `WARNING` |
 | Changes that come with the new release: services Microsoft now starts on demand or removed, ports that closed with such a service, features removed or renamed (PowerShell 2.0, PowerShell ISE, Defender); per-user services are compared without their random suffix | `INFO` |
-| Lost static routes or IPv4 addresses | `ACTION` |
+| Lost static routes or IPv4 addresses (baselines before 4.5.0) | `ACTION` |
+| Network adapter, matched by MAC (#149): gone, switched to DHCP, static addresses or gateway lost, VLAN changed | `ACTION` |
+| Network adapter: new DHCP address, DNS servers (order counts), DNS suffix or registration, WINS, NetBIOS or global IPv6 changed | `WARNING` |
+| Network adapter renamed or metric changed only; new adapters | `INFO` |
+| Printers or printer ports that existed before and no longer do (#148) | `ACTION` |
+| Printers that now use another driver (#148) | `WARNING` |
 | Lost listening ports, DNS servers, hosts entries, applications, Windows features, scheduled tasks; services that no longer exist | `WARNING` |
 | No pre-upgrade JSON found | `MANUAL` |
 | File shares that existed before and no longer do | `ACTION` |

@@ -205,6 +205,12 @@ param(
     # ZIP under PolicyEvidenceRoot (#149). Never redacted: copy it off the
     # server before the change, and do not share it.
     [bool]$EnableNetworkEvidence = $true,
+    # On a print server, export printers, ports and drivers with PrintBrm -B
+    # into a restricted evidence folder under PolicyEvidenceRoot (#148). Skipped
+    # (MANUAL, with the command) when the drive lacks 1.5 x the size of
+    # spool\drivers + 1 GB. A slow check: counts against the time budget.
+    [bool]$EnablePrintBackup = $true,
+    [ValidateRange(1, 240)][int]$PrintBackupTimeoutMinutes = 30,
 
     # Output.
     [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$ReportDirectory = 'C:\Temp\IPU-Assessment',
@@ -324,7 +330,7 @@ $script:ProfileSettingNames = @(
     'MinimumCFreeGB','ExtendBlockGB','MinimumMemoryGB','MaxPatchAgeDays','UptimeWarningDays','GroupPolicyMaxAgeDays','AVMaxAgeDays',
     'CertificateWarningDays','SystemPartitionMinFreeMB','RecoveryPartitionMinFreeMB',
     'RunDISMScanHealth','RunSFCVerifyOnly','DISMTimeoutMinutes','SFCTimeoutMinutes','SlowCheckBudgetMinutes','CompatScanTimeoutMinutes',
-    'EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip','EnableIISConfigEvidence','EnableNetworkEvidence',
+    'EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip','EnableIISConfigEvidence','EnableNetworkEvidence','EnablePrintBackup','PrintBackupTimeoutMinutes',
     'WriteJson','RestrictOutputAcl','NumberCultureName'
 )
 $script:PatternFields = @('Label','App','Service','Display','Driver','Disabled','Link','LinkTitle')
@@ -396,6 +402,7 @@ $script:AreaMap = @{
     'DOMAIN_CONTROLLER'  = @{ Name='Domain controller';           Chapter='Workloads and Applications' }
     'WORKLOAD'           = @{ Name='Roles and workloads';         Chapter='Workloads and Applications' }
     'FILE_SHARES'        = @{ Name='File shares';                 Chapter='Workloads and Applications' }
+    'PRINTING'           = @{ Name='Print server';                Chapter='Workloads and Applications' }
     'ROLES'              = @{ Name='Installed roles/features';    Chapter='Workloads and Applications' }
     'APPLICATIONS'       = @{ Name='Installed applications';      Chapter='Workloads and Applications' }
     'PLATFORM'           = @{ Name='Platform';                    Chapter='Hardware and Virtualization' }
@@ -864,6 +871,75 @@ function Save-NetworkEvidence {
         $location = $zipPath
     }
     return [pscustomobject]@{ Location = $location; Folder = $Destination; Files = $saved; Failed = $failed }
+}
+
+# Print servers (#148): read-only helpers for the printers and printbackup
+# checks. Defined here (script scope), not inside Register-AssessmentCheck.
+function Get-FileCompanyName {
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
+    try { return [string]([Diagnostics.FileVersionInfo]::GetVersionInfo($Path).CompanyName) } catch { return '' }
+}
+
+function Get-PrintMonitorInventory {
+    # Port monitors and print processors registered with the spooler, with
+    # the company name of their DLL (registry and file version reads only).
+    $sys = Join-Path $env:windir 'System32'
+    $items = @()
+    $monitors = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Monitors'
+    foreach ($k in @(Get-ChildItem -LiteralPath $monitors -ErrorAction Stop)) {
+        $drv = [string](Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction SilentlyContinue).Driver
+        $path = $(if ($drv -and [IO.Path]::IsPathRooted($drv)) { $drv } elseif ($drv) { Join-Path $sys $drv } else { '' })
+        $items += [pscustomobject]@{ Type = 'PortMonitor'; Name = [string]$k.PSChildName; Driver = $drv; Company = (Get-FileCompanyName $path) }
+    }
+    $processors = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Environments\Windows x64\Print Processors'
+    foreach ($k in @(Get-ChildItem -LiteralPath $processors -ErrorAction SilentlyContinue)) {
+        $drv = [string](Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction SilentlyContinue).Driver
+        $path = $(if ($drv -and [IO.Path]::IsPathRooted($drv)) { $drv } elseif ($drv) { Join-Path $sys ('spool\prtprocs\x64\' + $drv) } else { '' })
+        $items += [pscustomobject]@{ Type = 'PrintProcessor'; Name = [string]$k.PSChildName; Driver = $drv; Company = (Get-FileCompanyName $path) }
+    }
+    return ,$items
+}
+
+function Get-PrintDriverStoreSize {
+    # Size of spool\drivers, every architecture: the PrintBrm export holds
+    # every driver package, so this is the estimate for the backup.
+    $root = Join-Path $env:windir 'System32\spool\drivers'
+    $sum = [long]0
+    foreach ($f in @(Get-ChildItem -LiteralPath $root -Recurse -File -Force -ErrorAction SilentlyContinue)) { $sum += [long]$f.Length }
+    return $sum
+}
+
+function Get-PrinterInventory {
+    # Printers, ports and drivers from the PrintManagement module, or from
+    # CIM where the module is missing (#94). Returns plain records.
+    $out = [pscustomobject]@{ Printers = @(); Ports = @(); Drivers = @(); Source = '' }
+    if (Test-CommandAvailable 'Get-Printer') {
+        $out.Source = 'Get-Printer, Get-PrinterPort, Get-PrinterDriver'
+        $out.Printers = @(Get-Printer -ErrorAction Stop | Where-Object { [string]$_.Type -ne 'Connection' } | ForEach-Object {
+            [pscustomobject]@{ Name = [string]$_.Name; ShareName = [string]$_.ShareName; Shared = [bool]$_.Shared; Published = [bool]$_.Published; DriverName = [string]$_.DriverName; PortName = [string]$_.PortName }
+        })
+        $out.Ports = @(Get-PrinterPort -ErrorAction Stop | ForEach-Object {
+            [pscustomobject]@{ Name = [string]$_.Name; Description = [string]$_.Description; Monitor = [string]$_.PortMonitor; Address = [string]$_.PrinterHostAddress; PortNumber = [string]$_.PortNumber; Protocol = [string]$_.Protocol; Queue = [string]$_.LprQueueName }
+        })
+        $out.Drivers = @(Get-PrinterDriver -ErrorAction Stop | ForEach-Object {
+            [pscustomobject]@{ Name = [string]$_.Name; Environment = [string]$_.PrinterEnvironment; Major = [string]$_.MajorVersion; Manufacturer = [string]$_.Manufacturer }
+        })
+        return $out
+    }
+    $out.Source = 'Win32_Printer, Win32_TCPIPPrinterPort, Win32_PrinterDriver'
+    $out.Printers = @(Get-CimRequired 'Win32_Printer' 'Local=True' | ForEach-Object {
+        [pscustomobject]@{ Name = [string]$_.Name; ShareName = [string]$_.ShareName; Shared = [bool]$_.Shared; Published = [bool]$_.Published; DriverName = [string]$_.DriverName; PortName = [string]$_.PortName }
+    })
+    $out.Ports = @(Get-CimSafe 'Win32_TCPIPPrinterPort' | ForEach-Object {
+        [pscustomobject]@{ Name = [string]$_.Name; Description = 'Standard TCP/IP Port'; Monitor = 'TCPMON.DLL'; Address = [string]$_.HostAddress; PortNumber = [string]$_.PortNumber; Protocol = [string]$_.Protocol; Queue = [string]$_.Queue }
+    })
+    # Win32_PrinterDriver.Name is "<driver>,<version>,<environment>".
+    $out.Drivers = @(Get-CimSafe 'Win32_PrinterDriver' | ForEach-Object {
+        $p = @(([string]$_.Name) -split ',')
+        [pscustomobject]@{ Name = $p[0]; Environment = $(if ($p.Count -gt 2) { $p[2] } else { [string]$_.SupportedPlatform }); Major = $(if ($p.Count -gt 1) { $p[1] } else { [string]$_.Version }); Manufacturer = '' }
+    })
+    return $out
 }
 
 # Optional PowerShell modules and the checks that need them (#94). A missing
@@ -1755,6 +1831,109 @@ function Compare-NetworkAdapter {
     return $rows
 }
 
+# Print servers (#148). Inbox virtual printers that every server has; they
+# are not print-server work and are left out of the inventory.
+$script:VirtualPrinterDrivers = '^(Microsoft Print To PDF|Microsoft XPS Document Writer( v4)?|Microsoft Shared Fax Driver|Send to Microsoft OneNote.*|Microsoft Software Printer Driver|Remote Desktop Easy Print)$'
+$script:PrinterDriverDocUrl = 'https://learn.microsoft.com/en-us/windows-hardware/drivers/print/end-of-servicing-plan-for-third-party-printer-drivers-on-windows'
+
+function Get-PrinterPortKind {
+    # Pure (#148): the kind of a printer port, from its description, its
+    # port monitor and (for Standard TCP/IP ports) the protocol.
+    param([string]$Description, [string]$Monitor, [string]$Protocol)
+    $t = $Description + ' ' + $Monitor
+    if ($t -match 'LPR Port|LPRMON') { return 'LPR port monitor' }
+    if ($t -match 'Standard TCP/IP|TCPMON') {
+        if ($Protocol -match '^(2|LPR)$') { return 'Standard TCP/IP (LPR protocol)' }
+        return 'Standard TCP/IP (RAW)'
+    }
+    if ($t -match 'WSD') { return 'WSD' }
+    if ($t -match 'USB') { return 'USB' }
+    if ($t -match 'Internet Port|IPP|inetpp') { return 'Internet (IPP)' }
+    if ($t -match 'Local Port|Local Monitor|localspl') { return 'Local' }
+    if ($Description) { return ('Other: ' + $Description) }
+    return 'Other'
+}
+
+function Get-PrintComponentDecision {
+    # Pure (#148): port monitors and print processors that are not from
+    # Microsoft. They load into the spooler and are a common cause of failed
+    # upgrades and of a spooler that crashes afterwards.
+    param($Items, [string]$TargetName)
+    $rows = @()
+    $make = { param($st,$item,$val,$det,$rec) [pscustomobject]@{ Status=$st; Item=$item; Value=$val; Details=$det; Recommendation=$rec } }
+    $third = @($Items | Where-Object { $_ -and [string]$_.Company -notmatch '^Microsoft' })
+    foreach ($i in $third) {
+        $label = $(if ($i.Type -eq 'PrintProcessor') { 'Print processor: ' } else { 'Port monitor: ' }) + $i.Name
+        $company = $(if ($i.Company) { [string]$i.Company } else { 'unknown (file not found or no version information)' })
+        $rows += (& $make 'WARNING' $label ('Driver=' + $i.Driver) ('Company=' + $company) ('Not from Microsoft. Get the vendor''s version for ' + $TargetName + ' and update it before the upgrade, or remove it after confirming no printer uses it. Third-party port monitors and print processors are a common cause of failed upgrades and spooler crashes afterwards.'))
+    }
+    if ($third.Count -eq 0) { $rows += (& $make 'OK' 'PrintComponents' 'Only Windows port monitors and print processors' ('Checked=' + @($Items | Where-Object { $_ }).Count) '') }
+    return $rows
+}
+
+function Get-PrinterDriverDecision {
+    # Pure (#148): the driver summary row. Third-party drivers need the
+    # vendor's confirmation for the target; Windows Server 2025 gets no new
+    # third-party printer drivers from Windows Update (installed ones keep
+    # working). Drivers only for 32-bit clients are named, not a problem.
+    param($Drivers, [string]$TargetName, [string]$TargetRelease)
+    $rows = @()
+    $make = { param($st,$item,$val,$det,$rec) [pscustomobject]@{ Status=$st; Item=$item; Value=$val; Details=$det; Recommendation=$rec } }
+    $all = @($Drivers | Where-Object { $_ -and $_.Name -and [string]$_.Name -notmatch $script:VirtualPrinterDrivers })
+    $x64 = @($all | Where-Object { [string]$_.Environment -match 'x64' })
+    $third = @($x64 | Where-Object { [string]$_.Manufacturer -notmatch '^Microsoft' -and [string]$_.Name -notmatch '^Microsoft ' })
+    $x64Names = @($x64 | ForEach-Object { [string]$_.Name })
+    $x86Only = @($all | Where-Object { [string]$_.Environment -match 'x86' -and $x64Names -notcontains [string]$_.Name } | ForEach-Object { [string]$_.Name } | Sort-Object -Unique)
+    $note = ''
+    if ($TargetRelease -eq '2025') { $note = ' From 15 January 2026 Microsoft no longer publishes new third-party printer drivers to Windows Update for Windows Server 2025; installed drivers keep working, so keep the vendor packages.' }
+    if ($third.Count -gt 0) {
+        $names = @($third | ForEach-Object { [string]$_.Name + ' (v' + $_.Major + $(if ($_.Manufacturer) { ', ' + $_.Manufacturer } else { '' }) + ')' } | Sort-Object -Unique)
+        $rows += (& $make 'WARNING' 'PrinterDrivers' ('Third-party=' + $third.Count + ' of ' + $x64.Count + ' (x64)') ($names -join ', ') ('Confirm with each vendor that the driver supports ' + $TargetName + ', and have the driver packages at hand in case the upgrade drops one.' + $note))
+    } else {
+        $rows += (& $make 'OK' 'PrinterDrivers' ('Windows drivers only (' + $x64.Count + ' x64)') '' '')
+    }
+    if ($x86Only.Count -gt 0) {
+        $rows += (& $make 'INFO' 'PrinterDriversX86Only' ('Count=' + $x86Only.Count) ($x86Only -join ', ') 'Drivers for 32-bit clients only (Point and Print). Not used by the server itself; check they are still needed.')
+    }
+    return $rows
+}
+
+function Get-PrintBackupSpaceDecision {
+    # Pure (#148): PrintBrm exports every driver package, so the export can
+    # be a few MB or several GB. It runs only when the drive has 1.5 times
+    # the size of spool\drivers plus 1 GB free.
+    param([long]$DriverBytes, [long]$FreeBytes)
+    $required = [long][math]::Ceiling($DriverBytes * 1.5) + [long]1GB
+    $gb = { param($b) [math]::Round(([double]$b / 1GB), 2) }
+    return [pscustomobject]@{
+        Proceed = ($FreeBytes -ge $required)
+        EstimateBytes = $DriverBytes
+        RequiredBytes = $required
+        FreeBytes = $FreeBytes
+        Text = ('Estimate ' + (& $gb $DriverBytes) + ' GB (spool\drivers), needs ' + (& $gb $required) + ' GB free, ' + (& $gb $FreeBytes) + ' GB free')
+    }
+}
+
+function Get-PrintBackupCommand {
+    # Pure (#148): the export command shown when the backup is not taken here.
+    param([string]$Folder = 'D:\PrintBackup', [string]$Computer = '%COMPUTERNAME%')
+    return ('%windir%\System32\spool\tools\PrintBrm.exe -B -F ' + $Folder.TrimEnd('\') + '\' + $Computer + '-printers.printerExport')
+}
+
+function Compare-PrinterDriver {
+    # Pure (#148): printers that still exist after the upgrade but use
+    # another driver. Lists of {Printer; Driver}.
+    param($Before, $After)
+    $now = @{}
+    foreach ($a in @($After | Where-Object { $_ -and $_.Printer })) { $now[[string]$a.Printer] = [string]$a.Driver }
+    $changed = @()
+    foreach ($b in @($Before | Where-Object { $_ -and $_.Printer })) {
+        $p = [string]$b.Printer
+        if ($now.ContainsKey($p) -and $now[$p] -ne [string]$b.Driver) { $changed += ($p + ': ' + $b.Driver + ' -> ' + $now[$p]) }
+    }
+    return ,$changed
+}
+
 function Compare-IPUSnapshot {
     # Pure: compares the pre-upgrade snapshot with the current one and returns
     # the differences an engineer must look at after the upgrade.
@@ -1798,6 +1977,8 @@ function Compare-IPUSnapshot {
         @{ Name='Windows features';  Prop='Features';     Status='WARNING'; Rec='Features removed by Setup. Confirm nothing depends on them.' },
         @{ Name='Scheduled tasks';   Prop='Tasks';        Status='WARNING'; Rec='Re-create missing tasks and confirm their run-as credentials.' },
         @{ Name='Applied GPOs';      Prop='Gpos';         Status='WARNING'; Rec='These GPOs applied before the upgrade and no longer do. Check their WMI filters (often a Windows version filter) and security filtering.' },
+        @{ Name='Printers';          Prop='Printers';     Status='ACTION';  Rec='These printers existed before the upgrade. Restore them from the PrintBrm backup (PrintBrm -R -F <file>) or re-create them, then print a test page and test from a client.' },
+        @{ Name='Printer ports';     Prop='PrinterPorts'; Status='ACTION';  Rec='These printer ports existed before the upgrade. Re-create them (address and protocol are in the pre-upgrade report) or restore the PrintBrm backup.' },
         @{ Name='File shares';       Prop='Shares';       Status='ACTION';  Rec='These folders were shared before the upgrade. Re-create the shares with their permissions (see the pre-upgrade report) and test access from a client.' },
         @{ Name='AD groups';         Prop='Groups';       Status='WARNING'; Rec='The computer was in these groups before. Check the AD group memberships (patch rings, GPO filtering, certificate enrolment).' }
     )
@@ -1848,6 +2029,11 @@ function Compare-IPUSnapshot {
             $lost = @($lost | Where-Object { $explainedPorts -notcontains $_ })
         }
         if ($lost.Count -gt 0) { $diff += (& $make $l.Status ($l.Name + ' missing after upgrade') ('Count=' + $lost.Count) ($lost -join ', ') $l.Rec) }
+    }
+    # Printers that now use another driver (#148).
+    if ($null -ne $Before.PrinterDrivers -and $null -ne $After.PrinterDrivers) {
+        $changedDrivers = Compare-PrinterDriver $Before.PrinterDrivers $After.PrinterDrivers
+        if (@($changedDrivers).Count -gt 0) { $diff += (& $make 'WARNING' 'Printer drivers changed' ('Count=' + @($changedDrivers).Count) (@($changedDrivers) -join ', ') 'The upgrade gave these printers another driver (often a Microsoft class driver). Print a test page and check trays, finishing and driver settings; reinstall the vendor driver if needed.') }
     }
     # Group Policy can also start applying after the upgrade (#80). Only
     # compared when the baseline has the list (4.2.0 and later).
@@ -2771,6 +2957,7 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
         Apps     = @($script:Data.Apps | ForEach-Object { [pscustomobject]@{ Name=$_.Name; Version=$_.Version } })
         Features = @()
         Ports = @(); Routes = @(); IPv4 = @(); Dns = @(); Adapters = @(); Hosts = @(); Tasks = @()
+        Printers = @(); PrinterPorts = @(); PrinterDrivers = @()
     }
     if ($script:Data.Features) { $script:Data.Snapshot.Features = @($script:Data.Features.Keys | Where-Object { $script:Data.Features[$_] } | Sort-Object) }
 
@@ -3537,7 +3724,7 @@ Register-Check -Id 'workloads' -Name 'Roles and workloads' -Script {
     $roleChecks = @(
         @{ Name='DNS';        Label='DNS Server';  Rec='Confirm DNS zones are AD-integrated or replicated, and that clients can use another DNS server during the window.' },
         @{ Name='DHCP';       Label='DHCP Server'; Rec='Back up DHCP (Export-DhcpServer) and confirm failover/partner coverage for the change window.' },
-        @{ Name='Print-Server'; Label='Print Server'; Rec='Export printers (PrintBrm) and confirm that drivers exist for the target OS.' },
+        @{ Name='Print-Server'; Label='Print Server'; Rec='See the Print server section: printers, ports, drivers and the PrintBrm backup.' },
         @{ Name='Hyper-V';    Label='Hyper-V host'; Rec='All guests are affected. Plan guest shutdown/migration and confirm vSwitch teaming is SET, not LBFO.' },
         @{ Name='FS-DFS-Replication'; Label='DFS Replication'; Rec='Confirm DFSR health and backlog before IPU; plan to monitor replication afterwards.' },
         @{ Name='WDS';        Label='Windows Deployment Services'; Rec='Validate WDS/PXE dependencies with the deployment team.' },
@@ -3605,6 +3792,74 @@ Register-Check -Id 'fileshares' -Name 'File shares' -Script {
         Add-Result 'FILE_SHARES' ('Share: ' + $sh.Name) 'INFO' ([string]$sh.Path) $details -Source 'Get-SmbShare, Get-SmbShareAccess'
     }
     if ($script:Data.Snapshot) { $script:Data.Snapshot.Shares = @($shares | ForEach-Object { [string]$_.Name }) }
+}
+
+# ---------------------------------------------------------------------------
+Register-Check -Id 'printers' -Name 'Print server: printers, ports and drivers' -Script {
+    # #148: what a print server holds, so it can be checked after the
+    # upgrade and the driver work planned. Read-only.
+    $role = (Get-FeatureState 'Print-Server') -eq $true
+    $script:Data.PrintServer = $false
+    try { $inv = Get-PrinterInventory }
+    catch {
+        if ($role) { Add-Result 'PRINTING' 'Printers' 'MANUAL' 'Could not read the printers' $_.Exception.Message -Recommendation 'Check that the Print Spooler service runs, and list printers, ports and drivers in Print Management before the change.' -Kind 'Finding' -Source 'PrintManagement, Win32_Printer' }
+        return
+    }
+    $printers = @($inv.Printers | Where-Object { $_ -and [string]$_.DriverName -notmatch $script:VirtualPrinterDrivers } | Sort-Object Name)
+    $shared = @($printers | Where-Object { $_.Shared })
+    if (-not $role -and $shared.Count -eq 0) {
+        Add-Result 'PRINTING' 'PrintServer' 'OK' 'Not a print server' ('Print Server role not installed, shared printers=0, local printers=' + $printers.Count) -Source $inv.Source
+        return
+    }
+    $script:Data.PrintServer = $true
+    $target = Get-ReleaseDisplayName $TargetServerVersion
+    Add-Result 'PRINTING' 'Printers' 'WARNING' ('Count=' + $printers.Count + ', shared=' + $shared.Count) ('Print Server role=' + $role) -Recommendation 'Keep the PrintBrm backup and this list. After the upgrade, print a test page on each shared printer and test from a client; the post-upgrade run reports printers and ports that are gone.' -Source $inv.Source
+    foreach ($p in $printers) { Add-RedactionLiteral $p.Name 'NAME'; if ($p.ShareName) { Add-RedactionLiteral $p.ShareName 'NAME' } }
+    foreach ($p in $printers) {
+        $details = @(('Share=' + $(if ($p.Shared -and $p.ShareName) { $p.ShareName } else { '(not shared)' })), ('Published in AD=' + $p.Published))
+        Add-Result 'PRINTING' ('Printer: ' + $p.Name) 'INFO' ('Driver=' + $p.DriverName + '; Port=' + $p.PortName) $details -Source $inv.Source
+    }
+
+    # Ports in use by a printer, and every LPR port.
+    $usedNames = @($printers | ForEach-Object { @(([string]$_.PortName) -split ',') } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $ports = @($inv.Ports | Where-Object { $_ -and ($usedNames -contains [string]$_.Name -or (Get-PrinterPortKind $_.Description $_.Monitor $_.Protocol) -eq 'LPR port monitor') } | Sort-Object Name)
+    foreach ($pt in $ports) { Add-RedactionLiteral $pt.Name 'NAME'; if ($pt.Address -and $pt.Address -notmatch '^[0-9.:]+$') { Add-RedactionLiteral $pt.Address 'HOST' } }
+    foreach ($pt in $ports) {
+        $kind = Get-PrinterPortKind $pt.Description $pt.Monitor $pt.Protocol
+        $details = @()
+        if ($pt.Address) { $details += ('Address=' + $pt.Address + $(if ($pt.PortNumber) { ':' + $pt.PortNumber } else { '' })) }
+        if ($pt.Queue) { $details += ('Queue=' + $pt.Queue) }
+        if ($pt.Monitor) { $details += ('Monitor=' + $pt.Monitor) }
+        if ($kind -eq 'LPR port monitor') {
+            Add-Result 'PRINTING' ('Port: ' + $pt.Name) 'WARNING' $kind $details -Recommendation 'Microsoft deprecated LPR/LPD and plans to remove it. Move the printer to a Standard TCP/IP port (RAW, or LPR protocol on the standard port) and test before the upgrade.' -Kind 'Observation' -Source 'Get-PrinterPort' -Link 'https://learn.microsoft.com/en-us/windows/whats-new/deprecated-features' -LinkTitle 'Deprecated Windows features'
+        } else {
+            Add-Result 'PRINTING' ('Port: ' + $pt.Name) 'INFO' $kind $details -Source 'Get-PrinterPort'
+        }
+    }
+    if ((Get-FeatureState 'Print-LPD-Service') -eq $true) {
+        Add-Result 'PRINTING' 'LPD Service' 'WARNING' 'Installed' 'UNIX and other clients can print to this server over LPD.' -Recommendation 'Microsoft deprecated LPR/LPD and plans to remove it. Find the clients that use it and move them to IPP or a Standard TCP/IP port.' -Kind 'Observation' -Source 'Get-WindowsFeature' -Link 'https://learn.microsoft.com/en-us/windows/whats-new/deprecated-features' -LinkTitle 'Deprecated Windows features'
+    }
+
+    # Drivers.
+    foreach ($r in @(Get-PrinterDriverDecision $inv.Drivers $target $TargetServerVersion)) {
+        if ($r.Item -eq 'PrinterDrivers' -and $r.Status -eq 'WARNING') { Add-Result 'PRINTING' $r.Item $r.Status $r.Value $r.Details -Recommendation $r.Recommendation -Source $inv.Source -Link $script:PrinterDriverDocUrl -LinkTitle 'End of servicing plan for third-party printer drivers' }
+        else { Add-Result 'PRINTING' $r.Item $r.Status $r.Value $r.Details -Recommendation $r.Recommendation -Source $inv.Source }
+    }
+
+    # Port monitors and print processors.
+    try {
+        foreach ($r in @(Get-PrintComponentDecision (Get-PrintMonitorInventory) $target)) {
+            Add-Result 'PRINTING' $r.Item $r.Status $r.Value $r.Details -Recommendation $r.Recommendation -Source 'HKLM\SYSTEM\CurrentControlSet\Control\Print'
+        }
+    } catch {
+        Add-Result 'PRINTING' 'PrintComponents' 'MANUAL' 'Could not read the port monitors and print processors' $_.Exception.Message -Recommendation 'Check Print Management > Print Servers > Ports and the registry key HKLM\SYSTEM\CurrentControlSet\Control\Print\Monitors for monitors that are not from Microsoft.' -Kind 'Finding' -Source 'HKLM\SYSTEM\CurrentControlSet\Control\Print'
+    }
+
+    if ($script:Data.Snapshot) {
+        $script:Data.Snapshot.Printers = @($printers | ForEach-Object { [string]$_.Name })
+        $script:Data.Snapshot.PrinterPorts = @($ports | ForEach-Object { [string]$_.Name })
+        $script:Data.Snapshot.PrinterDrivers = @($printers | ForEach-Object { [pscustomobject]@{ Printer = [string]$_.Name; Driver = [string]$_.DriverName } })
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -4045,6 +4300,55 @@ Register-Check -Id 'checklist' -Name 'Standard change checklist' -Script {
 # ---------------------------------------------------------------------------
 # SLOW CHECKS (time-boxed, run after the checkpoint report is written)
 # ---------------------------------------------------------------------------
+Register-Check -Id 'printbackup' -Name 'Print server backup (PrintBrm)' -Phase 'Slow' -Script {
+    # #148: PrintBrm -B exports printers, ports, drivers and queues into one
+    # file. It only reads the spooler configuration. The file is not redacted
+    # and is never part of the report.
+    if ($AssessmentMode -eq 'Post') { $script:CurrentCheckMessage = 'Not needed after the upgrade'; $script:CurrentCheckOutcome = 'Skipped'; return }
+    if (-not $script:Data.PrintServer) { $script:CurrentCheckMessage = 'Not a print server'; $script:CurrentCheckOutcome = 'Skipped'; return }
+    $cmd = Get-PrintBackupCommand
+    if (-not $EnablePrintBackup) {
+        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' 'Not taken (EnablePrintBackup is off)' -Recommendation 'Export the print configuration before the change, to a drive with enough free space, and keep the file off the server.' -Kind 'Finding' -Source 'SETTINGS' -Command $cmd -CommandKind 'Check'
+        return
+    }
+    $brm = Join-Path $env:windir 'System32\spool\tools\PrintBrm.exe'
+    if (-not (Test-Path -LiteralPath $brm -PathType Leaf)) {
+        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' 'PrintBrm.exe not found' $brm -Recommendation 'Export the printers with Print Management (Export printers to a file) before the change, and keep the file off the server.' -Kind 'Finding' -Source 'PrintBrm.exe'
+        return
+    }
+    $root = [IO.Path]::GetPathRoot($PolicyEvidenceRoot).TrimEnd('\')
+    $disk = @(Get-CimRequired 'Win32_LogicalDisk' ("DeviceID='" + $root + "'")) | Select-Object -First 1
+    if (-not $disk -or $null -eq $disk.FreeSpace) { throw ('Could not read the free space of ' + $root) }
+    $space = Get-PrintBackupSpaceDecision (Get-PrintDriverStoreSize) ([long]$disk.FreeSpace)
+    if (-not $space.Proceed) {
+        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' ('Skipped: not enough free space on ' + $root) $space.Text -Recommendation 'Run the export to a drive or share with enough free space before the change, and keep the file off the server.' -Kind 'Finding' -Source 'spool\drivers, Win32_LogicalDisk' -Command $cmd -CommandKind 'Check'
+        return
+    }
+    $timeout = [math]::Min($PrintBackupTimeoutMinutes * 60, $script:SlowSecondsLeft)
+    $dest = Join-Path $PolicyEvidenceRoot ($script:SafeComputerName + '-IPU-Print-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    $null = Initialize-OutputFolder $PolicyEvidenceRoot
+    $null = Initialize-OutputFolder $dest
+    $file = Join-Path $dest ($script:SafeComputerName + '-printers.printerExport')
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $r = Invoke-NativeCapture $brm @('-B', '-F', $file) $timeout
+    $sw.Stop()
+    $duration = 'Duration=' + (Format-Duration $sw.Elapsed)
+    if ($r.TimedOut) {
+        # A cut-off export is not a backup; remove this run's partial file.
+        if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
+        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' ('Stopped after ' + [math]::Round($timeout / 60) + ' minutes') @($duration, $space.Text) -Recommendation 'Run the export by hand outside the SA job, before the change, and keep the file off the server.' -Kind 'Finding' -Source 'PrintBrm.exe -B' -Command $cmd -CommandKind 'Check'
+        $script:CurrentCheckOutcome = 'TimedOut'; return
+    }
+    if ($r.Error) { throw $r.Error }
+    if ($r.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $file -PathType Leaf)) {
+        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' ('PrintBrm failed (exit code ' + $r.ExitCode + ')') @($duration, (@($r.Lines | Select-Object -Last 3) -join ' | ')) -Recommendation 'Read the PrintBrm output and the PrintBrm event log (Applications and Services Logs > Microsoft > Windows > PrintBRM), then export by hand before the change.' -Kind 'Finding' -Source 'PrintBrm.exe -B' -Command $cmd -CommandKind 'Check'
+        return
+    }
+    $size = [math]::Round(([double](Get-Item -LiteralPath $file).Length / 1MB), 1)
+    $script:Data.PrintBackup = $file
+    Add-Result 'PRINTING' 'PrintBackup' 'OK' $file @(('SizeMB=' + $size), $duration, $space.Text) -Recommendation 'Copy the file off the server before the change: a backup on C: does not survive a failed upgrade that needs a rebuild. It holds the full print configuration and is not redacted. Restore: PrintBrm -R -F <file> (see the user guide).' -Source 'PrintBrm.exe -B (reads the spooler configuration)'
+}
+
 Register-Check -Id 'dism' -Name 'DISM component store scan' -Phase 'Slow' -Script {
     if (-not $RunDISMScanHealth) {
         Add-Result 'WINDOWS_HEALTH' 'DISM ScanHealth' 'MANUAL' 'Skipped by configuration' -Recommendation 'Run the read-only scan before final IPU approval.'
@@ -4767,6 +5071,10 @@ function Get-RedactionLiteralFromResult {
         # description.
         if ($r.Area -eq 'FILE_SHARES' -and [string]$r.Item -match '^Share: (.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'NAME' } }
         if ($r.Area -eq 'FILE_SHARES' -and (@($r.Details) -join ' | ') -match '(?:^|\|\s*)Description=([^|]+)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'NAME' } }
+        # Print servers (#148): printer, share and port names, port host names.
+        if ($r.Area -eq 'PRINTING' -and [string]$r.Item -match '^(?:Printer|Port): (.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'NAME' } }
+        if ($r.Area -eq 'PRINTING' -and (@($r.Details) -join ' | ') -match '(?:^|\|\s*)Share=([^|]+)' -and $Matches[1].Trim() -ne '(not shared)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'NAME' } }
+        if ($r.Area -eq 'PRINTING' -and (@($r.Details) -join ' | ') -match '(?:^|\|\s*)Address=([^|:\s]+)' -and $Matches[1] -notmatch '^[0-9.]+$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'HOST' } }
     }
     return ,$found
 }
