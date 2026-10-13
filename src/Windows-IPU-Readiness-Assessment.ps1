@@ -1,8 +1,8 @@
 <#
 ===============================================================================
  SCRIPT NAME : Windows-IPU-Readiness-Assessment.ps1
- VERSION     : 4.4.0
- RELEASE DATE: 2026-10-13
+ VERSION     : 4.5.0
+ RELEASE DATE: 2026-10-14
  PURPOSE     : Windows Server in-place upgrade (IPU) readiness assessment and
                post-upgrade verification, with a self-contained HTML report
                and a JSON result file written on the assessed server.
@@ -84,6 +84,14 @@
     load, nothing is collected. The Pester tests use this.
 
 .VERSION HISTORY
+    4.5.0 - Cluster nodes and domain controllers are SPECIAL: a short
+            report with the facts, risks and options ("expensive and
+            risky"); undecided signals are MANUAL. Network: IPv6, DNS
+            suffix, WINS, NetBIOS, metric and VLAN per adapter, compared
+            by MAC after the upgrade, and a local copy of the network
+            configuration. Print servers: printers, ports, drivers, port
+            monitors and a PrintBrm backup. Activation per channel in
+            plain words, NLA in the Summary. Built from parts (ADR 0002).
     4.4.0 - Fixes from a live run of four upgrades 2016/2019 -> 2025.
             Redaction covers custom names in RDP user rights and whole DNS
             domain names; -RedactExisting keeps one placeholder per server.
@@ -323,7 +331,7 @@ $script:FeatureLifecycle = @(
 # 3. CORE
 # =============================================================================
 $ProgressPreference = 'SilentlyContinue'
-$script:CollectorVersion  = '4.4.0'
+$script:CollectorVersion  = '4.5.0'
 # Settings a profile file (-ProfileFile) may set. Mode, target, media path,
 # report folder and redaction describe one run, so they stay arguments only.
 $script:ProfileSettingNames = @(

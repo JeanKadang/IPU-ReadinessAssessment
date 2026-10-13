@@ -4,19 +4,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [4.5.0] - 2026-10-14
+
+Cluster nodes and domain controllers become SPECIAL, network and print servers get the evidence needed to put them back by hand, and the review items are closed. The source is now built from parts; operators still run one file. `Merge-IPUAssessments.ps1` 1.1.0 ships with it.
+
 ### Changed
 - Cluster nodes and domain controllers are no longer reported as BLOCKER; they are SPECIAL (#152). `-BlockDomainControllerIPU $false` still gives the full report with a WARNING for a domain controller.
 - The assessment's source is kept in parts (`src/assessment/`, one per numbered section) and `build/Build-Script.ps1` joins them into `src/Windows-IPU-Readiness-Assessment.ps1`, which stays committed at the same path. CI checks that the built file matches its parts. Nothing changes for operators: still one `.ps1` from the Release page (ADR 0002, #151).
 
 ### Added
-- Every dated fact table (upgrade paths, SQL matrix, end-of-support dates, removed/deprecated features, VMware Tools minimum, expected Windows changes, documentation links) has a source and a verification date in `$script:FactSources`; a test fails when one is older than six months (#132). All were checked on 2026-10-13.
-- CI: the PowerShell 7 pester job fails when coverage of `src/*.ps1` drops below 85 % or a function has no executed command; tests added for the read-only helpers that had none (#127).
 - **SPECIAL** status and verdict for servers that are not a standard in-place upgrade: cluster nodes and (with `-BlockDomainControllerIPU`, the default) domain controllers (#152). The report is short on purpose and says plainly "expensive and risky" for the project and the customer, lists the facts needed to choose a plan, the risks and the options to evaluate with Microsoft links. SA line, JSON (`Overall`, `Counts.SPECIAL`, `Special`) and the fleet overview (`Merge-IPUAssessments.ps1`: SPECIAL first, `Special` column) support it. Undecided cluster signals are MANUAL. Cluster and node names are redacted.
-- Windows activation in plain words per channel (#171). A KMS client shows the KMS host that activated it, whether it was found via DNS or set on the server, and the days until the activation must be renewed (WARNING under 30 days); "Not explicitly configured (DNS auto-discovery or not KMS)" is gone. MAK, AVMA, OEM and retail get their own text, e.g. "Licensed (MAK), activated permanently - no renewal needed". The KMS host name is redacted in shared copies.
-- RDP Network Level Authentication in the Summary ("RDP access: GO, NLA on"; after the upgrade "NLA off (was on before the upgrade)" when it changed), as `Facts.Nla` in the JSON, and as an "RDP NLA" column in the fleet overview and servers CSV (`Merge-IPUAssessments.ps1` 1.1.0) (#174).
-
 - Network (#149): each adapter now also shows IPv6 addresses, DNS suffix and search list, DNS registration, WINS, NetBIOS over TCP/IP, metric and VLAN (report, JSON `Snapshot.Adapters`). The post-upgrade comparison matches adapters by MAC address, since Setup can rename them, and lists every difference per adapter (a static adapter switched to DHCP or without its addresses is an ACTION). A network configuration copy (`ipconfig /all`, `route print`, `netsh interface ipv4 show config`, `netsh -c interface dump`, advanced adapter properties) is saved into the restricted evidence folder (`-EnableNetworkEvidence`, on by default); it is not redacted and not part of the report, so copy it off the server before the change.
 - Print servers (#148): new `printers` check lists printers, the ports they use, drivers, port monitors and print processors. Third-party drivers (with the Windows Server 2025 Windows Update note), third-party port monitors and print processors, LPR ports and the LPD Service are WARNINGs. New slow check `printbackup` exports the print configuration with `PrintBrm -B` into the restricted evidence folder (`-EnablePrintBackup`, on by default; `-PrintBackupTimeoutMinutes`, 30), skipped as MANUAL when the drive lacks 1.5 x the size of `spool\drivers` + 1 GB. The post-upgrade comparison reports printers and ports that are gone (ACTION) and changed drivers (WARNING). Printer, share and port names and port host names are redacted.
+- Windows activation in plain words per channel (#171). A KMS client shows the KMS host that activated it, whether it was found via DNS or set on the server, and the days until the activation must be renewed (WARNING under 30 days); "Not explicitly configured (DNS auto-discovery or not KMS)" is gone. MAK, AVMA, OEM and retail get their own text, e.g. "Licensed (MAK), activated permanently - no renewal needed". The KMS host name is redacted in shared copies.
+- RDP Network Level Authentication in the Summary ("RDP access: GO, NLA on"; after the upgrade "NLA off (was on before the upgrade)" when it changed), as `Facts.Nla` in the JSON, and as an "RDP NLA" column in the fleet overview and servers CSV (`Merge-IPUAssessments.ps1` 1.1.0) (#174).
+- Every dated fact table (upgrade paths, SQL matrix, end-of-support dates, removed/deprecated features, VMware Tools minimum, expected Windows changes, documentation links) has a source and a verification date in `$script:FactSources`; a test fails when one is older than six months (#132). All were checked on 2026-10-13.
+- CI: the PowerShell 7 pester job fails when coverage of `src/*.ps1` drops below 85 % or a function has no executed command; tests added for the read-only helpers that had none (#127).
 - `build/Sync-Skills.ps1` keeps the two vendored copies of the GitHub workflow skills (`.claude/skills` for Claude Code, `.agents/skills` for Codex) identical; CI fails when they differ (#129).
 
 ### Fixed
@@ -168,7 +171,8 @@ Restructure of the 3.x script (released as a script file only).
 
 Local Group Policy backup and RDP readiness. Superseded by 4.0.0.
 
-[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.4.0...HEAD
+[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.5.0...HEAD
+[4.5.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.5.0
 [4.4.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.4.0
 [4.3.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.3.0
 [4.2.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.2.0
