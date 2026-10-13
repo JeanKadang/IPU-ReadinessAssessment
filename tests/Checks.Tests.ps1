@@ -422,8 +422,8 @@ BeforeAll {
 AfterAll { Remove-Item Env:\IPU_ASSESSMENT_LIBRARY_ONLY -ErrorAction SilentlyContinue }
 
 Describe 'Check registry' {
-    It 'registers 33 checks with unique ids' {
-        $script:AllChecks.Count | Should -Be 33
+    It 'registers 34 checks with unique ids' {
+        $script:AllChecks.Count | Should -Be 34
         @($script:AllChecks | Group-Object Id | Where-Object { $_.Count -gt 1 }).Count | Should -Be 0
     }
     It 'docs/checks.md describes every registered check' {
