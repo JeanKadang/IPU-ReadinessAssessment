@@ -38,6 +38,17 @@ the `smoke` matrix in `.github/workflows/ci.yml` and this table in the same pull
 - Every new check needs a Pester test and a named recommendation.
 - Do not commit assessment output, hostnames, credentials or other host data.
 
+## Dated facts
+
+Section 4 of the assessment (and the feature list in section 2) holds facts that Microsoft or a vendor can change:
+supported upgrade paths, the SQL Server matrix, end-of-support dates, removed and deprecated features, the VMware Tools
+minimum, the changes Windows makes during an upgrade, and the documentation links. `$script:FactSources` in
+`src/assessment/40-decision-rules.ps1` names the source of each table and the day it was last checked.
+
+A test fails when a check is older than six months (the weekly CI run then opens an issue). To re-verify a table: open
+its source, update the table if the facts changed (with a test for any new behaviour), and set `Verified` to the day you
+checked. Bump the date only after reading the source.
+
 ## Working with Claude Code
 
 The repo ships the team's GitHub workflow so your AI assistant follows the same rules as everyone else:
