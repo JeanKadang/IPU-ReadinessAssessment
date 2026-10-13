@@ -1160,7 +1160,7 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             (Get-Row 'PRINTING' 'Port: COM1:').Count | Should -Be 0
             $drv = (Get-Row 'PRINTING' 'PrinterDrivers')[0]
             $drv.Status | Should -Be 'WARNING'
-            $drv.Value | Should -Be 'Third-party=2 of 3 (x64)'
+            $drv.Value | Should -Be 'Third-party=2 of 2 (x64)'   # Print to PDF is left out
             $drv.Recommendation | Should -Match '15 January 2026'
             (Get-Row 'PRINTING' 'PrinterDriversX86Only')[0].Details | Should -Be 'Example Old x86'
             (Get-Row 'PRINTING' 'Port monitor: Example Port Monitor')[0].Status | Should -Be 'WARNING'
