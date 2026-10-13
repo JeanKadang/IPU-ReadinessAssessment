@@ -1153,7 +1153,7 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             New-FakePrintServer
             (Invoke-TestCheck 'printers').Outcome | Should -Be 'Completed'
             (Get-Row 'PRINTING' 'Printers')[0].Value | Should -Be 'Count=2, shared=1'
-            (Get-Row 'PRINTING' 'Printer: Floor2-Color')[0].Details | Should -Contain 'Share=Floor2C'
+            (Get-Row 'PRINTING' 'Printer: Floor2-Color')[0].Details | Should -Match 'Share=Floor2C'
             (Get-Row 'PRINTING' 'Printer: Microsoft Print to PDF').Count | Should -Be 0
             (Get-Row 'PRINTING' 'Port: IP_10.20.40.11')[0].Value | Should -Be 'Standard TCP/IP (RAW)'
             (Get-Row 'PRINTING' 'Port: lpr-label')[0].Status | Should -Be 'WARNING'
