@@ -1434,6 +1434,15 @@ function Get-CompatScanDecision {
     return [pscustomobject]@{ Status='MANUAL'; Code=$hex; Text=('Unexpected Setup result ' + $hex + '. Review the Panther logs.') }
 }
 
+function Test-PendingRenameHarmless {
+    # Pure (#158): true when every pending rename is an installer leftover -
+    # MSI rollback files in C:\Config.Msi or the Edge updater folder.
+    param([object[]]$Values)
+    $paths = @($Values | Where-Object { $_ } | ForEach-Object { ([string]$_ -replace '^!','' -replace '^\\\?\?\\','').Trim() } | Where-Object { $_ })
+    if ($paths.Count -eq 0) { return $false }
+    return (@($paths | Where-Object { $_ -notmatch '\\Config\.Msi(\\[^\\]+\.rb[fs])?\\?$' -and $_ -notmatch '\\Microsoft\\EdgeUpdate\\' }).Count -eq 0)
+}
+
 function ConvertTo-PendingRenamePath {
     # PendingFileRenameOperations holds pairs (source, destination); show the
     # first few sources so the owning product is recognisable.
@@ -1450,6 +1459,24 @@ function ConvertTo-PendingRenamePath {
     return ,$shown
 }
 
+# Changes Microsoft makes during an upgrade (#158), so the post-upgrade
+# comparison can call them expected instead of reporting them as problems.
+# Services that newer Windows starts on demand (trigger start, Manual):
+$script:ExpectedManualServices = @('IKEEXT','NlaSvc')
+# Services and features removed or renamed in newer Windows Server releases:
+$script:ExpectedRemovedServices = @('tiledatamodelsvc')
+$script:ExpectedRemovedFeatures = @('PowerShell-V2','PowerShell-ISE','Windows-Defender-Features','Windows-Defender-Gui')
+# Well-known Windows ports and the service that opens them, for baselines
+# without port owners (4.3.0 and older).
+$script:KnownPortServices = @{ 'UDP:500' = 'IKEEXT'; 'UDP:4500' = 'IKEEXT'; 'UDP:1900' = 'SSDPSRV'; 'TCP:2869' = 'SSDPSRV'; 'TCP:5357' = 'FDResPub'; 'UDP:3702' = 'FDResPub' }
+
+function ConvertTo-ServiceBaseName {
+    # Pure (#158): per-user services carry a random suffix that changes
+    # (CDPUserSvc_1a2b3c), so compare them by their base name.
+    param([string]$Name)
+    return ($Name -replace '_[0-9a-fA-F]{4,}$', '')
+}
+
 function Compare-IPUSnapshot {
     # Pure: compares the pre-upgrade snapshot with the current one and returns
     # the differences an engineer must look at after the upgrade.
@@ -1458,12 +1485,25 @@ function Compare-IPUSnapshot {
     $make = { param($st,$item,$val,$det,$rec) [pscustomobject]@{ Status=$st; Item=$item; Value=$val; Details=$det; Recommendation=$rec } }
 
     $nowRunning = @{}
-    foreach ($s in @($After.Services)) { $nowRunning[[string]$s.Name] = $s }
-    $stopped = @(); $missing = @()
+    foreach ($s in @($After.Services)) { $nowRunning[(ConvertTo-ServiceBaseName ([string]$s.Name))] = $s }
+    $stopped = @(); $missing = @(); $disabled = @(); $expected = @()
+    $explainedSvc = @()   # services whose ports are explained by the change
     foreach ($s in @($Before.Services | Where-Object { $_.StartMode -eq 'Auto' -and $_.State -eq 'Running' })) {
-        if (-not $nowRunning.ContainsKey([string]$s.Name)) { $missing += [string]$s.Name }
-        elseif ($nowRunning[[string]$s.Name].State -ne 'Running') { $stopped += ([string]$s.Name + ' (' + $nowRunning[[string]$s.Name].State + ', ' + $nowRunning[[string]$s.Name].StartMode + ')') }
+        $base = ConvertTo-ServiceBaseName ([string]$s.Name)
+        if (-not $nowRunning.ContainsKey($base)) {
+            if ($script:ExpectedRemovedServices -contains $base) { $expected += ($base + ' (removed by Microsoft)'); $explainedSvc += $base }
+            else { $missing += $base }
+            continue
+        }
+        $now = $nowRunning[$base]
+        if ($now.State -eq 'Running') { continue }
+        $text = $base + ' (' + $now.State + ', ' + $now.StartMode + ')'
+        if ([string]$now.StartMode -eq 'Disabled') { $disabled += $text; $explainedSvc += $base }
+        elseif ([string]$now.StartMode -eq 'Manual' -and $script:ExpectedManualServices -contains $base) { $expected += ($text + ' - starts on demand in newer Windows'); $explainedSvc += $base }
+        else { $stopped += $text }
     }
+    if ($disabled.Count -gt 0) { $diff += (& $make 'WARNING' 'Automatic services now disabled' ('Count=' + $disabled.Count) ($disabled -join ', ') 'These ran before the upgrade and are now disabled, often by hardening applied after the upgrade. Confirm each one is disabled on purpose and that no application needs it.') }
+    if ($expected.Count -gt 0) { $diff += (& $make 'INFO' 'Service changes made by Windows' ('Count=' + $expected.Count) ($expected -join ', ') 'Expected with the new Windows release; no action unless an application depends on them.') }
     if ($stopped.Count -gt 0) { $diff += (& $make 'ACTION' 'Automatic services no longer running' ('Count=' + $stopped.Count) ($stopped -join ', ') 'These ran before the upgrade. Start them, check their event logs, and confirm with the application owner.') }
     if ($missing.Count -gt 0) { $diff += (& $make 'WARNING' 'Services no longer present' ('Count=' + $missing.Count) ($missing -join ', ') 'These running services no longer exist. Expected for some Windows components; confirm none belongs to an application.') }
 
@@ -1483,6 +1523,10 @@ function Compare-IPUSnapshot {
     if ($Before.Ou -and $After.Ou -and [string]$Before.Ou -ne [string]$After.Ou) {
         $diff += (& $make 'WARNING' 'Computer object moved in AD' ([string]$After.Ou) ('Before: ' + [string]$Before.Ou) 'The computer object is in another OU than before the upgrade, so other GPOs may apply. Move it back or confirm the new location with the AD team.')
     }
+    # A security setting weakened by the upgrade or the after-work (#158).
+    if ([string]$Before.Nla -eq 'On' -and [string]$After.Nla -eq 'Off') {
+        $diff += (& $make 'ACTION' 'RDP Network Level Authentication turned off' 'Off' 'Before: On' 'NLA was on before the upgrade and is off now: RDP accepts connections before the user is authenticated. Turn it back on (System Properties > Remote, or the RDP-Tcp UserAuthentication value) unless the change was intended, and find out what changed it (the upgrade, a hardening script, a GPO).')
+    }
     if ($Before.Uac -and $After.Uac -and [string]$Before.Uac -ne [string]$After.Uac) {
         $diff += (& $make 'WARNING' 'UAC changed' ([string]$After.Uac) ('Before: ' + [string]$Before.Uac) 'User Account Control is set differently after the upgrade. Confirm the change is intended (usually set by Group Policy).')
     }
@@ -1491,6 +1535,27 @@ function Compare-IPUSnapshot {
         $a = @($After.($l.Prop) | Where-Object { $_ })
         if ($l.Prop -eq 'Apps') { $b = @($b | ForEach-Object { [string]$_.Name }); $a = @($a | ForEach-Object { [string]$_.Name }) }
         $lost = @($b | Where-Object { $a -notcontains $_ } | Sort-Object -Unique)
+        if ($l.Prop -eq 'Features') {
+            # Removed or renamed by Microsoft: expected (#158). .NET 3.5 is
+            # removed by the upgrade and often needed by applications.
+            $known = @($lost | Where-Object { $script:ExpectedRemovedFeatures -contains $_ })
+            if ($known.Count -gt 0) { $diff += (& $make 'INFO' 'Windows features removed or renamed by Microsoft' ('Count=' + $known.Count) ($known -join ', ') 'Expected with the new Windows release (PowerShell 2.0 is removed in Windows Server 2025; Defender features were renamed). No action unless something depended on them.') }
+            if ($lost -contains 'NET-Framework-Core') { $diff += (& $make 'WARNING' '.NET Framework 3.5 removed by the upgrade' 'NET-Framework-Core' 'Installed before the upgrade, not after.' 'Reinstall .NET Framework 3.5 if an application on this server needs it (from the sources\sxs folder of the installation media): Install-WindowsFeature NET-Framework-Core -Source <media>\sources\sxs') }
+            $lost = @($lost | Where-Object { $script:ExpectedRemovedFeatures -notcontains $_ -and $_ -ne 'NET-Framework-Core' })
+        }
+        if ($l.Prop -eq 'Ports' -and $explainedSvc.Count -gt 0) {
+            # A port whose service was disabled or changed on purpose is not a
+            # second problem (#158).
+            $owners = @{}
+            if ($Before.PortOwners -is [System.Collections.IDictionary]) { foreach ($k in @($Before.PortOwners.Keys)) { $owners[[string]$k] = [string]$Before.PortOwners[$k] } }
+            elseif ($Before.PortOwners) { foreach ($p in @($Before.PortOwners.PSObject.Properties)) { $owners[$p.Name] = [string]$p.Value } }
+            $explainedPorts = @($lost | Where-Object {
+                $o = $owners[$_]; if (-not $o) { $o = $script:KnownPortServices[$_] }
+                $o -and @($explainedSvc | Where-Object { $o -match ('(^|[ /,])' + [regex]::Escape($_) + '($|[ /,])') }).Count -gt 0
+            })
+            if ($explainedPorts.Count -gt 0) { $diff += (& $make 'INFO' 'Ports closed with their service' ('Count=' + $explainedPorts.Count) ($explainedPorts -join ', ') 'The service that opened these ports is now disabled or starts on demand (see the service rows above).') }
+            $lost = @($lost | Where-Object { $explainedPorts -notcontains $_ })
+        }
         if ($lost.Count -gt 0) { $diff += (& $make $l.Status ($l.Name + ' missing after upgrade') ('Count=' + $lost.Count) ($lost -join ', ') $l.Rec) }
     }
     # Group Policy can also start applying after the upgrade (#80). Only
@@ -2317,6 +2382,9 @@ Register-Check -Id 'upgradepath' -Name 'Upgrade path, edition and media' -Script
     }
     $script:Data.IsClustered = $clustered
     $path = Get-UpgradePathDecision $source $TargetServerVersion $clustered
+    if ($AssessmentMode -eq 'Post' -and $source -and $source -eq $TargetServerVersion -and -not $clustered) {
+        $path = [pscustomobject]@{ Status = 'INFO'; Text = ('Now ' + (Get-ReleaseDisplayName $source) + ' (post-upgrade run).') }
+    }
     Add-Result 'UPGRADE_PATH' 'TargetUpgradePath' $path.Status $path.Text ('Target=' + (Get-ReleaseDisplayName $TargetServerVersion)) -Source 'Microsoft supported upgrade paths (installation media)' -Link $script:DocLinks.InPlaceUpgrade.Url -LinkTitle $script:DocLinks.InPlaceUpgrade.Title
 
     $edition = Get-EditionDecision $cv.EditionID $cv.InstallationType $TargetServerVersion
@@ -2433,6 +2501,8 @@ Register-Check -Id 'pendingreboot' -Name 'Pending reboot and uptime' -Script {
 
     if ($hard.Count -gt 0) {
         Add-Result 'WINDOWS_HEALTH' 'PendingReboot' 'ACTION' ($hard -join ' | ') (@($soft) + @($renameShown)) -Recommendation 'Reboot, then re-run the assessment before starting the IPU.' -Source 'CBS, Windows Update, ComputerName, Netlogon, ConfigMgr' -Command (Get-RecommendationCommand 'Restart').Command -CommandKind 'Change'
+    } elseif ($soft.Count -gt 0 -and $AssessmentMode -eq 'Post' -and (Test-PendingRenameHarmless $renamePaths)) {
+        Add-Result 'WINDOWS_HEALTH' 'PendingReboot' 'INFO' ($soft -join ' | ') (@('Files waiting to be replaced: ') + @($renameShown)) -Recommendation 'Only installer leftovers (MSI rollback files, Edge updater): cleared at the next reboot. Expected after an upgrade with agent updates.' -Source 'Session Manager'
     } elseif ($soft.Count -gt 0) {
         Add-Result 'WINDOWS_HEALTH' 'PendingReboot' 'WARNING' ($soft -join ' | ') (@('Files waiting to be replaced: ') + @($renameShown)) -Recommendation 'The paths show which product left the pending rename (often AV or an agent update). Reboot in the pre-change window; if the same entries come back, ask that product''s owner.' -Source 'Session Manager' -Command (Get-RecommendationCommand 'PendingRename').Command -CommandKind 'Check'
     } else {
@@ -2494,7 +2564,11 @@ Register-Check -Id 'history' -Name 'Previous upgrade history' -Script {
     if ($installDate) { $osInstall = $installDate.ToString('yyyy-MM-dd') }
     Add-Result 'UPGRADE_HISTORY' 'OSInstallDate' 'INFO' $osInstall 'Date of the current OS installation (or of the last in-place upgrade).' -Source 'Win32_OperatingSystem.InstallDate'
     if ($found -or $upgradeHints.Count -gt 0) {
-        Add-Result 'UPGRADE_HISTORY' 'PreviousUpgradeEvidence' 'WARNING' ('PriorOSRecords=' + $found) $upgradeHints -Recommendation 'This server has been upgraded in place before. Stacked upgrades carry older settings and drivers along; pay extra attention to the Setup compatibility result and test thoroughly afterwards.' -Kind 'Observation' -Source 'HKLM\SYSTEM\Setup, C:\Windows.old'
+        if ($AssessmentMode -eq 'Post') {
+            Add-Result 'UPGRADE_HISTORY' 'PreviousUpgradeEvidence' 'INFO' ('PriorOSRecords=' + $found) $upgradeHints -Recommendation 'Expected in a post-upgrade run: this server has just been upgraded.' -Kind 'Observation' -Source 'HKLM\SYSTEM\Setup, C:\Windows.old'
+        } else {
+            Add-Result 'UPGRADE_HISTORY' 'PreviousUpgradeEvidence' 'WARNING' ('PriorOSRecords=' + $found) $upgradeHints -Recommendation 'This server has been upgraded in place before. Stacked upgrades carry older settings and drivers along; pay extra attention to the Setup compatibility result and test thoroughly afterwards.' -Kind 'Observation' -Source 'HKLM\SYSTEM\Setup, C:\Windows.old'
+        }
     } else {
         Add-Result 'UPGRADE_HISTORY' 'PreviousUpgradeEvidence' 'INFO' 'No previous in-place upgrade recorded' 'Cleanup can remove this evidence; absence does not prove the server was never upgraded.' -Source 'HKLM\SYSTEM\Setup, C:\Windows.old'
     }
@@ -3427,6 +3501,10 @@ Register-Check -Id 'ports' -Name 'Listening ports' -Script {
         Add-Result 'PORTS' $k 'INFO' (@($owners[$k]) -join ', ') -Source 'Get-NetTCPConnection, Get-NetUDPEndpoint'
     }
     $script:Data.Snapshot.Ports = @($owners.Keys | Sort-Object)
+    # Who opened each port, so the comparison can pair a closed port with a
+    # disabled service (#158).
+    $po = [ordered]@{}; foreach ($k in @($owners.Keys | Sort-Object)) { $po[$k] = (@($owners[$k]) -join ', ') }
+    $script:Data.Snapshot.PortOwners = $po
     Add-Result 'PORTS' 'Summary' 'INFO' ('ListeningPorts=' + $owners.Count) 'Use this list for the post-upgrade test plan. Dynamic ports (49152+) are not listed.' -Source 'Get-NetTCPConnection, Get-NetUDPEndpoint'
 }
 
@@ -3683,6 +3761,7 @@ function Invoke-RdpPolicyAssessment {
     $portValue = Get-RegistryValueSafe $tcpPath 'PortNumber'
     if ($portValue.Exists) { $port = [int]$portValue.Value }
     $nla = Get-RegistryValueSafe $tcpPath 'UserAuthentication'
+    if ($nla.Exists -and $script:Data.Snapshot) { $script:Data.Snapshot.Nla = $(if ([int]$nla.Value -eq 0) { 'Off' } else { 'On' }) }
     Add-Result 'RDP' 'Listener' 'INFO' ('Port=' + $port) ('NLA=' + $(if ($nla.Exists) { $nla.Value } else { 'Unknown' })) -Source 'RDP-Tcp registry'
     if ($nla.Exists -and [int]$nla.Value -eq 0) {
         $nlaPolicy = Get-RegistryValueSafe $policyPath 'UserAuthentication'
@@ -4321,7 +4400,14 @@ function Invoke-PostUpgradeComparison {
         if ($baseline.Partial) {
             Add-Result 'POST_UPGRADE' 'BaselineComplete' 'WARNING' 'The pre-upgrade result was a partial (checkpoint) report' '' -Recommendation 'The snapshot data is still complete (it is collected by the fast checks); only the slow checks were missing.' -Kind 'Observation' -Source $script:BaselinePath
         }
-        $diffs = Compare-IPUSnapshot $baseline.Snapshot ([pscustomobject]$script:Data.Snapshot)
+        $before = $baseline.Snapshot
+        # Baselines from 4.3.0 and older have no NLA in the snapshot: read it
+        # from the pre-upgrade RDP listener row (#158).
+        if ($before -and -not $before.PSObject.Properties['Nla']) {
+            $listener = @($baseline.Results | Where-Object { $_.Area -eq 'RDP' -and $_.Item -eq 'Listener' }) | Select-Object -First 1
+            if ($listener -and (@($listener.Details) -join ' ') -match 'NLA=(\d)') { $before | Add-Member -NotePropertyName Nla -NotePropertyValue $(if ($Matches[1] -eq '0') { 'Off' } else { 'On' }) -Force }
+        }
+        $diffs = Compare-IPUSnapshot $before ([pscustomobject]$script:Data.Snapshot)
         foreach ($d in $diffs) { Add-Result 'POST_UPGRADE' $d.Item $d.Status $d.Value $d.Details -Recommendation $d.Recommendation -Source 'Pre-upgrade snapshot vs now' }
         if ($diffs.Count -eq 0) { Add-Result 'POST_UPGRADE' 'Comparison' 'OK' 'No lost services, ports, routes, IP/DNS settings, hosts entries, applications, features or tasks' -Source 'Pre-upgrade snapshot vs now' }
     } catch {

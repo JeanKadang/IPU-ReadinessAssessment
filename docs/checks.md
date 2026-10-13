@@ -88,6 +88,10 @@ pre-upgrade JSON from the same folder and reports:
 |---|---|
 | Target release not reached (upgrade failed or rolled back) | `ACTION` |
 | Automatic services that ran before and no longer run | `ACTION` |
+| Automatic services that ran before and are now disabled (often hardening after the upgrade) | `WARNING` |
+| RDP Network Level Authentication on before, off now | `ACTION` |
+| .NET Framework 3.5 removed by the upgrade (with the reinstall command) | `WARNING` |
+| Changes that come with the new release: services Microsoft now starts on demand or removed, ports that closed with such a service, features removed or renamed (PowerShell 2.0, PowerShell ISE, Defender); per-user services are compared without their random suffix | `INFO` |
 | Lost static routes or IPv4 addresses | `ACTION` |
 | Lost listening ports, DNS servers, hosts entries, applications, Windows features, scheduled tasks; services that no longer exist | `WARNING` |
 | No pre-upgrade JSON found | `MANUAL` |

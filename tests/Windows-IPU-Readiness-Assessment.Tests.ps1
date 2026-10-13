@@ -2428,3 +2428,60 @@ Describe 'Redact existing reports: one placeholder per server across files (#157
         @($tags | Where-Object { $_ -eq ($post + '|Assessment') }).Count | Should -Be 1
     }
 }
+
+Describe 'Post-upgrade comparison: expected changes and NLA (#158)' {
+    BeforeAll {
+        function New-Svc([string]$Name, [string]$State, [string]$Mode) { [pscustomobject]@{ Name = $Name; State = $State; StartMode = $Mode } }
+        $before = [pscustomobject]@{
+            Services = @((New-Svc 'DiagTrack' 'Running' 'Auto'), (New-Svc 'IKEEXT' 'Running' 'Auto'), (New-Svc 'AppSvc' 'Running' 'Auto'), (New-Svc 'CDPUserSvc_11a24784c' 'Running' 'Auto'), (New-Svc 'tiledatamodelsvc' 'Running' 'Auto'), (New-Svc 'GoneSvc' 'Running' 'Auto'))
+            Ports = @('UDP:500', 'UDP:4500', 'TCP:8080', 'TCP:9000')
+            PortOwners = [pscustomobject]@{ 'TCP:9000' = 'Service DiagTrack' }
+            Features = @('PowerShell-V2', 'Windows-Defender-Gui', 'NET-Framework-Core', 'Web-Server', 'SNMP-Service')
+            Nla = 'On'
+        }
+        $after = [pscustomobject]@{
+            Services = @((New-Svc 'DiagTrack' 'Stopped' 'Disabled'), (New-Svc 'IKEEXT' 'Stopped' 'Manual'), (New-Svc 'AppSvc' 'Stopped' 'Auto'), (New-Svc 'CDPUserSvc_d6e7e9e9' 'Running' 'Auto'))
+            Ports = @(); Features = @('Web-Server'); Nla = 'Off'
+        }
+        $script:Diff158 = Compare-IPUSnapshot $before $after
+        function Get-DiffRow([string]$Item) { @($script:Diff158 | Where-Object { $_.Item -eq $Item }) | Select-Object -First 1 }
+    }
+    It 'a service now disabled is a WARNING of its own, not ACTION' {
+        (Get-DiffRow 'Automatic services now disabled').Status | Should -Be 'WARNING'
+        (Get-DiffRow 'Automatic services now disabled').Details | Should -Match 'DiagTrack'
+        (Get-DiffRow 'Automatic services no longer running').Details | Should -Be 'AppSvc (Stopped, Auto)'
+    }
+    It 'Microsoft start-type changes and removals are INFO' {
+        $r = Get-DiffRow 'Service changes made by Windows'
+        $r.Status | Should -Be 'INFO'
+        $r.Details | Should -Match 'IKEEXT'
+        $r.Details | Should -Match 'tiledatamodelsvc'
+    }
+    It 'per-user services with a new suffix are not missing; other missing services still are' {
+        (Get-DiffRow 'Services no longer present').Details | Should -Be 'GoneSvc'
+        ConvertTo-ServiceBaseName 'CDPUserSvc_11a24784c' | Should -Be 'CDPUserSvc'
+        ConvertTo-ServiceBaseName 'MSSQLSERVER' | Should -Be 'MSSQLSERVER'
+    }
+    It 'ports closed with their disabled or changed service are INFO (known ports and recorded owners)' {
+        (Get-DiffRow 'Ports closed with their service').Details | Should -Be 'TCP:9000, UDP:4500, UDP:500'
+        (Get-DiffRow 'Listening ports missing after upgrade').Details | Should -Be 'TCP:8080'
+    }
+    It 'features removed by Microsoft are INFO; .NET 3.5 is a WARNING with the reinstall command; others stay' {
+        (Get-DiffRow 'Windows features removed or renamed by Microsoft').Status | Should -Be 'INFO'
+        (Get-DiffRow '.NET Framework 3.5 removed by the upgrade').Recommendation | Should -Match 'Install-WindowsFeature NET-Framework-Core'
+        (Get-DiffRow 'Windows features missing after upgrade').Details | Should -Be 'SNMP-Service'
+    }
+    It 'NLA turned off is an ACTION; unchanged or turned on is not reported' {
+        (Get-DiffRow 'RDP Network Level Authentication turned off').Status | Should -Be 'ACTION'
+        # Assign first: the function returns the list as one object.
+        $same = Compare-IPUSnapshot ([pscustomobject]@{ Nla = 'On' }) ([pscustomobject]@{ Nla = 'On' })
+        $same.Count | Should -Be 0
+        $better = Compare-IPUSnapshot ([pscustomobject]@{ Nla = 'Off' }) ([pscustomobject]@{ Nla = 'On' })
+        $better.Count | Should -Be 0
+    }
+    It 'pending renames that are only installer leftovers are harmless' {
+        Test-PendingRenameHarmless @('\??\C:\Config.Msi\1bc393.rbf', '', '\??\C:\Program Files (x86)\Microsoft\EdgeUpdate\1.3.283.15', '') | Should -BeTrue
+        Test-PendingRenameHarmless @('\??\C:\Config.Msi\1bc393.rbf', '', '\??\C:\Program Files\Example\agent.dll', '') | Should -BeFalse
+        Test-PendingRenameHarmless @() | Should -BeFalse
+    }
+}

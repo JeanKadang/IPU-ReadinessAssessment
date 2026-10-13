@@ -98,6 +98,8 @@ Lists may be empty or `null`.
 | `Shares` | Names of shared folders (from 4.3.0); the post-upgrade comparison reports shares that are gone |
 | `Gpos`, `Groups` | Applied GPO names and the computer's AD groups (from 4.2.0; absent when they could not be read). The post-upgrade comparison reports differences |
 | `Uac` | User Account Control in plain words (from 4.2.0); the post-upgrade comparison reports a change |
+| `Nla` | RDP Network Level Authentication, `On` or `Off` (from 4.4.0); the post-upgrade comparison reports NLA turned off as ACTION |
+| `PortOwners` | For each listening port, the service or process that opened it (from 4.4.0); used to pair a closed port with a disabled service |
 
 ## Compatibility rules
 

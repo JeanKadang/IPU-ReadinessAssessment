@@ -485,6 +485,14 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $life.Recommendation | Should -Match 'Extended Security Updates'
             $script:Data.SourceSupport.Ended | Should -BeTrue
         }
+        It 'in a post-upgrade run on the target release the path row says so (#158)' {
+            $script:Fake.Cim['Win32_OperatingSystem'].BuildNumber = '26100'
+            $script:Fake.Cim['Win32_OperatingSystem'].Caption = 'Microsoft Windows Server 2025 Standard'
+            Reset-FakeServerKeep
+            $AssessmentMode = 'Post'
+            $null = Invoke-TestCheck 'upgradepath'
+            (Get-Row 'UPGRADE_PATH' 'TargetUpgradePath')[0].Value | Should -Be 'Now Windows Server 2025 (post-upgrade run).'
+        }
         It 'a different media language is a BLOCKER' {
             $script:Fake.Registry['HKLM:\SYSTEM\CurrentControlSet\Control\Nls\Language|InstallLanguage'] = '0406'
             $TargetMediaLanguage = 'en-US'
@@ -558,6 +566,12 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $r.Value | Should -Match 'SRV01 -> SRV02'
             $r.Value | Should -Match 'ConfigMgr'
         }
+        It 'in a post-upgrade run, MSI rollback leftovers alone are INFO (#158)' {
+            $script:Fake.Registry['HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager|PendingFileRenameOperations'] = @('\??\C:\Config.Msi\1bc393.rbf', '', '\??\C:\Config.Msi\1bc399.rbf', '')
+            $AssessmentMode = 'Post'
+            $null = Invoke-TestCheck 'pendingreboot'
+            (Get-Row 'WINDOWS_HEALTH' 'PendingReboot')[0].Status | Should -Be 'INFO'
+        }
         It 'a long uptime is a WARNING' {
             $script:Fake.Cim['Win32_OperatingSystem'].LastBootUpTime = (Get-Date).AddDays(-120)
             Reset-FakeServerKeep
@@ -612,6 +626,16 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $r.Status | Should -Be 'WARNING'
             $r.Kind | Should -Be 'Observation'
             (Get-Row 'UPGRADE_HISTORY' $key.PSChildName)[0].Value | Should -Match '2012 R2'
+        }
+        It 'in a post-upgrade run the previous-upgrade evidence is expected: INFO (#158)' {
+            $key = [pscustomobject]@{ PSChildName = 'Source OS (Updated on 1/2/2022 03:04:05)'; PSPath = 'HKLM:\SYSTEM\Setup\Source OS (Updated on 1/2/2022 03:04:05)'; Name = 'HKEY_LOCAL_MACHINE\SYSTEM\Setup\Source OS' }
+            $script:Fake.Children['HKLM:\SYSTEM\Setup'] = @($key)
+            $script:Fake.ItemProperty[$key.PSPath] = [pscustomobject]@{ ProductName = 'Windows Server 2016 Standard'; CurrentBuild = '14393'; InstallDate = 1400000000 }
+            $AssessmentMode = 'Post'
+            $null = Invoke-TestCheck 'history'
+            $r = (Get-Row 'UPGRADE_HISTORY' 'PreviousUpgradeEvidence')[0]
+            $r.Status | Should -Be 'INFO'
+            $r.Recommendation | Should -Match 'just been upgraded'
         }
         It 'a leftover Setup working folder is shown' {
             $script:Fake.Paths['C:\$WINDOWS.~BT'] = $true
