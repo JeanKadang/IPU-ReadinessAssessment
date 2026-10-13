@@ -2382,3 +2382,49 @@ Describe 'Group Policy from the registry when gpresult has no RSoP data (#160)' 
         $gp.Gpos[1].Links | Should -Be 'Local'
     }
 }
+
+Describe 'Redact existing reports: one placeholder per server across files (#157)' {
+    BeforeAll {
+        $dir = Join-Path $TestDrive 'fleet'
+        New-Item -ItemType Directory -Path $dir | Out-Null
+        $sample = Join-Path $PSScriptRoot '..\docs\samples'
+        $json = [IO.File]::ReadAllText((Join-Path $sample 'sample-result.json'))
+        $html = [IO.File]::ReadAllText((Join-Path $sample 'sample-report.html'))
+        foreach ($f in @(@{ Name = 'SRV-APP01-IPU-Assessment'; Host = 'SRV-APP01' }, @{ Name = 'SRV-APP01-IPU-PostUpgrade'; Host = 'SRV-APP01' }, @{ Name = 'SRV-DB02-IPU-Assessment'; Host = 'SRV-DB02' })) {
+            $obj = $json.Replace('SRV-APP01', $f.Host) | ConvertFrom-Json
+            if ($f.Name -like '*PostUpgrade') { $obj.Mode = 'Post' }
+            [IO.File]::WriteAllText((Join-Path $dir ($f.Name + '.json')), ($obj | ConvertTo-Json -Depth 8))
+            [IO.File]::WriteAllText((Join-Path $dir ($f.Name + '.html')), $html.Replace('SRV-APP01', $f.Host))
+        }
+        $script:FleetCode = Invoke-RedactExisting $dir
+        $script:FleetJson = @(Get-ChildItem -LiteralPath $dir -Filter 'REDACTED-*.json' | Sort-Object Name)
+    }
+    It 'redacts all three reports' {
+        $script:FleetCode | Should -Be 0
+        $script:FleetJson.Count | Should -Be 3
+    }
+    It 'names each copy after the server placeholder, and the JSON agrees' {
+        foreach ($f in $script:FleetJson) {
+            $f.Name | Should -Match '^REDACTED-\d{8}-\d{6}-(HOST-\d+)-IPU-(Assessment|PostUpgrade)\.json$'
+            $tag = [regex]::Match($f.Name, 'HOST-\d+').Value
+            ([IO.File]::ReadAllText($f.FullName) | ConvertFrom-Json).ComputerName | Should -Be $tag
+        }
+    }
+    It 'a fleet overview of the redacted copies shows one row per server and mode' {
+        $only = Join-Path $TestDrive 'fleet-redacted'
+        $mergeOut = Join-Path $TestDrive 'fleet-overview'
+        New-Item -ItemType Directory -Path $only, $mergeOut | Out-Null
+        foreach ($f in $script:FleetJson) { Copy-Item -LiteralPath $f.FullName -Destination $only }
+        $null = & (Join-Path $PSScriptRoot '..\src\Merge-IPUAssessments.ps1') -InputFolder $only -OutputFolder $mergeOut
+        $rows = @(Import-Csv -LiteralPath (Join-Path $mergeOut 'IPU-Fleet-Servers.csv') -Delimiter ';')
+        $rows.Count | Should -Be 3
+        @($rows | ForEach-Object { $_.ComputerName + '|' + $_.Mode } | Sort-Object -Unique).Count | Should -Be 3
+        @($rows | ForEach-Object { $_.ComputerName } | Sort-Object -Unique).Count | Should -Be 2
+    }
+    It 'gives one server the same placeholder in pre and post, and different servers different ones' {
+        $tags = @($script:FleetJson | ForEach-Object { [regex]::Match($_.Name, 'HOST-\d+').Value + '|' + [regex]::Match($_.Name, 'Assessment|PostUpgrade').Value })
+        @($tags | ForEach-Object { ($_ -split '\|')[0] } | Sort-Object -Unique).Count | Should -Be 2
+        $post = @($tags | Where-Object { $_ -like '*|PostUpgrade' })[0].Split('|')[0]
+        @($tags | Where-Object { $_ -eq ($post + '|Assessment') }).Count | Should -Be 1
+    }
+}

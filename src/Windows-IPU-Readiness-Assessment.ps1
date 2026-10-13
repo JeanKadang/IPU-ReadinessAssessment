@@ -4174,6 +4174,12 @@ function Invoke-RedactExisting {
         $jsonFiles = @(Get-Item -LiteralPath ([IO.Path]::ChangeExtension($item.FullName, '.json')) -ErrorAction SilentlyContinue)
     } else { $jsonFiles = @() }
     if ($jsonFiles.Count -eq 0) { [Console]::Out.WriteLine('RedactExisting: no *-IPU-Assessment.json or *-IPU-PostUpgrade.json report found in ' + $Path); return 1 }
+    # One placeholder map for the whole folder (#157): a server keeps the
+    # same placeholder in its pre- and post-upgrade report, and different
+    # servers get different ones. The map is never written to disk.
+    $shared = @{ Map = @{}; Counters = @{} }
+    $jsonFiles = @($jsonFiles | Sort-Object Name)
+    $stampAll = Get-Date -Format 'yyyyMMdd-HHmmss'
     $done = 0
     foreach ($jf in $jsonFiles) {
         try {
@@ -4186,9 +4192,15 @@ function Invoke-RedactExisting {
             $script:Data = @{}
             foreach ($l in (Get-RedactionLiteralFromResult @($obj.Results))) { Add-RedactionLiteral $l.Value $l.Kind }
             $ctx = New-RedactionContext ([string]$obj.ComputerName) $domain
+            $ctx.Map = $shared.Map; $ctx.Counters = $shared.Counters
             if ($script:Data.RedactLiterals) { foreach ($k in @($script:Data.RedactLiterals.Keys)) { $ctx.Literals[$k] = $script:Data.RedactLiterals[$k] } }
             $suffix = '-IPU-Assessment'; if ($jf.Name -match '-IPU-PostUpgrade\.json$') { $suffix = '-IPU-PostUpgrade' }
-            $base = Join-Path $jf.DirectoryName ('REDACTED-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + $done + $suffix)
+            # The placeholder in the file name pairs a server's pre and post
+            # copies (#157), e.g. REDACTED-<time>-HOST-2-IPU-PostUpgrade.json.
+            $hostTag = 'HOST-0'; if ($obj.ComputerName) { $hostTag = Get-RedactionPlaceholder $ctx 'HOST' ([string]$obj.ComputerName) }
+            $base = Join-Path $jf.DirectoryName ('REDACTED-' + $stampAll + '-' + $hostTag + $suffix)
+            $n = 2; $first = $base
+            while (Test-Path -LiteralPath ($base + '.json')) { $base = $first + '-' + $n; $n++ }
             $red = Protect-ReportObject $obj $ctx
             $red | Add-Member -NotePropertyName Redacted -NotePropertyValue $true -Force
             [IO.File]::WriteAllText($base + '.json', ($red | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding($false)))

@@ -314,7 +314,7 @@ names, ports, WMI filter query text, and certificate locality fields (`L=`, `S=`
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Windows-IPU-Readiness-Assessment.ps1 -RedactExisting C:\Temp\IPU-Assessment
 ```
 
-It writes a `REDACTED-<time>-...` copy of every `*-IPU-Assessment` and `*-IPU-PostUpgrade` report pair (JSON and HTML) in the folder, or of one report when you give a file, in a few seconds. Nothing is collected, and the originals are not changed. The names to redact come from the report itself: the computer, the domain, task and service accounts, and GPO and WMI filter names. Reports that are already redacted are skipped. Use `-RedactReport $true` when you run a new assessment; use `-RedactExisting` for reports you already have.
+It writes a `REDACTED-<time>-...` copy of every `*-IPU-Assessment` and `*-IPU-PostUpgrade` report pair (JSON and HTML) in the folder, or of one report when you give a file, in a few seconds. Nothing is collected, and the originals are not changed. The names to redact come from the report itself: the computer, the domain, task and service accounts, and GPO and WMI filter names. Reports that are already redacted are skipped. All reports in one folder share one placeholder map: a server keeps the same placeholder (for example `HOST-2`) in its pre- and post-upgrade copy, and the placeholder is part of the file name, so the copies can be paired and merged into a fleet overview. Use `-RedactReport $true` when you run a new assessment; use `-RedactExisting` for reports you already have.
 
 What changes with redaction:
 
