@@ -168,7 +168,7 @@ When the budget runs out, remaining slow checks are reported as `MANUAL` (skippe
 | Parameter | Default | Meaning |
 |---|---|---|
 | `EnableRDPPolicyEvidence` | `$true` | Collect RDP access and policy evidence |
-| `LgpoExe` | `C:\Temp\Tools\LGPO.exe` | Optional. Used only for backup (`/b`) and `/parse` |
+| `LgpoExe` | `C:\Temp\Tools\LGPO.exe` | Optional. Used only for backup (`/b`) and `/parse`. A missing file skips LGPO; an empty value (`-LgpoExe ''`) switches it off on purpose |
 | `PolicyEvidenceRoot` | `C:\Temp\Tools\PolBackup` | Timestamped evidence folder and ZIP go here |
 | `CreatePolicyEvidenceZip` | `$true` | Zip the evidence |
 | `EnableIISConfigEvidence` | `$true` | When IIS is installed, copy its configuration files into a restricted evidence folder and ZIP under `PolicyEvidenceRoot` (see [IIS configuration copy](#iis-configuration-copy)) |

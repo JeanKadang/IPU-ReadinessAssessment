@@ -8,6 +8,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Recovery partition after C: (#161). Setup silently creates one when no recovery partition is big enough for the new WinRE, which blocks extending C: later. The pre-upgrade report warns when this is likely and the checklist shows `setup.exe /ResizeRecoveryPartition Disable`; a recovery partition after C: is reported with its number and the removal steps (`reagentc /disable` first). WinRE status from `reagentc /info` (read-only). New user-guide section "Recovery partition after an upgrade".
 
 ### Fixed
+- An empty `-LgpoExe` now switches LGPO off with an INFO row. On Windows PowerShell it made the whole RDP/policy evidence check MANUAL. When gpresult cannot list the local policy, the report points to the LGPO backup only when the run makes one (#150).
 - System File Checker output "a system repair is pending which requires reboot" is now a WARNING with reboot advice. It was reported as integrity violations (ACTION) with repair advice, although SFC had checked nothing (#159).
 
 ### Security

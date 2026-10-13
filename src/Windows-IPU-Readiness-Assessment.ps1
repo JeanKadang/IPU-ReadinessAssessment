@@ -1683,6 +1683,22 @@ function Get-RecoveryPartitionDecision {
     return [pscustomobject]@{ Status = 'INFO'; Kind = 'Fine'; PartitionNumber = $null; Value = 'No recovery partition after C:'; Text = '' }
 }
 
+function Test-LgpoAvailable {
+    # True when -LgpoExe names an existing file (#150). An empty value means
+    # LGPO is switched off; Test-Path cannot take an empty path on PS 4/5.1.
+    if (-not $LgpoExe) { return $false }
+    return [bool](Test-Path -LiteralPath $LgpoExe -PathType Leaf)
+}
+
+function Get-LocalPolicyAdvice {
+    # Pure (#150): where to read the local policy when gpresult cannot list
+    # it. Points to the LGPO backup only when this run will make one.
+    param([bool]$LgpoAvailable, [bool]$EvidenceEnabled)
+    $manual = 'Run "gpresult /scope computer /h gp.html" as administrator and review it before the change.'
+    if ($LgpoAvailable -and $EvidenceEnabled) { return ('The local policy backup (LGPO) in the RDP policy evidence folder shows the settings. Or: ' + $manual) }
+    return $manual
+}
+
 function Get-DomainRoleText {
     # Pure (#98): the domain role in the words operators use. Win32 calls a
     # non-domain server "Standalone server"; most people say workgroup server.
@@ -2575,7 +2591,7 @@ Register-Check -Id 'grouppolicy' -Name 'Group Policy and AD groups' -Script {
         }
     } elseif (-not $domainMember) {
         # Workgroup server and gpresult failed: still only local policy.
-        Add-Result 'GROUP_POLICY' 'LocalPolicy' 'MANUAL' 'Could not list the local policy (gpresult)' $gpError -Recommendation 'The local policy backup in the RDP policy evidence (LGPO) shows the settings. Or run "gpresult /scope computer /h gp.html" as administrator.' -Kind 'Observation' -Source 'gpresult'
+        Add-Result 'GROUP_POLICY' 'LocalPolicy' 'MANUAL' 'Could not list the local policy (gpresult)' $gpError -Recommendation (Get-LocalPolicyAdvice (Test-LgpoAvailable) $EnableRDPPolicyEvidence) -Kind 'Observation' -Source 'gpresult'
     }
 }
 
@@ -3576,7 +3592,11 @@ function Invoke-RdpPolicyAssessment {
 
     if ($folderOk) {
         # LGPO backup (local policy only; never imports).
-        if (Test-Path -LiteralPath $LgpoExe -PathType Leaf) {
+        # An empty -LgpoExe skips LGPO on purpose (#150). Windows PowerShell
+        # rejects Test-Path with an empty path, so test for it first.
+        if (-not $LgpoExe) {
+            Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'INFO' 'LGPO disabled (-LgpoExe is empty) - local policy backup skipped' -Source 'Parameter'
+        } elseif (Test-Path -LiteralPath $LgpoExe -PathType Leaf) {
             $r = Invoke-NativeCapture $LgpoExe @('/b',$lgpoRoot,'/n',('Pre-IPU-' + $stamp)) 120
             $r.Output | Out-File -LiteralPath (Join-Path $root 'LGPO-Backup-Output.txt') -Encoding UTF8
             if ($r.ExitCode -eq 0) { Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'OK' $lgpoRoot -Source 'LGPO.exe /b' }
