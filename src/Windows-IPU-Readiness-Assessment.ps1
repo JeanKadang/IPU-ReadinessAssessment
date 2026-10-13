@@ -1501,6 +1501,9 @@ function Compare-IPUSnapshot {
         $base = ConvertTo-ServiceBaseName ([string]$s.Name)
         if (-not $nowRunning.ContainsKey($base)) {
             if ($script:ExpectedRemovedServices -contains $base) { $expected += ($base + ' (removed by Microsoft)'); $explainedSvc += $base }
+            # A per-user service instance (name_suffix) exists only while a
+            # user is signed in (#173).
+            elseif ($base -ne [string]$s.Name) { $expected += ($base + ' (per-user service, exists only while a user is signed in)') }
             else { $missing += $base }
             continue
         }
@@ -1552,15 +1555,19 @@ function Compare-IPUSnapshot {
             if ($lost -contains 'NET-Framework-Core') { $diff += (& $make 'WARNING' '.NET Framework 3.5 removed by the upgrade' 'NET-Framework-Core' 'Installed before the upgrade, not after.' 'Reinstall .NET Framework 3.5 if an application on this server needs it (from the sources\sxs folder of the installation media): Install-WindowsFeature NET-Framework-Core -Source <media>\sources\sxs') }
             $lost = @($lost | Where-Object { $script:ExpectedRemovedFeatures -notcontains $_ -and $_ -ne 'NET-Framework-Core' })
         }
-        if ($l.Prop -eq 'Ports' -and $explainedSvc.Count -gt 0) {
+        if ($l.Prop -eq 'Ports') {
             # A port whose service was disabled or changed on purpose is not a
             # second problem (#158).
             $owners = @{}
             if ($Before.PortOwners -is [System.Collections.IDictionary]) { foreach ($k in @($Before.PortOwners.Keys)) { $owners[[string]$k] = [string]$Before.PortOwners[$k] } }
             elseif ($Before.PortOwners) { foreach ($p in @($Before.PortOwners.PSObject.Properties)) { $owners[$p.Name] = [string]$p.Value } }
+            # Also a port whose service no longer starts automatically and is
+            # not running, whatever its start mode was before (#173).
+            $quiet = @($After.Services | Where-Object { [string]$_.State -ne 'Running' -and [string]$_.StartMode -ne 'Auto' } | ForEach-Object { ConvertTo-ServiceBaseName ([string]$_.Name) })
+            $candidates = @($explainedSvc) + $quiet
             $explainedPorts = @($lost | Where-Object {
                 $o = $owners[$_]; if (-not $o) { $o = $script:KnownPortServices[$_] }
-                $o -and @($explainedSvc | Where-Object { $o -match ('(^|[ /,])' + [regex]::Escape($_) + '($|[ /,])') }).Count -gt 0
+                $o -and @($candidates | Where-Object { $o -match ('(^|[ /,])' + [regex]::Escape($_) + '($|[ /,])') }).Count -gt 0
             })
             if ($explainedPorts.Count -gt 0) { $diff += (& $make 'INFO' 'Ports closed with their service' ('Count=' + $explainedPorts.Count) ($explainedPorts -join ', ') 'The service that opened these ports is now disabled or starts on demand (see the service rows above).') }
             $lost = @($lost | Where-Object { $explainedPorts -notcontains $_ })
