@@ -1351,6 +1351,14 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $r.Status | Should -Be 'OK'
             $r.Value | Should -Match 'Basis=CBS.log'
         }
+        It 'a repair waiting for a reboot is a WARNING with reboot advice, not repair advice (#159)' {
+            $script:Fake.Native['sfc.exe'] = @{ ExitCode = 1; Output = 'There is a system repair pending which requires reboot to complete.  Restart Windows and run sfc again.' }
+            $null = Invoke-TestCheck 'sfc'
+            $r = (Get-Row 'WINDOWS_HEALTH' 'SFC VerifyOnly')[0]
+            $r.Status | Should -Be 'WARNING'
+            $r.Recommendation | Should -Match 'Reboot'
+            $r.Recommendation | Should -Not -Match 'RestoreHealth'
+        }
         It 'a timeout is MANUAL' {
             $script:Fake.Native['sfc.exe'] = @{ TimedOut = $true; ExitCode = $null; Output = '' }
             (Invoke-TestCheck 'sfc').Outcome | Should -Be 'TimedOut'

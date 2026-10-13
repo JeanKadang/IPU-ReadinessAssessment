@@ -1299,6 +1299,9 @@ function Get-SfcVerdict {
     # console text when it is English, otherwise the CBS.log lines written
     # during this run.
     param([string]$OutputText, [string[]]$CbsLines = @())
+    # A repair waiting for a reboot stops SFC before it checks anything
+    # (#159). That is not evidence of violations: reboot and run again.
+    if ($OutputText -match 'system repair pending|requires reboot to complete') { return [pscustomobject]@{ Status='WARNING'; Basis='Repair pending reboot' } }
     if ($OutputText -match 'did not find any integrity violations') { return [pscustomobject]@{ Status='OK'; Basis='SFC output' } }
     if ($OutputText -match 'found integrity violations|found corrupt files|could not perform the requested operation') { return [pscustomobject]@{ Status='ACTION'; Basis='SFC output' } }
     $sr = @($CbsLines | Where-Object { $_ -match '\[SR\]|CSI' })
@@ -3376,7 +3379,7 @@ Register-Check -Id 'sfc' -Name 'SFC protected file verification' -Phase 'Slow' -
     }
     $verdict = Get-SfcVerdict $r.Output $cbs
     $summary = @($r.Lines | Where-Object { $_ -notmatch '\d{1,3}\s*%' } | Select-Object -Last 2) -join ' | '
-    $rec = @{ OK=''; ACTION='Resolve protected-file integrity violations (DISM /RestoreHealth, then sfc /scannow in a change) and re-run before IPU.'; MANUAL='Result could not be classified; review the output and CBS.log.' }[$verdict.Status]
+    $rec = @{ OK=''; ACTION='Resolve protected-file integrity violations (DISM /RestoreHealth, then sfc /scannow in a change) and re-run before IPU.'; WARNING='SFC did not check anything: a Windows repair is waiting for a reboot (see the pending-reboot row). Reboot, then re-run the assessment. This is not evidence of damaged files.'; MANUAL='Result could not be classified; review the output and CBS.log.' }[$verdict.Status]
     Add-Result 'WINDOWS_HEALTH' 'SFC VerifyOnly' $verdict.Status ('ExitCode=' + $r.ExitCode + ', Basis=' + $verdict.Basis) @($duration,$summary) -Recommendation $rec -Source 'sfc.exe /verifyonly, CBS.log'
 }
 
