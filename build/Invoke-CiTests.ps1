@@ -6,7 +6,13 @@
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '', Justification = 'GitHub workflow commands must be written to the host stream.')]
 [CmdletBinding()]
-param([string]$Path = './tests', [switch]$Coverage)
+param(
+    [string]$Path = './tests',
+    [switch]$Coverage,
+    # With -Coverage (#127): fail below this share of src/*.ps1 commands, and
+    # fail when a function in src/ has no executed command at all.
+    [ValidateRange(0, 100)][double]$MinimumCoverage = 0
+)
 
 $ErrorActionPreference = 'Stop'
 if (-not (Test-Path -LiteralPath 'src/Windows-IPU-Readiness-Assessment.ps1')) {
@@ -46,6 +52,11 @@ foreach ($c in @($result.FailedContainers)) {
 }
 Write-Annotation 'notice' ('Pester on PowerShell ' + $PSVersionTable.PSVersion) ('Passed {0}, Failed {1}, Skipped {2}, NotRun {3}' -f $result.PassedCount, $result.FailedCount, $result.SkippedCount, $result.NotRunCount)
 $lines = @('### Pester on PowerShell ' + $PSVersionTable.PSVersion, '', ('Passed {0}, failed {1}, skipped {2}.' -f $result.PassedCount, $result.FailedCount, $result.SkippedCount))
+$gateFailed = $false
+if ($Coverage -and -not $result.CodeCoverage) {
+    Write-Annotation 'error' 'Code coverage' 'Coverage was requested but Pester returned no coverage data.'
+    $gateFailed = $true
+}
 if ($Coverage -and $result.CodeCoverage) {
     $pct = [math]::Round($result.CodeCoverage.CoveragePercent, 1)
     $lines += ('Code coverage of src/*.ps1: **{0}%** ({1} of {2} commands).' -f $pct, $result.CodeCoverage.CommandsExecutedCount, $result.CodeCoverage.CommandsAnalyzedCount)
@@ -58,6 +69,16 @@ if ($Coverage -and $result.CodeCoverage) {
     if ($untested.Count -gt 0) { $untestedText = $untested -join ', ' }
     Write-Annotation 'notice' 'Functions without any executed command' ('{0} of {1} functions: {2}' -f $untested.Count, ($ran.Count + $untested.Count), $untestedText)
     $lines += ('Functions without any executed command: {0} of {1} ({2}).' -f $untested.Count, ($ran.Count + $untested.Count), $untestedText)
+    # The floor (#127). Raise MinimumCoverage in ci.yml as coverage grows.
+    if ($MinimumCoverage -gt 0 -and $result.CodeCoverage.CoveragePercent -lt $MinimumCoverage) {
+        Write-Annotation 'error' 'Coverage below the floor' ('{0}% of src/*.ps1 commands executed; the floor is {1}%. Add tests for the new code.' -f $pct, $MinimumCoverage)
+        $lines += ('**Coverage {0}% is below the floor of {1}%.**' -f $pct, $MinimumCoverage)
+        $gateFailed = $true
+    }
+    if ($MinimumCoverage -gt 0 -and $untested.Count -gt 0) {
+        Write-Annotation 'error' 'Functions without tests' ('No command ran in: {0}. Every function in src/ needs at least one test that runs it.' -f $untestedText)
+        $gateFailed = $true
+    }
 }
 if ($env:GITHUB_STEP_SUMMARY) { $lines -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8 }
-if ($result.Result -ne 'Passed') { exit 1 }
+if ($result.Result -ne 'Passed' -or $gateFailed) { exit 1 }
