@@ -86,6 +86,10 @@ BeforeAll {
         if ($script:Fake.Cim['Win32_ComputerSystem'].PartOfDomain) { return (New-FakeGpXml) }
         return (New-FakeGpXml -Workgroup)
     }
+    function Get-GpoListRegistryEntry {
+        if ($script:Fake.GpoListError) { throw $script:Fake.GpoListError }
+        return ,@($script:Fake.GpoList | Where-Object { $_ })
+    }
     function Get-AdComputerGroup {
         if ($script:Fake.AdError) { throw $script:Fake.AdError }
         return ,@('CORP\Domain Computers', 'CORP\Patch Ring 2', 'CORP\Servers - All')
@@ -658,6 +662,29 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $null = Invoke-TestCheck 'grouppolicy'
             (Get-Row 'GROUP_POLICY' 'GroupPolicyScope')[0].Status | Should -Be 'MANUAL'
             $script:Data.Snapshot.ContainsKey('Gpos') | Should -BeFalse
+        }
+        It 'gpresult without RSoP data as SYSTEM: applied GPOs from the registry, AD groups still listed (#160)' {
+            $script:Fake.GpResultError = 'gpresult wrote no result (exit 0): INFO: The user "CORP\SRV01$" does not have RSoP data.'
+            $script:Fake.GpoList = @(
+                [pscustomobject]@{ DisplayName = 'Server Baseline'; GPOName = '{11111111-1111-1111-1111-111111111111}'; Link = 'LDAP://OU=Servers,DC=corp,DC=example,DC=test' },
+                [pscustomobject]@{ DisplayName = 'Default Domain Policy'; GPOName = '{31B2F340-016D-11D2-945F-00C04FB984F9}'; Link = 'LDAP://DC=corp,DC=example,DC=test' },
+                [pscustomobject]@{ DisplayName = 'Local Group Policy'; GPOName = 'LocalGPO'; Link = 'Local' })
+            $null = Invoke-TestCheck 'grouppolicy'
+            @(Get-Row 'GROUP_POLICY' 'GroupPolicyScope' | Where-Object { $_.Status -eq 'MANUAL' }).Count | Should -Be 0
+            (Get-Row 'GROUP_POLICY' 'GroupPolicySource')[0].Value | Should -Match 'registry'
+            (Get-Row 'GROUP_POLICY' 'GroupPolicySource')[0].Details | Should -Match 'does not have RSoP data'
+            $gpo = (Get-Row 'GROUP_POLICY' 'GPO: Server Baseline')[0]
+            $gpo.Details | Should -Match 'Linked at corp\.example\.test/Servers'
+            $gpo.Status | Should -Be 'WARNING'   # the OS-version WMI filter is still found in AD by GUID
+            (Get-Row 'GROUP_POLICY' 'ADGroup').Count | Should -Be 3
+            $script:Data.Snapshot.Gpos | Should -Contain 'Server Baseline'
+        }
+        It 'gpresult and the registry both failing: MANUAL, AD groups still listed (#160)' {
+            $script:Fake.GpResultError = 'gpresult wrote no result (exit 1)'
+            $script:Fake.GpoListError = 'Simulated: key missing'
+            $null = Invoke-TestCheck 'grouppolicy'
+            (Get-Row 'GROUP_POLICY' 'GroupPolicyScope')[0].Status | Should -Be 'MANUAL'
+            (Get-Row 'GROUP_POLICY' 'ADGroup').Count | Should -Be 3
         }
         It 'Group Policy not applied for longer than GroupPolicyMaxAgeDays is a WARNING (#80)' {
             $script:Fake.GpLastApplied = (Get-Date).AddDays(-30)
