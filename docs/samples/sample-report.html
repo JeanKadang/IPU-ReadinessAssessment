@@ -2,7 +2,7 @@
 <title>IPU Assessment - SRV-APP01</title>
 <style>
 /* Colour tokens. Contrast (WCAG 2.1) is checked by the tests: text >= 4.5:1, focus outline >= 3:1, in both themes. */
-:root{--ink:#16202e;--muted:#5d6a79;--line:#dde3ea;--bg:#f3f5f8;--panel:#ffffff;--navy:#16365f;--heading:#16365f;--th-bg:#eef2f7;--th-ink:#30475f;--focus:#16365f;--partial-bg:#fff4d6;--partial-ink:#5c4400;--partial-line:#e6c46a;--blocker:#7a1717;--action:#b42318;--warning:#9a5800;--manual:#5b47a0;--ok:#17703a;--info:#4a6578}
+:root{--ink:#16202e;--muted:#5d6a79;--line:#dde3ea;--bg:#f3f5f8;--panel:#ffffff;--navy:#16365f;--heading:#16365f;--th-bg:#eef2f7;--th-ink:#30475f;--focus:#16365f;--partial-bg:#fff4d6;--partial-ink:#5c4400;--partial-line:#e6c46a;--special:#0f4c5c;--blocker:#7a1717;--action:#b42318;--warning:#9a5800;--manual:#5b47a0;--ok:#17703a;--info:#4a6578}
 @media (prefers-color-scheme: dark){:root{--ink:#e6edf5;--muted:#a9b6c4;--line:#2c3947;--bg:#0e141b;--panel:#16202b;--heading:#a9c8f0;--th-bg:#1e2a37;--th-ink:#c5d3e0;--focus:#8fb8ff;--partial-bg:#3a2e0b;--partial-ink:#ffe08a;--partial-line:#7a6220}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 "Segoe UI",Arial,sans-serif}
 .wrap{max-width:1440px;margin:auto;padding:24px 16px}
@@ -22,20 +22,20 @@ section,details{background:var(--panel);border:1px solid var(--line);border-radi
 section{padding:18px 20px}h2{font-size:18px;margin:0 0 6px;color:var(--heading)}.lead{color:var(--muted);margin:0 0 12px}
 summary{cursor:pointer;font-size:16px;font-weight:600;color:var(--heading);padding:14px 20px}summary:focus-visible{outline:3px solid var(--focus);outline-offset:2px;border-radius:8px}details>div{padding:0 20px 18px}
 .badge{display:inline-block;color:#fff;font-weight:700;font-size:11px;letter-spacing:.03em;padding:3px 8px;border-radius:999px;white-space:nowrap}
-.s-blocker{background:var(--blocker)}.s-action{background:var(--action)}.s-warning{background:var(--warning)}.s-manual{background:var(--manual)}.s-ok{background:var(--ok)}.s-info{background:var(--info)}
+.s-special{background:var(--special)}.s-blocker{background:var(--blocker)}.s-action{background:var(--action)}.s-warning{background:var(--warning)}.s-manual{background:var(--manual)}.s-ok{background:var(--ok)}.s-info{background:var(--info)}
 .scroll{width:100%;overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:860px}
 th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--line);padding:8px}
 th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
 .nw{white-space:nowrap}.txt{overflow-wrap:anywhere}.item{min-width:150px;overflow-wrap:break-word}.cb{width:64px;white-space:nowrap;color:var(--muted)}.cb span[aria-hidden]{font-size:18px}.cbt{font-size:11px}
 .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 24px}.fact{border-bottom:1px solid var(--line);padding:8px 0}.fact b{display:block;color:var(--muted);font-size:12px;font-weight:600}
-.legend p{margin:6px 0}.muted{color:var(--muted)}footer{padding:16px 2px;color:var(--muted);font-size:12px}
+.special{border-left:6px solid var(--special)}.special h3{font-size:15px;margin:14px 0 4px;color:var(--heading)}.special-banner{font-size:15px}.legend p{margin:6px 0}.muted{color:var(--muted)}footer{padding:16px 2px;color:var(--muted);font-size:12px}
 @media(max-width:900px){.cards{grid-template-columns:repeat(2,1fr)}.facts{grid-template-columns:1fr}}
 @media print{.copy{display:none!important}a.ext::after{content:" (" attr(href) ")";font-size:9px;overflow-wrap:anywhere}:root{--ink:#16202e;--muted:#5d6a79;--line:#dde3ea;--bg:#ffffff;--panel:#ffffff;--heading:#16365f;--th-bg:#eef2f7;--th-ink:#30475f;--partial-bg:#fff4d6;--partial-ink:#5c4400;--partial-line:#e6c46a}body{background:#fff;color:#16202e}.wrap{max-width:none;padding:0}details{break-inside:avoid}.scroll{overflow:visible}table{min-width:0;font-size:10px}}
 </style></head><body><div class="wrap">
 <div class="hero"><h1>Windows Server IPU Readiness Assessment</h1>
 <p><strong>SRV-APP01</strong> &nbsp;&rarr;&nbsp; Windows Server 2025</p>
-<p>Started 2026-10-06 09:44 &nbsp;|&nbsp; Completed 2026-10-06 09:58 &nbsp;|&nbsp; Runtime 00:14:00 &nbsp;|&nbsp; Collector 4.4.0</p>
+<p>Started 2026-10-06 09:44 &nbsp;|&nbsp; Completed 2026-10-06 09:58 &nbsp;|&nbsp; Runtime 00:14:00 &nbsp;|&nbsp; Collector 4.5.0</p>
 <p class="verdict">Overall IPU assessment: <span class="badge s-blocker">BLOCKER</span></p></div>
 <div class="cards">
 <a class="card" href="#decision" aria-label="1 BLOCKER findings - go to the list"><small>BLOCKER</small><b>1</b></a>
@@ -58,14 +58,16 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
 <div class="fact"><b>Endpoint protection</b>Trend Micro Deep Security Agent (Server &amp; Workload Protection)</div>
 <div class="fact"><b>VMware Tools</b>Version=12.3.5.22544099 | VMTools service Running, Auto</div>
 <div class="fact"><b>Setup compatibility scan</b>0xC1900210 - Setup found no compatibility issues. | Duration=00:11:05 | ImageIndex=2</div>
-<div class="fact"><b>RDP access</b>GO (no local blocker)</div>
+<div class="fact"><b>RDP access</b>GO (no local blocker), NLA unknown</div>
 <div class="fact"><b>RDP drive redirection</b>Allowed locally</div>
 <div class="fact"><b>C: drive</b>Size 100,00 GB, free 22,00 GB</div>
 <div class="fact"><b>Memory GB / logical CPUs</b>16,00 / 2</div>
 <div class="fact"><b>Policy evidence</b>C:\Temp\Tools\PolBackup\SRV-APP01-IPU-Policy-20261006-094454.zip</div>
+<div class="fact"><b>Network evidence</b>C:\Temp\Tools\PolBackup\SRV-APP01-IPU-Network-20261006-094431.zip</div>
 <div class="fact"><b>Machine-readable result</b>C:\Temp\IPU-Assessment\SRV-APP01-IPU-Assessment.json</div>
 </div></section>
 <section class="legend"><h2>Status meaning</h2>
+<p><span class="badge s-special">SPECIAL</span> Not a standard in-place upgrade (cluster node, domain controller): a separate plan, extra time and coordination, more risk. Tell the project and the customer.</p>
 <p><span class="badge s-blocker">BLOCKER</span> The selected IPU path or standard procedure does not apply.</p>
 <p><span class="badge s-action">ACTION</span> Must be fixed or investigated before IPU.</p>
 <p><span class="badge s-warning">WARNING</span> Planning risk.</p>
@@ -118,11 +120,12 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
 <tr><td class="nw"><span class="badge s-info">INFO</span></td><td class="nw">Storage</td><td class="item">Disk1</td><td class="txt">SizeGB=30,00</td><td class="txt">BusType=SAS | Style=GPT | Offline=False | P1:Basic:20480MB:D::Label=Data:NTFS | P2:Basic:10240MB:MountedAt=D:\Logs\:Label=Logs:NTFS</td><td class="txt"></td><td class="txt muted"></td></tr>
 </tbody></table></div>
 </div></details>
-<details open><summary>Network (3)</summary><div>
+<details open><summary>Network (4)</summary><div>
 <div class="scroll"><table><caption class="sr">Network: all records</caption><thead><tr><th scope="col">Status</th><th scope="col">Area</th><th scope="col">Item</th><th scope="col">Value</th><th scope="col">Details</th><th scope="col">Recommendation</th><th scope="col">Source</th></tr></thead><tbody>
 <tr><td class="nw"><span class="badge s-manual">MANUAL</span></td><td class="nw">Hosts file and static routes</td><td class="item">HostsFile</td><td class="txt">ActiveEntries=1</td><td class="txt">C:\Windows\System32\drivers\etc\hosts</td><td class="txt">Confirm owner and purpose of each hosts entry and test the affected name resolution after IPU.</td><td class="txt muted"></td></tr>
+<tr><td class="nw"><span class="badge s-ok">OK</span></td><td class="nw">Network adapters and teaming</td><td class="item">NetworkEvidence</td><td class="txt">C:\Temp\Tools\PolBackup\SRV-APP01-IPU-Network-20261006-094431.zip</td><td class="txt">Files=ipconfig-all.txt, route-print.txt, netsh-ipv4-show-config.txt, netsh-interface-dump.txt, adapter-advanced-properties.txt</td><td class="txt">Copy it off the server before the change: it holds the full IP configuration, is not redacted and must not be shared outside the team. netsh-interface-dump.txt is a netsh script that can put the configuration back (read it first; see the user guide).</td><td class="txt muted"></td></tr>
 <tr><td class="nw"><span class="badge s-ok">OK</span></td><td class="nw">Network adapters and teaming</td><td class="item">NICTeaming</td><td class="txt">No LBFO team detected</td><td class="txt"></td><td class="txt"></td><td class="txt muted"></td></tr>
-<tr><td class="nw"><span class="badge s-info">INFO</span></td><td class="nw">Network adapters and teaming</td><td class="item">Ethernet0</td><td class="txt">IPv4=10.20.30.40 / 255.255.255.0</td><td class="txt">Gateway=10.20.30.1 | DNS=10.20.1.10,10.20.1.11 | DHCP=False</td><td class="txt"></td><td class="txt muted"></td></tr>
+<tr><td class="nw"><span class="badge s-info">INFO</span></td><td class="nw">Network adapters and teaming</td><td class="item">Ethernet0</td><td class="txt">IPv4=10.20.30.40 / 255.255.255.0</td><td class="txt">Gateway=10.20.30.1 | DNS=10.20.1.10,10.20.1.11 | DHCP=False | MAC=00:50:56:00:00:01 | DNS suffix=corp.example.test | Register in DNS=Yes, with suffix=No | WINS=(none) | NetBIOS over TCP/IP=Default (set by DHCP) | Metric=15</td><td class="txt"></td><td class="txt muted"></td></tr>
 </tbody></table></div>
 </div></details>
 <details><summary>Access and Remote Desktop (3)</summary><div>
@@ -165,6 +168,6 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
 <tr><td>Setup compatibility scan</td><td>Slow</td><td class="nw"><span class="badge s-ok">OK</span> Completed</td><td class="nw">00:11:05</td><td class="txt"></td></tr>
 </tbody></table></div><h2 style="margin-top:16px">Records</h2>
 </div></details>
-<footer>Collector 4.4.0 | 35 records | Read-only local assessment. It does not prove backups, credentials, licensing or application/vendor support. Commands are shown, never run, by this script.</footer></div>
+<footer>Collector 4.5.0 | 36 records | Read-only local assessment. It does not prove backups, credentials, licensing or application/vendor support. Commands are shown, never run, by this script.</footer></div>
 <script type="text/javascript">document.documentElement.className+=" js";document.addEventListener("click",function(e){var b=e.target;if(!b||!b.classList||!b.classList.contains("copy"))return;var t=b.getAttribute("data-cmd");var done=function(){b.textContent="Copied";setTimeout(function(){b.textContent="Copy"},1500)};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,function(){})}else{var a=document.createElement("textarea");a.value=t;document.body.appendChild(a);a.select();try{document.execCommand("copy");done()}catch(x){}document.body.removeChild(a)}});document.addEventListener("click",function(e){var b=e.target;if(!b||!b.classList||!b.classList.contains("tgl"))return;var o=b.getAttribute("data-open")==="1";var d=document.querySelectorAll("details");for(var i=0;i<d.length;i++){d[i].open=o}});var closedForPrint=[];window.addEventListener("beforeprint",function(){closedForPrint=[];var d=document.querySelectorAll("details:not([open])");for(var i=0;i<d.length;i++){d[i].open=true;closedForPrint.push(d[i])}});window.addEventListener("afterprint",function(){for(var i=0;i<closedForPrint.length;i++){closedForPrint[i].open=false}closedForPrint=[]});</script>
 </body></html>

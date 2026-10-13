@@ -1,6 +1,6 @@
 {
   "Schema": "IPU-Assessment/1",
-  "CollectorVersion": "4.4.0",
+  "CollectorVersion": "4.5.0",
   "ComputerName": "SRV-APP01",
   "Mode": "Pre",
   "TargetServerVersion": "2025",
@@ -10,6 +10,7 @@
   "Redacted": false,
   "Overall": "BLOCKER",
   "Counts": {
+    "SPECIAL": 0,
     "BLOCKER": 1,
     "ACTION": 2,
     "WARNING": 5,
@@ -23,6 +24,7 @@
     "Platform": "Virtual (VMware) | Manufacturer=VMware, Inc. | Model=VMware7,1",
     "DomainRole": "Member server",
     "Uac": null,
+    "Nla": "Unknown",
     "AdLocation": null,
     "SqlServer": "MSSQLSERVER=SQL Server 2017",
     "Activation": "Status=Licensed, Channel=Volume:GVLK",
@@ -322,8 +324,23 @@
       "Status": "INFO",
       "Kind": "Evidence",
       "Value": "IPv4=10.20.30.40 / 255.255.255.0",
-      "Details": "Gateway=10.20.30.1 | DNS=10.20.1.10,10.20.1.11 | DHCP=False",
+      "Details": "Gateway=10.20.30.1 | DNS=10.20.1.10,10.20.1.11 | DHCP=False | MAC=00:50:56:00:00:01 | DNS suffix=corp.example.test | Register in DNS=Yes, with suffix=No | WINS=(none) | NetBIOS over TCP/IP=Default (set by DHCP) | Metric=15",
       "Recommendation": "",
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
+    },
+    {
+      "CheckId": "network",
+      "Area": "NETWORK",
+      "Item": "NetworkEvidence",
+      "Status": "OK",
+      "Kind": "Evidence",
+      "Value": "C:\\Temp\\Tools\\PolBackup\\SRV-APP01-IPU-Network-20261006-094431.zip",
+      "Details": "Files=ipconfig-all.txt, route-print.txt, netsh-ipv4-show-config.txt, netsh-interface-dump.txt, adapter-advanced-properties.txt",
+      "Recommendation": "Copy it off the server before the change: it holds the full IP configuration, is not redacted and must not be shared outside the team. netsh-interface-dump.txt is a netsh script that can put the configuration back (read it first; see the user guide).",
       "Source": "",
       "Command": "",
       "CommandKind": "",
@@ -702,5 +719,6 @@
       "Message": ""
     }
   ],
-  "Snapshot": {}
+  "Snapshot": {},
+  "Special": null
 }
