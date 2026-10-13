@@ -407,6 +407,10 @@ function Get-RedactionLiteralFromResult {
         # description.
         if ($r.Area -eq 'FILE_SHARES' -and [string]$r.Item -match '^Share: (.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'NAME' } }
         if ($r.Area -eq 'FILE_SHARES' -and (@($r.Details) -join ' | ') -match '(?:^|\|\s*)Description=([^|]+)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'NAME' } }
+        # Print servers (#148): printer, share and port names, port host names.
+        if ($r.Area -eq 'PRINTING' -and [string]$r.Item -match '^(?:Printer|Port): (.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'NAME' } }
+        if ($r.Area -eq 'PRINTING' -and (@($r.Details) -join ' | ') -match '(?:^|\|\s*)Share=([^|]+)' -and $Matches[1].Trim() -ne '(not shared)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'NAME' } }
+        if ($r.Area -eq 'PRINTING' -and (@($r.Details) -join ' | ') -match '(?:^|\|\s*)Address=([^|:\s]+)' -and $Matches[1] -notmatch '^[0-9.]+$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'HOST' } }
     }
     return ,$found
 }

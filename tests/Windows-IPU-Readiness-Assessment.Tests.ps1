@@ -2513,7 +2513,9 @@ Describe 'RedactExisting recovers every name the collector registers (#172)' {
             'if ($user -and $user -notmatch $builtIn) { Add-RedactionLiteral $user ''ACCOUNT'' }',
             'Add-RedactionLiteral ([string]$cluster.Name) ''HOST''',
             'foreach ($n in @(Get-ClusterNode -ErrorAction SilentlyContinue)) { Add-RedactionLiteral ([string]$n.Name) ''HOST''; Add-Result ''CLUSTER'' (''Node: '' + $n.Name) ''INFO'' (''State='' + $n.State) -Source ''Get-ClusterNode'' }',
-            'if ($act.KmsHost) { foreach ($h in @($act.KmsHost, ($act.KmsHost -split ''\.'')[0]) | Select-Object -Unique) { Add-RedactionLiteral $h ''HOST'' }; $script:Data.KmsEndpoint = $act.KmsEndpoint } elseif ($script:Data.ActivationKind -eq ''KMS'') { $script:Data.KmsEndpoint = ''found via DNS'' }'
+            'if ($act.KmsHost) { foreach ($h in @($act.KmsHost, ($act.KmsHost -split ''\.'')[0]) | Select-Object -Unique) { Add-RedactionLiteral $h ''HOST'' }; $script:Data.KmsEndpoint = $act.KmsEndpoint } elseif ($script:Data.ActivationKind -eq ''KMS'') { $script:Data.KmsEndpoint = ''found via DNS'' }',
+            'foreach ($p in $printers) { Add-RedactionLiteral $p.Name ''NAME''; if ($p.ShareName) { Add-RedactionLiteral $p.ShareName ''NAME'' } }',
+            'foreach ($pt in $ports) { Add-RedactionLiteral $pt.Name ''NAME''; if ($pt.Address -and $pt.Address -notmatch ''^[0-9.:]+$'') { Add-RedactionLiteral $pt.Address ''HOST'' } }'
         )
         @($sites | Where-Object { $known -notcontains $_ }) | Should -BeNullOrEmpty
     }
@@ -2849,6 +2851,7 @@ Describe 'Redaction covers every collected kind (#124)' {
             Mac = ((1..6 | ForEach-Object { New-Hex 2 }) -join '-').ToUpperInvariant()
             Sid = 'S-1-5-21-' + $rng.Next(100000, 999999) + '-' + $rng.Next(100000, 999999) + '-' + $rng.Next(100000, 999999) + '-1105'
             Thumbprint = (New-Hex 40).ToUpperInvariant()
+            Printer = 'PR-' + (New-Word); PrinterShare = 'PS' + (New-Word); PrinterPort = 'port_' + (New-Word); PrinterHost = 'prn' + (New-Word 5) + '.' + $fqdn
         }
         $script:RedValues = $v
         $script:RedSavedComputer = $script:ComputerName
@@ -2863,6 +2866,7 @@ Describe 'Redaction covers every collected kind (#124)' {
         Add-RedactionLiteral $v.Share 'NAME'; Add-RedactionLiteral $v.ShareDescription 'NAME'
         Add-RedactionLiteral $v.Cluster 'HOST'; Add-RedactionLiteral $v.Node 'HOST'
         Add-RedactionLiteral ($v.KmsHost + '.' + $fqdn) 'HOST'; Add-RedactionLiteral $v.KmsHost 'HOST'
+        Add-RedactionLiteral $v.Printer 'NAME'; Add-RedactionLiteral $v.PrinterShare 'NAME'; Add-RedactionLiteral $v.PrinterPort 'NAME'; Add-RedactionLiteral $v.PrinterHost 'HOST'
         $script:Results.Clear(); $script:CheckRuns.Clear()
         Add-Result 'ACCESS' 'DomainMembership' 'INFO' ('Domain=' + $fqdn) ('NetBIOS=' + $nb)
         Add-Result 'ACCESS' 'ComputerObjectOu' 'INFO' ('CN=' + $computer + ',OU=' + $v.Ou + ',OU=Servers,DC=' + $label + ',DC=corp,DC=test')
@@ -2879,6 +2883,8 @@ Describe 'Redaction covers every collected kind (#124)' {
         Add-Result 'LICENSING' 'WindowsActivation' 'OK' 'Licensed (KMS)' ('KMS host: ' + $v.KmsHost + '.' + $fqdn + ':1688 (found via DNS)')
         Add-Result 'NETWORK' 'Ethernet0' 'INFO' ('IPv4=' + $v.IPv4 + ' / 255.255.255.0') @(('Gateway=' + $v.IPv4Gateway), ('DNS=' + $v.IPv4Gateway), ('MAC=' + $v.Mac), ('IPv6=' + $v.IPv6 + ',' + $v.LinkLocal), ('DNS suffix=' + $fqdn))
         Add-Result 'PKI' 'Certificate' 'INFO' ('CN=' + $v.HostInDomain + ', O=' + $v.Org) ('Thumbprint=' + $v.Thumbprint)
+        Add-Result 'PRINTING' ('Printer: ' + $v.Printer) 'INFO' ('Driver=Example PCL6; Port=' + $v.PrinterPort) @(('Share=' + $v.PrinterShare), 'Published in AD=True')
+        Add-Result 'PRINTING' ('Port: ' + $v.PrinterPort) 'WARNING' 'LPR port monitor' @(('Address=' + $v.PrinterHost), 'Queue=labels')
         Add-Result 'NETWORK_DEPENDENCY' 'Hosts line 1' 'INFO' ('Address=' + $v.IPv4) ('Names=' + $v.HostCom + ',' + $v.HostDk + ',' + $v.HostLocal + ',' + $v.HostInternal)
         $script:CheckRuns.Add([pscustomobject]@{ Id = 'baseline'; Name = 'Baseline inventory'; Phase = 'Fast'; Outcome = 'Completed'; Duration = '00:00:01'; Seconds = 1; Message = '' })
         $script:RedRows = $script:Results.ToArray()
@@ -2927,5 +2933,93 @@ Describe 'Redaction covers every collected kind (#124)' {
     }
     It 'fails when a value is left in (the check itself works)' {
         Get-Survivor ('text with ' + $script:RedValues.Share + ' inside') | Should -Be @('Share=' + $script:RedValues.Share)
+    }
+}
+
+Describe 'Print servers (#148)' {
+    It 'port kind: <Desc> / <Monitor> / <Protocol> -> <Kind>' -TestCases @(
+        @{ Desc = 'Standard TCP/IP Port'; Monitor = 'TCPMON.DLL'; Protocol = '1'; Kind = 'Standard TCP/IP (RAW)' }
+        @{ Desc = 'Standard TCP/IP Port'; Monitor = 'TCPMON.DLL'; Protocol = '2'; Kind = 'Standard TCP/IP (LPR protocol)' }
+        @{ Desc = 'LPR Port'; Monitor = 'LPR Port'; Protocol = ''; Kind = 'LPR port monitor' }
+        @{ Desc = 'WSD Port'; Monitor = 'WSD Port'; Protocol = ''; Kind = 'WSD' }
+        @{ Desc = 'Local Port'; Monitor = 'Local Port'; Protocol = ''; Kind = 'Local' }
+        @{ Desc = 'Virtual printer port for USB'; Monitor = 'USB Monitor'; Protocol = ''; Kind = 'USB' }
+        @{ Desc = 'Example Secure Port'; Monitor = 'Example Port Monitor'; Protocol = ''; Kind = 'Other: Example Secure Port' }
+    ) {
+        Get-PrinterPortKind $Desc $Monitor $Protocol | Should -Be $Kind
+    }
+    It 'backup space: 1.5 x the driver store + 1 GB, at the boundary' {
+        $need = [long](1.5 * 2GB) + [long]1GB
+        (Get-PrintBackupSpaceDecision ([long]2GB) $need).Proceed | Should -BeTrue
+        (Get-PrintBackupSpaceDecision ([long]2GB) ($need - 1)).Proceed | Should -BeFalse
+        (Get-PrintBackupSpaceDecision ([long]2GB) $need).RequiredBytes | Should -Be $need
+        (Get-PrintBackupSpaceDecision ([long]0) ([long]1GB)).Proceed | Should -BeTrue
+        (Get-PrintBackupSpaceDecision ([long]0) ([long]1GB - 1)).Proceed | Should -BeFalse
+    }
+    It 'third-party port monitors and print processors are WARNINGs; Microsoft ones are not' {
+        $items = @(
+            [pscustomobject]@{ Type = 'PortMonitor'; Name = 'Local Port'; Driver = 'localspl.dll'; Company = 'Microsoft Corporation' }
+            [pscustomobject]@{ Type = 'PortMonitor'; Name = 'Example Port Monitor'; Driver = 'exmon.dll'; Company = 'Example Inc' }
+            [pscustomobject]@{ Type = 'PrintProcessor'; Name = 'exproc'; Driver = 'exproc.dll'; Company = '' }
+        )
+        $rows = @(Get-PrintComponentDecision $items 'Windows Server 2025')
+        ($rows | ForEach-Object { $_.Status + ' ' + $_.Item }) -join '; ' | Should -Be 'WARNING Port monitor: Example Port Monitor; WARNING Print processor: exproc'
+        $rows[1].Details | Should -Match 'unknown'
+        $ok = @(Get-PrintComponentDecision @($items[0]) 'Windows Server 2025')
+        $ok[0].Status | Should -Be 'OK'
+    }
+    It 'third-party drivers: WARNING, with the Windows Update note only for 2025' {
+        $drivers = @(
+            [pscustomobject]@{ Name = 'Example PCL6'; Environment = 'Windows x64'; Major = '3'; Manufacturer = 'Example Inc' }
+            [pscustomobject]@{ Name = 'Microsoft IPP Class Driver'; Environment = 'Windows x64'; Major = '4'; Manufacturer = 'Microsoft' }
+            [pscustomobject]@{ Name = 'Microsoft Print To PDF'; Environment = 'Windows x64'; Major = '4'; Manufacturer = 'Microsoft' }
+        )
+        $r = @(Get-PrinterDriverDecision $drivers 'Windows Server 2025' '2025')
+        $r[0].Status | Should -Be 'WARNING'
+        $r[0].Value | Should -Be 'Third-party=1 of 2 (x64)'
+        $r[0].Details | Should -Be 'Example PCL6 (v3, Example Inc)'
+        $r[0].Recommendation | Should -Match 'Windows Update'
+        (@(Get-PrinterDriverDecision $drivers 'Windows Server 2022' '2022'))[0].Recommendation | Should -Not -Match 'Windows Update'
+        (@(Get-PrinterDriverDecision @($drivers[1]) 'Windows Server 2025' '2025'))[0].Status | Should -Be 'OK'
+    }
+    It 'a printer with another driver after the upgrade is named' {
+        $before = @([pscustomobject]@{ Printer = 'P1'; Driver = 'Example PCL6' }, [pscustomobject]@{ Printer = 'P2'; Driver = 'Example PS' })
+        $after = @([pscustomobject]@{ Printer = 'P1'; Driver = 'Microsoft IPP Class Driver' }, [pscustomobject]@{ Printer = 'P2'; Driver = 'Example PS' })
+        $c = Compare-PrinterDriver $before $after
+        @($c) | Should -Be @('P1: Example PCL6 -> Microsoft IPP Class Driver')
+    }
+    It 'the post-upgrade comparison reports missing printers and ports (ACTION) and changed drivers (WARNING)' {
+        $before = [pscustomobject]@{ Printers = @('P1', 'P2'); PrinterPorts = @('IP_10.20.40.11', 'IP_10.20.40.12'); PrinterDrivers = @([pscustomobject]@{ Printer = 'P1'; Driver = 'Example PCL6' }) }
+        $after = [pscustomobject]@{ Printers = @('P1'); PrinterPorts = @('IP_10.20.40.11'); PrinterDrivers = @([pscustomobject]@{ Printer = 'P1'; Driver = 'Microsoft IPP Class Driver' }) }
+        $d = Compare-IPUSnapshot $before $after
+        (@($d | Where-Object { $_.Item -eq 'Printers missing after upgrade' }))[0].Status | Should -Be 'ACTION'
+        (@($d | Where-Object { $_.Item -eq 'Printers missing after upgrade' }))[0].Details | Should -Be 'P2'
+        (@($d | Where-Object { $_.Item -eq 'Printer ports missing after upgrade' }))[0].Status | Should -Be 'ACTION'
+        (@($d | Where-Object { $_.Item -eq 'Printer drivers changed' }))[0].Status | Should -Be 'WARNING'
+    }
+    It 'the export command for a manual run' {
+        Get-PrintBackupCommand 'E:\Export\' 'SRV01' | Should -Be '%windir%\System32\spool\tools\PrintBrm.exe -B -F E:\Export\SRV01-printers.printerExport'
+    }
+    It 'reads printers from CIM when the PrintManagement module is missing' {
+        Mock Test-CommandAvailable { $false }
+        Mock Get-CimRequired { @([pscustomobject]@{ Name = 'P1'; ShareName = 'P1S'; Shared = $true; Published = $false; DriverName = 'Example PCL6'; PortName = 'IP_10.20.40.11' }) } -ParameterFilter { $Class -eq 'Win32_Printer' }
+        Mock Get-CimSafe { @([pscustomobject]@{ Name = 'IP_10.20.40.11'; HostAddress = '10.20.40.11'; PortNumber = 9100; Protocol = 1; Queue = '' }) } -ParameterFilter { $Class -eq 'Win32_TCPIPPrinterPort' }
+        Mock Get-CimSafe { @([pscustomobject]@{ Name = 'Example PCL6,3,Windows x64'; SupportedPlatform = 'Windows x64'; Version = 3 }) } -ParameterFilter { $Class -eq 'Win32_PrinterDriver' }
+        $inv = Get-PrinterInventory
+        $inv.Printers[0].ShareName | Should -Be 'P1S'
+        $inv.Ports[0].Address | Should -Be '10.20.40.11'
+        $inv.Drivers[0].Name | Should -Be 'Example PCL6'
+        $inv.Drivers[0].Major | Should -Be '3'
+        $inv.Drivers[0].Environment | Should -Be 'Windows x64'
+    }
+    It 'RedactExisting recovers printer, share and port names and port host names' {
+        $rows = @(
+            [pscustomobject]@{ Area = 'PRINTING'; Item = 'Printer: Floor2-Color'; Value = 'Driver=Example PCL6; Port=IP_10.20.40.11'; Details = @('Share=Floor2C', 'Published in AD=True') }
+            [pscustomobject]@{ Area = 'PRINTING'; Item = 'Printer: Local-Only'; Value = 'Driver=Example PCL6; Port=LPT1:'; Details = @('Share=(not shared)', 'Published in AD=False') }
+            [pscustomobject]@{ Area = 'PRINTING'; Item = 'Port: lpr-label'; Value = 'LPR port monitor'; Details = @('Address=labelhost.corp.example.test', 'Queue=labels') }
+            [pscustomobject]@{ Area = 'PRINTING'; Item = 'Port: IP_10.20.40.11'; Value = 'Standard TCP/IP (RAW)'; Details = @('Address=10.20.40.11:9100') }
+        )
+        $l = Get-RedactionLiteralFromResult $rows
+        (@($l | ForEach-Object { $_.Kind + '=' + $_.Value }) -join '; ') | Should -Be 'NAME=Floor2-Color; NAME=Floor2C; NAME=Local-Only; NAME=lpr-label; HOST=labelhost.corp.example.test; NAME=IP_10.20.40.11'
     }
 }

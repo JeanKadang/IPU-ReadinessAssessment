@@ -158,6 +158,17 @@
           }
         },
         "Hosts": { "$ref": "#/definitions/stringList" },
+        "Printers": { "$ref": "#/definitions/stringList" },
+        "PrinterPorts": { "$ref": "#/definitions/stringList" },
+        "PrinterDrivers": {
+          "$ref": "#/definitions/list",
+          "description": "Driver of each printer (from 4.5.0, #148).",
+          "items": {
+            "type": "object",
+            "required": ["Printer", "Driver"],
+            "properties": { "Printer": { "type": "string" }, "Driver": { "type": "string" } }
+          }
+        },
         "Tasks": { "$ref": "#/definitions/stringList" },
         "Gpos": { "$ref": "#/definitions/stringList" },
         "Ou": { "$ref": "#/definitions/text" },

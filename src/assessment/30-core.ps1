@@ -10,7 +10,7 @@ $script:ProfileSettingNames = @(
     'MinimumCFreeGB','ExtendBlockGB','MinimumMemoryGB','MaxPatchAgeDays','UptimeWarningDays','GroupPolicyMaxAgeDays','AVMaxAgeDays',
     'CertificateWarningDays','SystemPartitionMinFreeMB','RecoveryPartitionMinFreeMB',
     'RunDISMScanHealth','RunSFCVerifyOnly','DISMTimeoutMinutes','SFCTimeoutMinutes','SlowCheckBudgetMinutes','CompatScanTimeoutMinutes',
-    'EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip','EnableIISConfigEvidence','EnableNetworkEvidence',
+    'EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip','EnableIISConfigEvidence','EnableNetworkEvidence','EnablePrintBackup','PrintBackupTimeoutMinutes',
     'WriteJson','RestrictOutputAcl','NumberCultureName'
 )
 $script:PatternFields = @('Label','App','Service','Display','Driver','Disabled','Link','LinkTitle')
@@ -82,6 +82,7 @@ $script:AreaMap = @{
     'DOMAIN_CONTROLLER'  = @{ Name='Domain controller';           Chapter='Workloads and Applications' }
     'WORKLOAD'           = @{ Name='Roles and workloads';         Chapter='Workloads and Applications' }
     'FILE_SHARES'        = @{ Name='File shares';                 Chapter='Workloads and Applications' }
+    'PRINTING'           = @{ Name='Print server';                Chapter='Workloads and Applications' }
     'ROLES'              = @{ Name='Installed roles/features';    Chapter='Workloads and Applications' }
     'APPLICATIONS'       = @{ Name='Installed applications';      Chapter='Workloads and Applications' }
     'PLATFORM'           = @{ Name='Platform';                    Chapter='Hardware and Virtualization' }
@@ -550,6 +551,75 @@ function Save-NetworkEvidence {
         $location = $zipPath
     }
     return [pscustomobject]@{ Location = $location; Folder = $Destination; Files = $saved; Failed = $failed }
+}
+
+# Print servers (#148): read-only helpers for the printers and printbackup
+# checks. Defined here (script scope), not inside Register-AssessmentCheck.
+function Get-FileCompanyName {
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
+    try { return [string]([Diagnostics.FileVersionInfo]::GetVersionInfo($Path).CompanyName) } catch { return '' }
+}
+
+function Get-PrintMonitorInventory {
+    # Port monitors and print processors registered with the spooler, with
+    # the company name of their DLL (registry and file version reads only).
+    $sys = Join-Path $env:windir 'System32'
+    $items = @()
+    $monitors = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Monitors'
+    foreach ($k in @(Get-ChildItem -LiteralPath $monitors -ErrorAction Stop)) {
+        $drv = [string](Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction SilentlyContinue).Driver
+        $path = $(if ($drv -and [IO.Path]::IsPathRooted($drv)) { $drv } elseif ($drv) { Join-Path $sys $drv } else { '' })
+        $items += [pscustomobject]@{ Type = 'PortMonitor'; Name = [string]$k.PSChildName; Driver = $drv; Company = (Get-FileCompanyName $path) }
+    }
+    $processors = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Environments\Windows x64\Print Processors'
+    foreach ($k in @(Get-ChildItem -LiteralPath $processors -ErrorAction SilentlyContinue)) {
+        $drv = [string](Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction SilentlyContinue).Driver
+        $path = $(if ($drv -and [IO.Path]::IsPathRooted($drv)) { $drv } elseif ($drv) { Join-Path $sys ('spool\prtprocs\x64\' + $drv) } else { '' })
+        $items += [pscustomobject]@{ Type = 'PrintProcessor'; Name = [string]$k.PSChildName; Driver = $drv; Company = (Get-FileCompanyName $path) }
+    }
+    return ,$items
+}
+
+function Get-PrintDriverStoreSize {
+    # Size of spool\drivers, every architecture: the PrintBrm export holds
+    # every driver package, so this is the estimate for the backup.
+    $root = Join-Path $env:windir 'System32\spool\drivers'
+    $sum = [long]0
+    foreach ($f in @(Get-ChildItem -LiteralPath $root -Recurse -File -Force -ErrorAction SilentlyContinue)) { $sum += [long]$f.Length }
+    return $sum
+}
+
+function Get-PrinterInventory {
+    # Printers, ports and drivers from the PrintManagement module, or from
+    # CIM where the module is missing (#94). Returns plain records.
+    $out = [pscustomobject]@{ Printers = @(); Ports = @(); Drivers = @(); Source = '' }
+    if (Test-CommandAvailable 'Get-Printer') {
+        $out.Source = 'Get-Printer, Get-PrinterPort, Get-PrinterDriver'
+        $out.Printers = @(Get-Printer -ErrorAction Stop | Where-Object { [string]$_.Type -ne 'Connection' } | ForEach-Object {
+            [pscustomobject]@{ Name = [string]$_.Name; ShareName = [string]$_.ShareName; Shared = [bool]$_.Shared; Published = [bool]$_.Published; DriverName = [string]$_.DriverName; PortName = [string]$_.PortName }
+        })
+        $out.Ports = @(Get-PrinterPort -ErrorAction Stop | ForEach-Object {
+            [pscustomobject]@{ Name = [string]$_.Name; Description = [string]$_.Description; Monitor = [string]$_.PortMonitor; Address = [string]$_.PrinterHostAddress; PortNumber = [string]$_.PortNumber; Protocol = [string]$_.Protocol; Queue = [string]$_.LprQueueName }
+        })
+        $out.Drivers = @(Get-PrinterDriver -ErrorAction Stop | ForEach-Object {
+            [pscustomobject]@{ Name = [string]$_.Name; Environment = [string]$_.PrinterEnvironment; Major = [string]$_.MajorVersion; Manufacturer = [string]$_.Manufacturer }
+        })
+        return $out
+    }
+    $out.Source = 'Win32_Printer, Win32_TCPIPPrinterPort, Win32_PrinterDriver'
+    $out.Printers = @(Get-CimRequired 'Win32_Printer' 'Local=True' | ForEach-Object {
+        [pscustomobject]@{ Name = [string]$_.Name; ShareName = [string]$_.ShareName; Shared = [bool]$_.Shared; Published = [bool]$_.Published; DriverName = [string]$_.DriverName; PortName = [string]$_.PortName }
+    })
+    $out.Ports = @(Get-CimSafe 'Win32_TCPIPPrinterPort' | ForEach-Object {
+        [pscustomobject]@{ Name = [string]$_.Name; Description = 'Standard TCP/IP Port'; Monitor = 'TCPMON.DLL'; Address = [string]$_.HostAddress; PortNumber = [string]$_.PortNumber; Protocol = [string]$_.Protocol; Queue = [string]$_.Queue }
+    })
+    # Win32_PrinterDriver.Name is "<driver>,<version>,<environment>".
+    $out.Drivers = @(Get-CimSafe 'Win32_PrinterDriver' | ForEach-Object {
+        $p = @(([string]$_.Name) -split ',')
+        [pscustomobject]@{ Name = $p[0]; Environment = $(if ($p.Count -gt 2) { $p[2] } else { [string]$_.SupportedPlatform }); Major = $(if ($p.Count -gt 1) { $p[1] } else { [string]$_.Version }); Manufacturer = '' }
+    })
+    return $out
 }
 
 # Optional PowerShell modules and the checks that need them (#94). A missing
