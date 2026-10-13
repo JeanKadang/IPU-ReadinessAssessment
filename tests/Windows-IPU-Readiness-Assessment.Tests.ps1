@@ -2513,3 +2513,31 @@ Describe 'RedactExisting recovers every name the collector registers (#172)' {
         @($sites | Where-Object { $known -notcontains $_ }) | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Post-upgrade comparison: per-user services and on-demand ports (#173)' {
+    BeforeAll {
+        function New-Svc([string]$Name, [string]$State, [string]$Mode) { [pscustomobject]@{ Name = $Name; State = $State; StartMode = $Mode } }
+        $before = [pscustomobject]@{
+            Services = @((New-Svc 'CDPUserSvc_11a24784c' 'Running' 'Auto'), (New-Svc 'OneSyncSvc_11a24784c' 'Running' 'Auto'), (New-Svc 'GoneSvc' 'Running' 'Auto'), (New-Svc 'SSDPSRV' 'Running' 'Manual'), (New-Svc 'AppSvc' 'Running' 'Auto'))
+            Ports = @('UDP:1900', 'TCP:9000', 'TCP:8080')
+            PortOwners = [pscustomobject]@{ 'TCP:9000' = 'Service AppSvc'; 'TCP:8080' = 'Process app' }
+        }
+        $after = [pscustomobject]@{
+            Services = @((New-Svc 'SSDPSRV' 'Stopped' 'Manual'), (New-Svc 'AppSvc' 'Running' 'Auto'))
+            Ports = @()
+        }
+        $script:Diff173 = Compare-IPUSnapshot $before $after
+        function Get-Row173([string]$Item) { @($script:Diff173 | Where-Object { $_.Item -eq $Item }) | Select-Object -First 1 }
+    }
+    It 'per-user service instances without a signed-in user are INFO, other missing services stay WARNING' {
+        (Get-Row173 'Service changes made by Windows').Details | Should -Match 'CDPUserSvc \(per-user service'
+        (Get-Row173 'Service changes made by Windows').Details | Should -Match 'OneSyncSvc'
+        (Get-Row173 'Services no longer present').Details | Should -Be 'GoneSvc'
+    }
+    It 'a port whose service is no longer started automatically is INFO, even when the service was Manual before' {
+        (Get-Row173 'Ports closed with their service').Details | Should -Be 'UDP:1900'
+    }
+    It 'a port whose service still runs automatically, or with a process owner, stays WARNING' {
+        (Get-Row173 'Listening ports missing after upgrade').Details | Should -Be 'TCP:8080, TCP:9000'
+    }
+}
