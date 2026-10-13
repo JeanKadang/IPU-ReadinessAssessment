@@ -692,7 +692,7 @@ process).
 | Parameter | Default | Meaning |
 |---|---|---|
 | `InputFolder` | required | Folder with the `*-IPU-Assessment.json` and `*-IPU-PostUpgrade.json` files |
-| `OutputFolder` | the input folder | Where the three output files are written (created if missing) |
+| `OutputFolder` | the input folder | Where the three output files are written. A folder the merge creates gets access for SYSTEM, Administrators and you only; an existing folder is not changed, but you get a warning when Everyone, Authenticated Users or Users can read it (#128) |
 | `Mode` | `All` | `Pre`, `Post` or `All`: which kind of result to include |
 | `Delimiter` | `;` | CSV separator. `;` opens in columns in Excel where the list separator is `;` (common in European regional settings); use `,` where it is `,` |
 
@@ -709,7 +709,7 @@ The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`
 ### How it decides
 
 - **Newest wins.** If a server has several results for the same mode, only the newest (by `Completed`) is used. A server can still appear twice, once for Pre and once for Post, when `Mode` is `All`.
-- **Worst first.** Servers are sorted `BLOCKER`, `ACTION`, `WARNING`, `MANUAL`, `OK`, then by name.
+- **Worst first.** Servers are sorted `SPECIAL`, `BLOCKER`, `ACTION`, `WARNING`, `MANUAL`, `OK`, then by name.
 - **`TopIssues`** lists the BLOCKER and ACTION findings for that server. **`NotAssessed`** lists checks that did not complete (skipped checks are not counted).
 - **Partial results** are shown with a `partial` marker: the slow checks had not finished on that server.
 - **Unreadable files** (not valid JSON, or a `Schema` other than `IPU-Assessment/1`) are listed in the report and skipped. They do not stop the run.

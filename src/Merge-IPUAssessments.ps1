@@ -36,7 +36,45 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if (-not $OutputFolder) { $OutputFolder = $InputFolder }
-if (-not (Test-Path -LiteralPath $OutputFolder)) { New-Item -ItemType Directory -Path $OutputFolder -Force | Out-Null }
+# The overview combines findings from every server (#128). A folder created
+# here is limited to SYSTEM, Administrators and the current user (the merge
+# runs on a workstation). An existing folder is never changed; a warning
+# names the broad groups that can read it.
+function New-MergeFolderSecurity {
+    $security = New-Object System.Security.AccessControl.DirectorySecurity
+    $security.SetAccessRuleProtection($true, $false)
+    $inherit = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    $sids = @('S-1-5-18', 'S-1-5-32-544', [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+    foreach ($sid in ($sids | Select-Object -Unique)) {
+        $identity = New-Object System.Security.Principal.SecurityIdentifier($sid)
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity, [System.Security.AccessControl.FileSystemRights]::FullControl, $inherit, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)
+        $security.AddAccessRule($rule)
+    }
+    return $security
+}
+function Get-BroadFolderReader {
+    param([string]$Path)
+    $broad = @{ 'S-1-1-0' = 'Everyone'; 'S-1-5-11' = 'Authenticated Users'; 'S-1-5-32-545' = 'Users' }
+    $found = @()
+    try {
+        $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+        foreach ($rule in @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))) {
+            $sid = [string]$rule.IdentityReference
+            if ($broad.ContainsKey($sid) -and [string]$rule.AccessControlType -eq 'Allow' -and ([int]$rule.FileSystemRights -band [int][System.Security.AccessControl.FileSystemRights]::ReadData)) {
+                if ($found -notcontains $broad[$sid]) { $found += $broad[$sid] }
+            }
+        }
+    } catch { Write-Verbose ('Could not read the permissions of ' + $Path + ': ' + $_.Exception.Message) }
+    return $found
+}
+if (-not (Test-Path -LiteralPath $OutputFolder)) {
+    New-Item -ItemType Directory -Path $OutputFolder -Force | Out-Null
+    try { Set-Acl -LiteralPath $OutputFolder -AclObject (New-MergeFolderSecurity) -ErrorAction Stop }
+    catch { Write-Warning ('Could not limit access to ' + $OutputFolder + ': ' + $_.Exception.Message + '. The overview combines findings from every server; restrict the folder by hand.') }
+} else {
+    $readers = @(Get-BroadFolderReader $OutputFolder)
+    if ($readers.Count -gt 0) { Write-Warning ('The output folder ' + $OutputFolder + ' can be read by ' + ($readers -join ', ') + '. The overview combines findings from every server; use a folder only the team can read.') }
+}
 
 # SPECIAL (assessment 4.5.0, #152): a cluster node or domain controller with
 # its own plan - listed first.
