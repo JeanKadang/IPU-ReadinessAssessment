@@ -4758,7 +4758,8 @@ function Get-RedactionLiteralFromResult {
         if ($r.Area -eq 'CLUSTER' -and [string]$r.Item -match '^Node: (.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'HOST' } }
         if ($r.Area -eq 'CLUSTER' -and $r.Item -eq 'ClusterMembership' -and [string]$r.Value -match '^Cluster=(.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'HOST' } }
         # The KMS host that activated the server (#171).
-        if ($r.Area -eq 'LICENSING' -and (@($r.Details) -join ' | ') -match 'KMS host: ([^\s:|(]+)') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'HOST' } }
+        # Like the live run, the host name and its first label (#124).
+        if ($r.Area -eq 'LICENSING' -and (@($r.Details) -join ' | ') -match 'KMS host: ([^\s:|(]+)') { foreach ($h in @($Matches[1], ($Matches[1] -split '\.')[0]) | Select-Object -Unique) { $found += [pscustomobject]@{ Value = $h; Kind = 'HOST' } } }
         # File shares (#172): the share name from the per-share row, and its
         # description.
         if ($r.Area -eq 'FILE_SHARES' -and [string]$r.Item -match '^Share: (.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'NAME' } }

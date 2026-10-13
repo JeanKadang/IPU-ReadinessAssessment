@@ -2601,6 +2601,10 @@ Describe 'Activation per channel, with the KMS host and renewal (#171)' {
         $l = Get-RedactionLiteralFromResult $rows
         (@($l | ForEach-Object { $_.Kind + '=' + $_.Value }) -join ';') | Should -Be 'HOST=kms01'
     }
+    It 'RedactExisting recovers a KMS host FQDN and its first label, like the live run (#124)' {
+        $rows = @([pscustomobject]@{ Area = 'LICENSING'; Item = 'CurrentActivation'; Value = 'Licensed (KMS client)'; Details = @('KMS host: kms01.corp.example.test:1688 (set on this server)') })
+        (@(Get-RedactionLiteralFromResult $rows | ForEach-Object { $_.Kind + '=' + $_.Value }) -join ';') | Should -Be 'HOST=kms01.corp.example.test;HOST=kms01'
+    }
 }
 
 Describe 'SPECIAL servers (#152)' {
@@ -2812,5 +2816,115 @@ Describe 'Save-NetworkEvidence (#149)' {
         [IO.File]::WriteAllText((Join-Path $dir 'SRV01-IPU-Network-20261013-100000.txt'), 'IPv4 Address. . . : 10.20.30.40')
         Invoke-RedactExisting $dir | Should -Be 1
         @(Get-ChildItem -LiteralPath $dir -Filter 'REDACTED-*').Count | Should -Be 0
+    }
+}
+
+Describe 'Redaction covers every collected kind (#124)' {
+    # A synthetic worst case: every kind of name and address the collector
+    # reports, with random values (a new seed per run, shown on failure), run
+    # through the live JSON path, the live HTML path and -RedactExisting.
+    # The test fails when any input value survives in any of them.
+    BeforeAll {
+        $script:RedSeed = Get-Random -Maximum 2147483647
+        $rng = New-Object System.Random $script:RedSeed
+        function New-Word([int]$Length = 8) { -join (1..$Length | ForEach-Object { [char](97 + $rng.Next(26)) }) }
+        function New-Octet { 1 + $rng.Next(253) }
+        function New-Hex([int]$Length) { -join (1..$Length | ForEach-Object { '0123456789abcdef'[$rng.Next(16)] }) }
+        $label = New-Word 7
+        $nb = $label.ToUpperInvariant()
+        $fqdn = $label + '.corp.test'
+        $computer = 'SRV' + (New-Word 6).ToUpperInvariant()
+        $v = [ordered]@{
+            Computer = $computer; Domain = $fqdn; NetBios = $nb
+            TaskAccount = 'adm-' + (New-Word); ServiceDomainAccount = 'svc_' + (New-Word); ServiceLocalAccount = 'loc' + (New-Word)
+            WordAccount = 'Installer'                                  # the #114 shape: an account that is an ordinary word
+            UpnUser = 'u' + (New-Word); Gpo = 'GPO ' + (New-Word) + ' Baseline'; WmiFilter = 'Filter ' + (New-Word)
+            Share = 'Share' + (New-Word); ShareDescription = 'Team ' + (New-Word) + ' data'
+            Cluster = 'CL' + (New-Word 5).ToUpperInvariant(); Node = 'ND' + (New-Word 5).ToUpperInvariant()
+            KmsHost = 'kms' + (New-Word 5); Ou = 'OU' + (New-Word); Org = 'Org ' + (New-Word)
+            HostCom = (New-Word) + '.com'; HostDk = (New-Word) + '.dk'; HostLocal = (New-Word) + '.local'; HostInternal = (New-Word) + '.internal'; HostInDomain = (New-Word) + '.' + $fqdn
+            IPv4 = '10.' + (New-Octet) + '.' + (New-Octet) + '.' + (New-Octet); IPv4Gateway = '172.16.' + (New-Octet) + '.' + (New-Octet)
+            IPv6 = '2001:db8:' + (New-Hex 4) + '::' + (New-Hex 3); LinkLocal = 'fe80::' + (New-Hex 4) + ':' + (New-Hex 4)
+            Mac = ((1..6 | ForEach-Object { New-Hex 2 }) -join '-').ToUpperInvariant()
+            Sid = 'S-1-5-21-' + $rng.Next(100000, 999999) + '-' + $rng.Next(100000, 999999) + '-' + $rng.Next(100000, 999999) + '-1105'
+            Thumbprint = (New-Hex 40).ToUpperInvariant()
+        }
+        $script:RedValues = $v
+        $script:RedSavedComputer = $script:ComputerName
+        $script:ComputerName = $computer
+        $script:Data = @{}
+        # What the collector registers while it runs (the Add-RedactionLiteral call sites).
+        Add-RedactionLiteral ($nb + '\' + $v.TaskAccount) 'ACCOUNT'
+        Add-RedactionLiteral ($nb + '\' + $v.ServiceDomainAccount) 'ACCOUNT'
+        Add-RedactionLiteral ('.\' + $v.ServiceLocalAccount) 'ACCOUNT'
+        Add-RedactionLiteral ($nb + '\' + $v.WordAccount) 'ACCOUNT'
+        Add-RedactionLiteral $v.Gpo 'GPO'; Add-RedactionLiteral $v.WmiFilter 'NAME'
+        Add-RedactionLiteral $v.Share 'NAME'; Add-RedactionLiteral $v.ShareDescription 'NAME'
+        Add-RedactionLiteral $v.Cluster 'HOST'; Add-RedactionLiteral $v.Node 'HOST'
+        Add-RedactionLiteral ($v.KmsHost + '.' + $fqdn) 'HOST'; Add-RedactionLiteral $v.KmsHost 'HOST'
+        $script:Results.Clear(); $script:CheckRuns.Clear()
+        Add-Result 'ACCESS' 'DomainMembership' 'INFO' ('Domain=' + $fqdn) ('NetBIOS=' + $nb)
+        Add-Result 'ACCESS' 'ComputerObjectOu' 'INFO' ('CN=' + $computer + ',OU=' + $v.Ou + ',OU=Servers,DC=' + $label + ',DC=corp,DC=test')
+        Add-Result 'TASKS' '\Ops\Export' 'INFO' ('RunAs=' + $nb + '\' + $v.TaskAccount)
+        Add-Result 'SERVICES' 'AppSvc' 'INFO' 'AppSvc' ('State=Running | StartMode=Auto | LogOnAs=' + $nb + '\' + $v.ServiceDomainAccount)
+        Add-Result 'SERVICES' 'LocalSvc' 'INFO' 'LocalSvc' ('State=Running | StartMode=Auto | LogOnAs=.\' + $v.ServiceLocalAccount)
+        Add-Result 'SERVICES' 'Setup helper' 'INFO' 'Setup helper' ('State=Running | StartMode=Auto | LogOnAs=' + $nb + '\' + $v.WordAccount)
+        Add-Result 'SERVICES' 'UpnSvc' 'INFO' 'UpnSvc' ('State=Running | StartMode=Auto | LogOnAs=' + $v.UpnUser + '@' + $fqdn)
+        Add-Result 'GROUP_POLICY' ('GPO: ' + $v.Gpo) 'WARNING' 'Applied' @(('WMI filter: ' + $v.WmiFilter), ('Linked at ' + $fqdn + '/Servers/' + $v.Ou))
+        Add-Result 'GROUP_POLICY' 'ADGroup' 'INFO' ($nb + '\Patch Ring 2') ('SID=' + $v.Sid)
+        Add-Result 'FILE_SHARES' ('Share: ' + $v.Share) 'INFO' ('D:\' + $v.Share) @(('Path=D:\' + $v.Share), ('Description=' + $v.ShareDescription), ('Share permissions: ' + $nb + '\' + $v.TaskAccount + ': Full'))
+        Add-Result 'CLUSTER' 'ClusterMembership' 'INFO' ('Cluster=' + $v.Cluster)
+        Add-Result 'CLUSTER' ('Node: ' + $v.Node) 'INFO' 'State=Up'
+        Add-Result 'LICENSING' 'WindowsActivation' 'OK' 'Licensed (KMS)' ('KMS host: ' + $v.KmsHost + '.' + $fqdn + ':1688 (found via DNS)')
+        Add-Result 'NETWORK' 'Ethernet0' 'INFO' ('IPv4=' + $v.IPv4 + ' / 255.255.255.0') @(('Gateway=' + $v.IPv4Gateway), ('DNS=' + $v.IPv4Gateway), ('MAC=' + $v.Mac), ('IPv6=' + $v.IPv6 + ',' + $v.LinkLocal), ('DNS suffix=' + $fqdn))
+        Add-Result 'PKI' 'Certificate' 'INFO' ('CN=' + $v.HostInDomain + ', O=' + $v.Org) ('Thumbprint=' + $v.Thumbprint)
+        Add-Result 'NETWORK_DEPENDENCY' 'Hosts line 1' 'INFO' ('Address=' + $v.IPv4) ('Names=' + $v.HostCom + ',' + $v.HostDk + ',' + $v.HostLocal + ',' + $v.HostInternal)
+        $script:CheckRuns.Add([pscustomobject]@{ Id = 'baseline'; Name = 'Baseline inventory'; Phase = 'Fast'; Outcome = 'Completed'; Duration = '00:00:01'; Seconds = 1; Message = '' })
+        $script:RedRows = $script:Results.ToArray()
+        $script:RedObject = [ordered]@{
+            Schema = 'IPU-Assessment/1'; ComputerName = $computer; Mode = 'Pre'; Overall = 'WARNING'
+            Facts = [ordered]@{ DomainRole = 'Member server'; ComputerObjectOu = ('OU=' + $v.Ou + ',DC=' + $label + ',DC=corp,DC=test'); KmsHost = $v.KmsHost }
+            Results = $script:RedRows; CheckRuns = $script:CheckRuns.ToArray()
+            Snapshot = [ordered]@{ IPv4 = @($v.IPv4); Dns = @($v.IPv4Gateway); Shares = @($v.Share); Gpos = @($v.Gpo); Groups = @($nb + '\Patch Ring 2'); Ou = ('OU=' + $v.Ou + ',DC=' + $label + ',DC=corp,DC=test')
+                Adapters = @([pscustomobject]@{ Name = 'Ethernet0'; Mac = $v.Mac; IPv4 = @($v.IPv4); IPv6 = @($v.IPv6); Gateway = @($v.IPv4Gateway); Dns = @($v.IPv4Gateway); Suffix = $fqdn }) }
+        }
+        $script:RedHtml = New-IPUReportHtml -Results $script:RedRows -CheckRuns $script:CheckRuns.ToArray() -OverallStatus 'WARNING' -CompletedTime (Get-Date)
+        function Get-Survivor([string]$Text) {
+            @($script:RedValues.Keys | Where-Object { $Text.IndexOf([string]$script:RedValues[$_], [StringComparison]::OrdinalIgnoreCase) -ge 0 } | ForEach-Object { $_ + '=' + $script:RedValues[$_] })
+        }
+    }
+    AfterAll { $script:ComputerName = $script:RedSavedComputer; $script:Data = @{} }
+
+    It 'the input really contains every value (the test is not empty)' {
+        $plain = ($script:RedObject | ConvertTo-Json -Depth 8) + $script:RedHtml
+        @($script:RedValues.Keys | Where-Object { $plain.IndexOf([string]$script:RedValues[$_], [StringComparison]::OrdinalIgnoreCase) -lt 0 }) | Should -BeNullOrEmpty
+    }
+    It 'live run, JSON: no input value survives' {
+        $ctx = New-RedactionContext $script:RedValues.Computer $script:RedValues.Domain
+        foreach ($k in @($script:Data.RedactLiterals.Keys)) { $ctx.Literals[$k] = $script:Data.RedactLiterals[$k] }
+        $json = (Protect-ReportObject $script:RedObject $ctx) | ConvertTo-Json -Depth 8
+        Get-Survivor $json | Should -BeNullOrEmpty -Because ('seed ' + $script:RedSeed)
+    }
+    It 'live run, HTML: no input value survives' {
+        $ctx = New-RedactionContext $script:RedValues.Computer $script:RedValues.Domain
+        foreach ($k in @($script:Data.RedactLiterals.Keys)) { $ctx.Literals[$k] = $script:Data.RedactLiterals[$k] }
+        Get-Survivor (Protect-ReportText $script:RedHtml $ctx) | Should -BeNullOrEmpty -Because ('seed ' + $script:RedSeed)
+    }
+    It '-RedactExisting, JSON and HTML: no input value survives (names recovered from the rows)' {
+        $dir = Join-Path $TestDrive 'worst-case'
+        New-Item -ItemType Directory -Path $dir | Out-Null
+        $base = Join-Path $dir ($script:RedValues.Computer + '-IPU-Assessment')
+        [IO.File]::WriteAllText($base + '.json', ($script:RedObject | ConvertTo-Json -Depth 8))
+        [IO.File]::WriteAllText($base + '.html', $script:RedHtml)
+        Invoke-RedactExisting $dir | Should -Be 0
+        $out = @(Get-ChildItem -LiteralPath $dir -Filter 'REDACTED-*')
+        $out.Count | Should -Be 2
+        foreach ($f in $out) {
+            Get-Survivor ([IO.File]::ReadAllText($f.FullName)) | Should -BeNullOrEmpty -Because ($f.Extension + ', seed ' + $script:RedSeed)
+            $f.Name | Should -Not -Match ([regex]::Escape($script:RedValues.Computer))
+        }
+    }
+    It 'fails when a value is left in (the check itself works)' {
+        Get-Survivor ('text with ' + $script:RedValues.Share + ' inside') | Should -Be @('Share=' + $script:RedValues.Share)
     }
 }
