@@ -16,6 +16,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Network (#149): each adapter now also shows IPv6 addresses, DNS suffix and search list, DNS registration, WINS, NetBIOS over TCP/IP, metric and VLAN (report, JSON `Snapshot.Adapters`). The post-upgrade comparison matches adapters by MAC address, since Setup can rename them, and lists every difference per adapter (a static adapter switched to DHCP or without its addresses is an ACTION). A network configuration copy (`ipconfig /all`, `route print`, `netsh interface ipv4 show config`, `netsh -c interface dump`, advanced adapter properties) is saved into the restricted evidence folder (`-EnableNetworkEvidence`, on by default); it is not redacted and not part of the report, so copy it off the server before the change.
 
 ### Fixed
+- Wording: defaults that come from one site are described as such (#131). `BlockDomainControllerIPU` is "site policy", not "company policy"; the merge script's `;` CSV separator is explained without naming a country. The defaults themselves (`da-DK`, the DC policy on, `;`) are unchanged, and the user guide shows how a site sets its own in a profile file. docs/checks.md no longer calls a domain controller a BLOCKER.
 - Post-upgrade comparison: per-user services (e.g. CDPUserSvc) that exist only while a user is signed in, and ports whose service no longer starts automatically (e.g. SSDP Discovery, Function Discovery), are INFO instead of WARNING (#173).
 
 ### Security

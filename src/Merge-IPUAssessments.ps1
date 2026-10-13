@@ -22,8 +22,9 @@
 .NOTES
     Collect the JSON files from the servers with the approved SA file-retrieval
     process into one folder first. Read-only for the input files.
-    CSV files use ';' as separator so Excel with Danish regional settings
-    opens them in columns directly.
+    CSV files use ';' as separator by default, which Excel opens in columns
+    where the list separator is ';' (common in European regional settings).
+    Use -Delimiter ',' where the list separator is ','.
 #>
 [CmdletBinding()]
 param(
