@@ -3,7 +3,7 @@
 How to run the Windows IPU readiness assessment, read its results, and troubleshoot it.
 
 **Scripts:** `src/Windows-IPU-Readiness-Assessment.ps1` (collector version 4.4.0, runs on each server) and
-`src/Merge-IPUAssessments.ps1` (version 1.0.4, combines many servers' results, runs on an admin workstation)
+`src/Merge-IPUAssessments.ps1` (version 1.1.0, combines many servers' results, runs on an admin workstation)
 **Audience:** server and change engineers preparing or verifying a Windows Server in-place upgrade.
 
 ## Contents
@@ -559,7 +559,7 @@ The script itself only reads the partition layout and `reagentc /info`; it never
 
 ## 9. Combining many servers: fleet overview
 
-`src/Merge-IPUAssessments.ps1` (version 1.0.4, for assessment 4.0.1 and later) reads the JSON result of every
+`src/Merge-IPUAssessments.ps1` (version 1.1.0, for assessment 4.0.1 and later) reads the JSON result of every
 server in a folder and writes **one overview** for the whole estate. It is read-only for the input files.
 
 ```mermaid
@@ -607,7 +607,7 @@ The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`
 | File | Contents |
 |---|---|
 | `IPU-Fleet-Overview.html` | Cards with overall counts, a **Servers (worst first)** table, the **most common BLOCKER/ACTION items** across the fleet with which servers have them, and a list of any files it could not read |
-| `IPU-Fleet-Servers.csv` | One row per server and mode: `ComputerName`, `Mode`, `Overall`, `Blocker`, `Action`, `Warning`, `Manual`, `Target`, `CurrentOS`, `UpgradePath`, `InstallationMedia`, `Platform`, `DomainRole`, `SqlServer`, `CompatScan`, `CDrive`, `Activation`, `TopIssues`, `NotAssessed`, `Partial`, `Redacted`, `Completed`, `CollectorVersion`, `SourceFile` |
+| `IPU-Fleet-Servers.csv` | One row per server and mode: `ComputerName`, `Mode`, `Overall`, `Blocker`, `Action`, `Warning`, `Manual`, `Target`, `CurrentOS`, `UpgradePath`, `InstallationMedia`, `Platform`, `DomainRole`, `SqlServer`, `CompatScan`, `CDrive`, `Activation`, `Nla`, `TopIssues`, `NotAssessed`, `Partial`, `Redacted`, `Completed`, `CollectorVersion`, `SourceFile` |
 | `IPU-Fleet-Findings.csv` | One row per BLOCKER, ACTION, WARNING or MANUAL finding: `ComputerName`, `Mode`, `Status`, `Area`, `Item`, `Value`, `Details`, `Recommendation`, `Command`, `Link`, `SourceFile`. Filter and pivot it in Excel |
 
 ### How it decides

@@ -42,6 +42,7 @@
         "AdLocation": { "$ref": "#/definitions/text" },
         "SqlServer": { "$ref": "#/definitions/text" },
         "Activation": { "$ref": "#/definitions/text" },
+        "Nla": { "$ref": "#/definitions/text" },
         "CDrive": { "$ref": "#/definitions/text" },
         "CompatScan": { "$ref": "#/definitions/text" }
       },

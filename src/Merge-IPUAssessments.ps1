@@ -1,7 +1,7 @@
 <#
 ===============================================================================
  SCRIPT NAME : Merge-IPUAssessments.ps1
- VERSION     : 1.0.4 (for Windows-IPU-Readiness-Assessment 4.0.1+)
+ VERSION     : 1.1.0 (for Windows-IPU-Readiness-Assessment 4.0.1+)
  PURPOSE     : Combine the JSON results of many servers into one overview.
  RUNS ON     : Any Windows machine with Windows PowerShell 5.1 or PowerShell 7
                (an admin workstation or jump host - NOT on the assessed servers).
@@ -90,6 +90,7 @@ foreach ($f in $files) {
         CompatScan       = $r.Facts.CompatScan
         CDrive           = $r.Facts.CDrive
         Activation       = $r.Facts.Activation
+        Nla              = $(if ($r.Facts.PSObject.Properties['Nla']) { [string]$r.Facts.Nla } else { '' })
         TopIssues        = ($top -join ' | ')
         NotAssessed      = ($notCompleted -join ' | ')
         Partial          = [bool]$r.Partial
@@ -147,12 +148,12 @@ foreach ($k in @('BLOCKER','ACTION','WARNING','MANUAL','OK')) { [void]$sb.Append
 [void]$sb.AppendLine('</div>')
 if ($unreadable.Count -gt 0) { [void]$sb.AppendLine('<section><h2>Files not read</h2><p>' + (Encode ($unreadable -join ', ')) + '</p></section>') }
 
-[void]$sb.AppendLine('<section><h2>Servers (worst first)</h2><div class="scroll"><table><thead><tr><th>Server</th><th>Mode</th><th>Overall</th><th>B/A/W/M</th><th>Current OS</th><th>Target</th><th>Media</th><th>Platform</th><th>SQL</th><th>Top issues</th><th>Not assessed</th><th>Completed</th></tr></thead><tbody>')
+[void]$sb.AppendLine('<section><h2>Servers (worst first)</h2><div class="scroll"><table><thead><tr><th>Server</th><th>Mode</th><th>Overall</th><th>B/A/W/M</th><th>Current OS</th><th>Target</th><th>Media</th><th>Platform</th><th>RDP NLA</th><th>SQL</th><th>Top issues</th><th>Not assessed</th><th>Completed</th></tr></thead><tbody>')
 foreach ($s in $latest) {
     $badge = '<span class="badge s-' + ([string]$s.Overall).ToLowerInvariant() + '">' + (Encode $s.Overall) + '</span>'
     if ($s.Partial) { $badge += ' <span class="muted">partial</span>' }
     if ($s.Redacted) { $badge += ' <span class="muted">redacted</span>' }
-    [void]$sb.AppendLine('<tr><td class="nw"><b>' + (Encode $s.ComputerName) + '</b></td><td>' + (Encode $s.Mode) + '</td><td class="nw">' + $badge + '</td><td class="nw">' + $s.Blocker + '/' + $s.Action + '/' + $s.Warning + '/' + $s.Manual + '</td><td>' + (Encode $s.CurrentOS) + '</td><td class="nw">' + (Encode $s.Target) + '</td><td>' + (Encode $s.InstallationMedia) + '</td><td>' + (Encode $s.Platform) + '</td><td>' + (Encode $s.SqlServer) + '</td><td>' + (Encode $s.TopIssues) + '</td><td>' + (Encode $s.NotAssessed) + '</td><td class="nw muted">' + (Encode $s.Completed) + '</td></tr>')
+    [void]$sb.AppendLine('<tr><td class="nw"><b>' + (Encode $s.ComputerName) + '</b></td><td>' + (Encode $s.Mode) + '</td><td class="nw">' + $badge + '</td><td class="nw">' + $s.Blocker + '/' + $s.Action + '/' + $s.Warning + '/' + $s.Manual + '</td><td>' + (Encode $s.CurrentOS) + '</td><td class="nw">' + (Encode $s.Target) + '</td><td>' + (Encode $s.InstallationMedia) + '</td><td>' + (Encode $s.Platform) + '</td><td class="nw">' + (Encode $s.Nla) + '</td><td>' + (Encode $s.SqlServer) + '</td><td>' + (Encode $s.TopIssues) + '</td><td>' + (Encode $s.NotAssessed) + '</td><td class="nw muted">' + (Encode $s.Completed) + '</td></tr>')
 }
 [void]$sb.AppendLine('</tbody></table></div></section>')
 

@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- RDP Network Level Authentication in the Summary ("RDP access: GO, NLA on"; after the upgrade "NLA off (was on before the upgrade)" when it changed), as `Facts.Nla` in the JSON, and as an "RDP NLA" column in the fleet overview and servers CSV (`Merge-IPUAssessments.ps1` 1.1.0) (#174).
+
 ### Fixed
 - Post-upgrade comparison: per-user services (e.g. CDPUserSvc) that exist only while a user is signed in, and ports whose service no longer starts automatically (e.g. SSDP Discovery, Function Discovery), are INFO instead of WARNING (#173).
 

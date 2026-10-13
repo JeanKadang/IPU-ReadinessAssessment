@@ -52,6 +52,7 @@ Strings, empty or `null` when the check that sets them did not run.
 | `AdLocation` | `corp.example.test/Servers/Web` (from 4.3.0; `Not applicable (workgroup)` for a workgroup server) |
 | `SqlServer` | `MSSQLSERVER=SQL Server 2017` |
 | `Activation` | `Status=Licensed, Channel=Volume:GVLK` |
+| `Nla` | `On`, `Off` or `Unknown`: RDP Network Level Authentication (from 4.5.0) |
 | `CDrive` | `Size 100,00 GB, free 55,00 GB` |
 | `CompatScan` | `0xC1900210 - Setup found no compatibility issues.` |
 

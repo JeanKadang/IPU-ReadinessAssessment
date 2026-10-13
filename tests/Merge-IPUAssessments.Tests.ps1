@@ -225,3 +225,19 @@ Describe 'Merge-IPUAssessments.ps1 - redacted results (#30)' {
         Get-Content -LiteralPath (Join-Path $dir 'IPU-Fleet-Overview.html') -Raw | Should -Match 'redacted'
     }
 }
+
+Describe 'Merge-IPUAssessments.ps1 - RDP NLA column (#174)' {
+    It 'shows NLA per server in the CSV and the overview, empty for older results' {
+        $in = Join-Path $TestDrive 'nla-in'; $out = Join-Path $TestDrive 'nla-out'
+        New-Item -ItemType Directory -Path $in, $out | Out-Null
+        $off = New-FakeResult 'SRV-NLA-OFF' -Mode 'Post' -Overall 'ACTION'
+        $off.Facts | Add-Member -NotePropertyName Nla -NotePropertyValue 'Off'
+        Save-Result $off $in 'SRV-NLA-OFF-IPU-PostUpgrade.json'
+        Save-Result (New-FakeResult 'SRV-OLD') $in 'SRV-OLD-IPU-Assessment.json'
+        $null = & $script:MergeScript -InputFolder $in -OutputFolder $out
+        $rows = @(Import-Csv -LiteralPath (Join-Path $out 'IPU-Fleet-Servers.csv') -Delimiter ';')
+        @($rows | Where-Object { $_.ComputerName -eq 'SRV-NLA-OFF' })[0].Nla | Should -Be 'Off'
+        @($rows | Where-Object { $_.ComputerName -eq 'SRV-OLD' })[0].Nla | Should -Be ''
+        [IO.File]::ReadAllText((Join-Path $out 'IPU-Fleet-Overview.html')) | Should -Match '<th>RDP NLA</th>'
+    }
+}
