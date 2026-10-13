@@ -82,7 +82,8 @@ Add-Result 'STORAGE' 'PartitionAfterC' 'OK' 'No'
 Add-Result 'STORAGE' 'Disk1' 'INFO' 'SizeGB=30,00' @('BusType=SAS', 'Style=GPT', 'Offline=False', 'P1:Basic:20480MB:D::Label=Data:NTFS | P2:Basic:10240MB:MountedAt=D:\Logs\:Label=Logs:NTFS')
 Add-Run 'storage' 'Storage'
 Set-Check 'network'
-Add-Result 'NETWORK' 'Ethernet0' 'INFO' 'IPv4=10.20.30.40 / 255.255.255.0' @('Gateway=10.20.30.1', 'DNS=10.20.1.10,10.20.1.11', 'DHCP=False')
+Add-Result 'NETWORK' 'Ethernet0' 'INFO' 'IPv4=10.20.30.40 / 255.255.255.0' @('Gateway=10.20.30.1', 'DNS=10.20.1.10,10.20.1.11', 'DHCP=False', 'MAC=00:50:56:00:00:01', 'DNS suffix=corp.example.test', 'Register in DNS=Yes, with suffix=No', 'WINS=(none)', 'NetBIOS over TCP/IP=Default (set by DHCP)', 'Metric=15')
+Add-Result 'NETWORK' 'NetworkEvidence' 'OK' 'C:\Temp\Tools\PolBackup\SRV-APP01-IPU-Network-20261006-094431.zip' 'Files=ipconfig-all.txt, route-print.txt, netsh-ipv4-show-config.txt, netsh-interface-dump.txt, adapter-advanced-properties.txt' -Recommendation 'Copy it off the server before the change: it holds the full IP configuration, is not redacted and must not be shared outside the team. netsh-interface-dump.txt is a netsh script that can put the configuration back (read it first; see the user guide).'
 Add-Result 'NETWORK' 'NICTeaming' 'OK' 'No LBFO team detected'
 Add-Result 'NETWORK_DEPENDENCY' 'HostsFile' 'MANUAL' 'ActiveEntries=1' 'C:\Windows\System32\drivers\etc\hosts' -Recommendation 'Confirm owner and purpose of each hosts entry and test the affected name resolution after IPU.'
 Add-Run 'network' 'Network, teaming, hosts and routes'
@@ -98,6 +99,7 @@ Add-Run 'domain' 'Domain role and access'
 Set-Check 'rdp'
 $script:Data.RdpSummary = 'GO (no local blocker)'; $script:Data.DriveRedirection = 'Allowed locally'
 $script:Data.PolicyEvidence = 'C:\Temp\Tools\PolBackup\SRV-APP01-IPU-Policy-20261006-094454.zip'
+$script:Data.NetworkEvidence = 'C:\Temp\Tools\PolBackup\SRV-APP01-IPU-Network-20261006-094431.zip'
 Add-Result 'RDP' 'RDPAccessReadiness' 'OK' 'GO' 'No local RDP blocker detected' -Recommendation 'Upstream firewalls, PAM and credentials are outside this check.'
 Add-Run 'rdp' 'RDP access, policy and evidence' 'Fast' '00:01:00'
 Set-Check 'antivirus'

@@ -198,6 +198,11 @@ param(
     # "appcmd add backup" saves) into a restricted evidence folder and ZIP
     # under PolicyEvidenceRoot. A read-only copy; IIS itself is not touched.
     [bool]$EnableIISConfigEvidence = $true,
+    # Save ipconfig /all, route print and the netsh interface configuration
+    # (a script that can re-apply it) into a restricted evidence folder and
+    # ZIP under PolicyEvidenceRoot (#149). Never redacted: copy it off the
+    # server before the change, and do not share it.
+    [bool]$EnableNetworkEvidence = $true,
 
     # Output.
     [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$ReportDirectory = 'C:\Temp\IPU-Assessment',
@@ -315,7 +320,7 @@ $script:ProfileSettingNames = @(
     'MinimumCFreeGB','ExtendBlockGB','MinimumMemoryGB','MaxPatchAgeDays','UptimeWarningDays','GroupPolicyMaxAgeDays','AVMaxAgeDays',
     'CertificateWarningDays','SystemPartitionMinFreeMB','RecoveryPartitionMinFreeMB',
     'RunDISMScanHealth','RunSFCVerifyOnly','DISMTimeoutMinutes','SFCTimeoutMinutes','SlowCheckBudgetMinutes','CompatScanTimeoutMinutes',
-    'EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip','EnableIISConfigEvidence',
+    'EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip','EnableIISConfigEvidence','EnableNetworkEvidence',
     'WriteJson','RestrictOutputAcl','NumberCultureName'
 )
 $script:PatternFields = @('Label','App','Service','Display','Driver','Disabled','Link','LinkTitle')
@@ -799,6 +804,62 @@ function Save-IISConfigEvidence {
         $location = $zipPath
     }
     return [pscustomobject]@{ Location = $location; Folder = $Destination; Files = @($files | ForEach-Object { $_.Name } | Sort-Object); ApplicationHostSha256 = $hash; SharedConfigPath = $shared }
+}
+
+function Save-NetworkEvidence {
+    # Saves the output of read-only network commands into a new, restricted
+    # evidence folder (#149): what the network team needs to put the IP
+    # configuration back by hand if the upgrade resets an adapter. Never
+    # redacted and never part of the report, so it gets the same
+    # SYSTEM/Administrators-only access as the other evidence. Every command
+    # has a timeout; one that fails is listed in Failed. Throws when nothing
+    # could be saved.
+    param(
+        [Parameter(Mandatory=$true)][string]$Destination,
+        [bool]$Zip = $true,
+        [int]$TimeoutSeconds = 60
+    )
+    $sys = Join-Path $env:windir 'System32'
+    $commands = @(
+        @{ File = 'ipconfig-all.txt';           Exe = (Join-Path $sys 'ipconfig.exe'); Args = @('/all') },
+        @{ File = 'route-print.txt';            Exe = (Join-Path $sys 'route.exe');    Args = @('print') },
+        @{ File = 'netsh-ipv4-show-config.txt'; Exe = (Join-Path $sys 'netsh.exe');    Args = @('interface', 'ipv4', 'show', 'config') },
+        @{ File = 'netsh-interface-dump.txt';   Exe = (Join-Path $sys 'netsh.exe');    Args = @('-c', 'interface', 'dump') }
+    )
+    # The evidence root first, so a root created by this run is restricted too.
+    $null = Initialize-OutputFolder (Split-Path -Parent $Destination)
+    $null = Initialize-OutputFolder $Destination
+    $utf8 = New-Object System.Text.UTF8Encoding($true)
+    $saved = @(); $failed = @()
+    foreach ($c in $commands) {
+        $label = [IO.Path]::GetFileNameWithoutExtension($c.Exe) + ' ' + ($c.Args -join ' ')
+        $r = Invoke-NativeCapture $c.Exe $c.Args $TimeoutSeconds
+        if ($r.Error) { $failed += ($label + ': ' + $r.Error); continue }
+        if ($r.TimedOut) { $failed += ($label + ': no answer within ' + $TimeoutSeconds + ' seconds'); continue }
+        if ($r.ExitCode -ne 0 -or -not [string]$r.Output) { $failed += ($label + ': exit code ' + $r.ExitCode + ', no output'); continue }
+        $text = '# ' + $label + "`r`n# " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + "`r`n`r`n" + ([string]$r.Output -replace '\r?\n', "`r`n") + "`r`n"
+        [IO.File]::WriteAllText((Join-Path $Destination $c.File), $text, $utf8)
+        $saved += $c.File
+    }
+    # Advanced adapter properties (offloads, jumbo frames, VLAN) are not in
+    # the netsh dump; the NetAdapter module is optional (#94).
+    if (Test-CommandAvailable 'Get-NetAdapterAdvancedProperty') {
+        try {
+            $props = @(Get-NetAdapterAdvancedProperty -ErrorAction Stop | Sort-Object Name, DisplayName)
+            $text = ($props | Format-Table Name, DisplayName, DisplayValue, RegistryKeyword -AutoSize | Out-String -Width 300)
+            [IO.File]::WriteAllText((Join-Path $Destination 'adapter-advanced-properties.txt'), $text, $utf8)
+            $saved += 'adapter-advanced-properties.txt'
+        } catch { $failed += ('Get-NetAdapterAdvancedProperty: ' + $_.Exception.Message) }
+    }
+    if ($saved.Count -eq 0) { throw ('No network command output could be saved: ' + ($failed -join '; ')) }
+    $location = $Destination
+    if ($Zip) {
+        $zipPath = $Destination + '.zip'
+        if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+        New-ZipFromFolder $Destination $zipPath
+        $location = $zipPath
+    }
+    return [pscustomobject]@{ Location = $location; Folder = $Destination; Files = $saved; Failed = $failed }
 }
 
 # Optional PowerShell modules and the checks that need them (#94). A missing
@@ -1552,6 +1613,144 @@ function ConvertTo-ServiceBaseName {
     return ($Name -replace '_[0-9a-fA-F]{4,}$', '')
 }
 
+function Get-NetBiosSettingText {
+    # Pure (#149): Win32_NetworkAdapterConfiguration.TcpipNetbiosOptions in words.
+    param($Option)
+    switch ([string]$Option) {
+        '0' { return 'Default (set by DHCP)' }
+        '1' { return 'Enabled' }
+        '2' { return 'Disabled' }
+        default { return 'Unknown' }
+    }
+}
+
+function ConvertTo-NetworkAdapterRecord {
+    # Pure (#149): one enabled adapter's IP configuration as a plain record
+    # for the report row, the snapshot and the per-adapter comparison. The
+    # MAC address is the key, because Setup can rename adapters.
+    param($Config, [string]$Name, $VlanId = $null)
+    $addresses = @($Config.IPAddress | Where-Object { $_ })
+    $ipv4 = @($addresses | Where-Object { [string]$_ -match '^\d+\.\d+\.\d+\.\d+$' } | ForEach-Object { [string]$_ })
+    $ipv6 = @($addresses | Where-Object { [string]$_ -match ':' } | ForEach-Object { [string]$_ })
+    $masks = @($Config.IPSubnet | Where-Object { [string]$_ -match '^\d+\.\d+\.\d+\.\d+$' } | ForEach-Object { [string]$_ })
+    $wins = @(@($Config.WINSPrimaryServer, $Config.WINSSecondaryServer) | Where-Object { $_ } | ForEach-Object { [string]$_ })
+    $vlan = ''
+    if ($null -ne $VlanId -and [string]$VlanId -ne '' -and [string]$VlanId -ne '0') { $vlan = [string]$VlanId }
+    $metric = ''
+    if ($null -ne $Config.IPConnectionMetric) { $metric = [string]$Config.IPConnectionMetric }
+    return [pscustomobject]@{
+        Name          = $Name
+        Mac           = (([string]$Config.MACAddress).ToUpperInvariant() -replace '-', ':')
+        IPv4          = $ipv4
+        Mask          = $masks
+        IPv6          = $ipv6
+        Gateway       = @($Config.DefaultIPGateway | Where-Object { $_ } | ForEach-Object { [string]$_ })
+        Dns           = @($Config.DNSServerSearchOrder | Where-Object { $_ } | ForEach-Object { [string]$_ })
+        Suffix        = [string]$Config.DNSDomain
+        SuffixSearch  = @($Config.DNSDomainSuffixSearchOrder | Where-Object { $_ } | ForEach-Object { [string]$_ })
+        RegisterInDns = [bool]$Config.FullDNSRegistrationEnabled
+        RegisterSuffix = [bool]$Config.DomainDNSRegistrationEnabled
+        Wins          = $wins
+        NetBios       = Get-NetBiosSettingText $Config.TcpipNetbiosOptions
+        Metric        = $metric
+        Dhcp          = [bool]$Config.DHCPEnabled
+        Vlan          = $vlan
+    }
+}
+
+function ConvertTo-MacKey {
+    # Pure (#149): 00-50-56-AA-00-01 and 00:50:56:aa:00:01 are the same adapter.
+    param([string]$Mac)
+    return (($Mac -replace '[^0-9A-Fa-f]', '').ToUpperInvariant())
+}
+
+function Get-NetworkAdapterDetail {
+    # Pure (#149): the report details of one adapter record.
+    param($Adapter)
+    $onOff = { param($b) if ($b) { 'Yes' } else { 'No' } }
+    $d = @(
+        ('Gateway=' + (@($Adapter.Gateway) -join ',')),
+        ('DNS=' + (@($Adapter.Dns) -join ',')),
+        ('DHCP=' + [bool]$Adapter.Dhcp),
+        ('MAC=' + [string]$Adapter.Mac)
+    )
+    if (@($Adapter.IPv6).Count -gt 0) { $d += ('IPv6=' + (@($Adapter.IPv6) -join ',')) }
+    $d += ('DNS suffix=' + $(if ($Adapter.Suffix) { [string]$Adapter.Suffix } else { '(none)' }))
+    if (@($Adapter.SuffixSearch).Count -gt 0) { $d += ('Suffix search list=' + (@($Adapter.SuffixSearch) -join ',')) }
+    $d += ('Register in DNS=' + (& $onOff $Adapter.RegisterInDns) + ', with suffix=' + (& $onOff $Adapter.RegisterSuffix))
+    $d += ('WINS=' + $(if (@($Adapter.Wins).Count -gt 0) { @($Adapter.Wins) -join ',' } else { '(none)' }))
+    $d += ('NetBIOS over TCP/IP=' + [string]$Adapter.NetBios)
+    if ($Adapter.Metric) { $d += ('Metric=' + [string]$Adapter.Metric) }
+    if ($Adapter.Vlan) { $d += ('VLAN=' + [string]$Adapter.Vlan) }
+    return ,$d
+}
+
+function Compare-NetworkAdapter {
+    # Pure (#149): compares the adapters before and after the upgrade, matched
+    # by MAC address (Setup can rename adapters). One row per changed adapter,
+    # with every difference in the details and the worst status. Addresses
+    # lost on a static adapter are an ACTION; on DHCP a WARNING (a new lease).
+    param($Before, $After)
+    $rows = @()
+    $make = { param($st,$item,$val,$det,$rec) [pscustomobject]@{ Status=$st; Item=$item; Value=$val; Details=$det; Recommendation=$rec } }
+    $list = { param($v) $x = @($v | Where-Object { $_ } | ForEach-Object { [string]$_ }); if ($x.Count -eq 0) { '(none)' } else { $x -join ',' } }
+    $set = { param($v) (@($v | Where-Object { $_ } | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object -Unique) -join ',') }
+    $rank = { param($s) $script:StatusOrder.IndexOf($s) }
+    $restore = 'Compare with the network evidence file saved before the upgrade (ipconfig /all, netsh interface dump) and put back what should not have changed. Test name resolution and access from a client.'
+    $now = @{}
+    foreach ($a in @($After | Where-Object { $_ -and $_.Mac })) { $now[(ConvertTo-MacKey ([string]$a.Mac))] = $a }
+    $seen = @{}
+    foreach ($b in @($Before | Where-Object { $_ -and $_.Mac })) {
+        $key = ConvertTo-MacKey ([string]$b.Mac)
+        $seen[$key] = $true
+        if (-not $now.ContainsKey($key)) {
+            if (@($b.IPv4 | Where-Object { $_ }).Count -gt 0) {
+                $rows += (& $make 'ACTION' ('Network adapter missing after upgrade: ' + $b.Name) ('MAC=' + [string]$b.Mac) ('Before: IPv4=' + (& $list $b.IPv4) + '; Gateway=' + (& $list $b.Gateway) + '; DNS=' + (& $list $b.Dns) + '; DHCP=' + [bool]$b.Dhcp) ('No enabled adapter has this MAC address now. Check Device Manager and the virtual hardware, then restore the IP configuration on the right adapter. ' + $restore))
+            }
+            continue
+        }
+        $a = $now[$key]
+        # A list and a hashtable, so the helper below (a child scope) can add to them.
+        $changes = New-Object System.Collections.Generic.List[string]
+        $state = @{ Worst = 'INFO' }
+        $staticNow = (-not [bool]$b.Dhcp -or -not [bool]$a.Dhcp)
+        $addrStatus = $(if ($staticNow) { 'ACTION' } else { 'WARNING' })
+        $add = {
+            param($st, $text)
+            $changes.Add([string]$text)
+            if ((& $rank $st) -lt (& $rank $state.Worst)) { $state.Worst = $st }
+        }
+        if ([bool]$b.Dhcp -ne [bool]$a.Dhcp) { & $add 'ACTION' ('DHCP: before ' + [bool]$b.Dhcp + ', now ' + [bool]$a.Dhcp) }
+        $lost4 = @(@($b.IPv4) | Where-Object { $_ -and @($a.IPv4) -notcontains $_ })
+        if ($lost4.Count -gt 0) { & $add $addrStatus ('IPv4: before ' + (& $list $b.IPv4) + ', now ' + (& $list $a.IPv4)) }
+        if ((& $set $b.Gateway) -ne (& $set $a.Gateway)) { & $add $addrStatus ('Gateway: before ' + (& $list $b.Gateway) + ', now ' + (& $list $a.Gateway)) }
+        # DNS server order matters for resolution, so the lists are compared in order.
+        if ((& $list $b.Dns) -ne (& $list $a.Dns)) { & $add 'WARNING' ('DNS servers: before ' + (& $list $b.Dns) + ', now ' + (& $list $a.Dns)) }
+        $global6 = { param($v) @($v | Where-Object { $_ -and [string]$_ -notmatch '^fe80:' }) }
+        $lost6 = @(& $global6 $b.IPv6 | Where-Object { @($a.IPv6) -notcontains $_ })
+        if ($lost6.Count -gt 0) { & $add 'WARNING' ('IPv6: before ' + (& $list (& $global6 $b.IPv6)) + ', now ' + (& $list (& $global6 $a.IPv6))) }
+        if ([string]$b.Suffix -ne [string]$a.Suffix) { & $add 'WARNING' ('DNS suffix: before ' + (& $list $b.Suffix) + ', now ' + (& $list $a.Suffix)) }
+        if ((& $list $b.SuffixSearch) -ne (& $list $a.SuffixSearch)) { & $add 'WARNING' ('Suffix search list: before ' + (& $list $b.SuffixSearch) + ', now ' + (& $list $a.SuffixSearch)) }
+        if ([bool]$b.RegisterInDns -ne [bool]$a.RegisterInDns) { & $add 'WARNING' ('Register in DNS: before ' + [bool]$b.RegisterInDns + ', now ' + [bool]$a.RegisterInDns) }
+        if ((& $set $b.Wins) -ne (& $set $a.Wins)) { & $add 'WARNING' ('WINS: before ' + (& $list $b.Wins) + ', now ' + (& $list $a.Wins)) }
+        if ($b.NetBios -and $a.NetBios -and [string]$b.NetBios -ne [string]$a.NetBios) { & $add 'WARNING' ('NetBIOS over TCP/IP: before ' + $b.NetBios + ', now ' + $a.NetBios) }
+        if ([string]$b.Vlan -ne [string]$a.Vlan) { & $add 'ACTION' ('VLAN: before ' + (& $list $b.Vlan) + ', now ' + (& $list $a.Vlan)) }
+        if ($b.Metric -and $a.Metric -and [string]$b.Metric -ne [string]$a.Metric) { & $add 'INFO' ('Metric: before ' + $b.Metric + ', now ' + $a.Metric) }
+        if ([string]$b.Name -ne [string]$a.Name) { & $add 'INFO' ('Name: before ' + $b.Name + ', now ' + $a.Name) }
+        $worst = $state.Worst
+        if ($changes.Count -eq 0) { continue }
+        $rec = $restore
+        if ($worst -eq 'INFO') { $rec = 'Only the name or metric changed. Update scripts or monitoring that use the adapter name.' }
+        $rows += (& $make $worst ('Network adapter changed: ' + $a.Name) ('MAC=' + [string]$a.Mac) (@($changes) -join '; ') $rec)
+    }
+    $new = @(@($After | Where-Object { $_ -and $_.Mac }) | Where-Object { -not $seen.ContainsKey((ConvertTo-MacKey ([string]$_.Mac))) })
+    if ($new.Count -gt 0) {
+        $rows += (& $make 'INFO' 'Network adapters new after upgrade' ('Count=' + $new.Count) ((@($new | ForEach-Object { [string]$_.Name + ' (MAC=' + [string]$_.Mac + ')' })) -join ', ') 'Adapters with a MAC address not seen before the upgrade. Expected when virtual hardware was changed; otherwise check that the IP configuration is on the right adapter.')
+    }
+    # Plain output (not ,$rows): callers wrap it in @(), and no rows is no output.
+    return $rows
+}
+
 function Compare-IPUSnapshot {
     # Pure: compares the pre-upgrade snapshot with the current one and returns
     # the differences an engineer must look at after the upgrade.
@@ -1607,6 +1806,12 @@ function Compare-IPUSnapshot {
     }
     if ($Before.Uac -and $After.Uac -and [string]$Before.Uac -ne [string]$After.Uac) {
         $diff += (& $make 'WARNING' 'UAC changed' ([string]$After.Uac) ('Before: ' + [string]$Before.Uac) 'User Account Control is set differently after the upgrade. Confirm the change is intended (usually set by Group Policy).')
+    }
+    # Per adapter, matched by MAC, when both runs have the adapter list
+    # (#149, from 4.5.0); otherwise the flat address lists of older baselines.
+    if (@($Before.Adapters | Where-Object { $_ }).Count -gt 0 -and $null -ne $After.Adapters) {
+        foreach ($r in @(Compare-NetworkAdapter $Before.Adapters $After.Adapters)) { $diff += $r }
+        $lists = @($lists | Where-Object { $_.Prop -ne 'IPv4' -and $_.Prop -ne 'Dns' })
     }
     foreach ($l in $lists) {
         $b = @($Before.($l.Prop) | Where-Object { $_ })
@@ -2561,7 +2766,7 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
         Services = @($script:Data.Services | ForEach-Object { [pscustomobject]@{ Name=[string]$_.Name; State=[string]$_.State; StartMode=[string]$_.StartMode } })
         Apps     = @($script:Data.Apps | ForEach-Object { [pscustomobject]@{ Name=$_.Name; Version=$_.Version } })
         Features = @()
-        Ports = @(); Routes = @(); IPv4 = @(); Dns = @(); Hosts = @(); Tasks = @()
+        Ports = @(); Routes = @(); IPv4 = @(); Dns = @(); Adapters = @(); Hosts = @(); Tasks = @()
     }
     if ($script:Data.Features) { $script:Data.Snapshot.Features = @($script:Data.Features.Keys | Where-Object { $script:Data.Features[$_] } | Sort-Object) }
 
@@ -3153,13 +3358,43 @@ Register-Check -Id 'storage' -Name 'Storage' -Script {
 
 # ---------------------------------------------------------------------------
 Register-Check -Id 'network' -Name 'Network, teaming, hosts and routes' -Script {
+    # VLAN IDs come from the NetAdapter module (optional, #94), by MAC (#149).
+    $vlanByMac = @{}
+    if (Test-CommandAvailable 'Get-NetAdapter') {
+        try {
+            foreach ($na in @(Get-NetAdapter -ErrorAction Stop)) {
+                if ($na -and $na.MacAddress) { $vlanByMac[(ConvertTo-MacKey ([string]$na.MacAddress))] = $na.VlanID }
+            }
+        } catch { Write-Swallowed $_ }
+    }
     foreach ($n in @(Get-CimRequired 'Win32_NetworkAdapterConfiguration' 'IPEnabled=True')) {
         $a = @(Get-CimSafe 'Win32_NetworkAdapter' ('Index=' + $n.Index)) | Select-Object -First 1
-        $ipv4 = @($n.IPAddress | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' })
         $name = [string]$a.NetConnectionID; if (-not $name) { $name = [string]$n.Description }
-        $script:Data.Snapshot.IPv4 += $ipv4
-        $script:Data.Snapshot.Dns += @($n.DNSServerSearchOrder | Where-Object { $_ })
-        Add-Result 'NETWORK' $name 'INFO' ('IPv4=' + ($ipv4 -join ',') + ' / ' + (@($n.IPSubnet) -join ',')) @(('Gateway=' + (@($n.DefaultIPGateway) -join ',')),('DNS=' + (@($n.DNSServerSearchOrder) -join ',')),('DHCP=' + $n.DHCPEnabled),('MAC=' + $n.MACAddress)) -Source 'Win32_NetworkAdapterConfiguration'
+        $rec = ConvertTo-NetworkAdapterRecord $n $name $vlanByMac[(ConvertTo-MacKey ([string]$n.MACAddress))]
+        $script:Data.Snapshot.IPv4 += $rec.IPv4
+        $script:Data.Snapshot.Dns += $rec.Dns
+        $script:Data.Snapshot.Adapters += $rec
+        Add-Result 'NETWORK' $name 'INFO' ('IPv4=' + ($rec.IPv4 -join ',') + ' / ' + ($rec.Mask -join ',')) (Get-NetworkAdapterDetail $rec) -Source 'Win32_NetworkAdapterConfiguration'
+    }
+
+    # A local copy of the full network configuration (#149), for the network
+    # team if the upgrade resets an adapter. Read-only commands.
+    if ($EnableNetworkEvidence) {
+        try {
+            $dest = Join-Path $PolicyEvidenceRoot ($script:SafeComputerName + '-IPU-Network-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+            $copy = Save-NetworkEvidence -Destination $dest -Zip $CreatePolicyEvidenceZip
+            $script:Data.NetworkEvidence = $copy.Location
+            $keep = 'Copy it off the server before the change: it holds the full IP configuration, is not redacted and must not be shared outside the team. netsh-interface-dump.txt is a netsh script that can put the configuration back (read it first; see the user guide).'
+            if (@($copy.Failed).Count -gt 0) {
+                Add-Result 'NETWORK' 'NetworkEvidence' 'MANUAL' $copy.Location (@(('Saved=' + ($copy.Files -join ', '))) + @($copy.Failed | ForEach-Object { 'Failed: ' + $_ })) -Recommendation ('Run the failed commands by hand and keep their output with the file. ' + $keep) -Kind 'Finding' -Source 'ipconfig, route, netsh (read-only)'
+            } else {
+                Add-Result 'NETWORK' 'NetworkEvidence' 'OK' $copy.Location ('Files=' + ($copy.Files -join ', ')) -Recommendation $keep -Source 'ipconfig, route, netsh (read-only)'
+            }
+        } catch {
+            Add-Result 'NETWORK' 'NetworkEvidence' 'MANUAL' 'Could not save the network configuration' $_.Exception.Message -Recommendation 'Before the change, save the output of "ipconfig /all", "route print" and "netsh -c interface dump" by hand and keep it off the server.' -Kind 'Finding' -Source 'ipconfig, route, netsh'
+        }
+    } else {
+        Add-Result 'NETWORK' 'NetworkEvidence' 'INFO' 'Not taken (EnableNetworkEvidence is off)' -Source 'SETTINGS'
     }
 
     # NIC teaming. Microsoft: disable LBFO teaming before IPU and re-enable
@@ -4266,6 +4501,7 @@ function New-IPUReportHtml {
         @('C: drive', $script:Data.CSummary),
         @('Memory GB / logical CPUs', ((Get-ResultText $Results 'PERFORMANCE' 'MemoryGB') + ' / ' + (Get-ResultText $Results 'PERFORMANCE' 'LogicalProcessors'))),
         @('Policy evidence', $script:Data.PolicyEvidence),
+        @('Network evidence', $script:Data.NetworkEvidence),
         @('Machine-readable result', $(if ($WriteJson) { $script:JsonPath } else { 'Disabled' }))
     )
     if ($isPost) {

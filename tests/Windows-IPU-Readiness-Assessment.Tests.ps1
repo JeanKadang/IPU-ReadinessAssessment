@@ -2678,3 +2678,139 @@ Describe 'SPECIAL servers (#152)' {
         }
     }
 }
+
+Describe 'Network configuration (#149)' {
+    BeforeAll {
+        function New-TestAdapter {
+            param([string]$Name = 'Ethernet0', [string]$Mac = '00:50:56:00:00:01', [string[]]$IPv4 = @('10.20.30.40'), [string[]]$Gateway = @('10.20.30.1'), [string[]]$Dns = @('10.20.1.10', '10.20.1.11'), [bool]$Dhcp = $false, [string[]]$IPv6 = @('fe80::1'), [string]$Suffix = 'corp.example.test', [string[]]$Wins = @(), [string]$NetBios = 'Default (set by DHCP)', [string]$Vlan = '', [string]$Metric = '15', [bool]$Register = $true)
+            return [pscustomobject]@{ Name = $Name; Mac = $Mac; IPv4 = $IPv4; Mask = @('255.255.255.0'); IPv6 = $IPv6; Gateway = $Gateway; Dns = $Dns; Suffix = $Suffix; SuffixSearch = @(); RegisterInDns = $Register; RegisterSuffix = $false; Wins = $Wins; NetBios = $NetBios; Metric = $Metric; Dhcp = $Dhcp; Vlan = $Vlan }
+        }
+    }
+    It 'NetBIOS option <Option> is <Text>' -TestCases @(
+        @{ Option = 0; Text = 'Default (set by DHCP)' }
+        @{ Option = 1; Text = 'Enabled' }
+        @{ Option = 2; Text = 'Disabled' }
+        @{ Option = $null; Text = 'Unknown' }
+    ) {
+        Get-NetBiosSettingText $Option | Should -Be $Text
+    }
+    It 'builds the adapter record from Win32_NetworkAdapterConfiguration' {
+        $cfg = [pscustomobject]@{ IPAddress = @('10.20.30.40', 'fe80::1'); IPSubnet = @('255.255.255.0', '64'); DefaultIPGateway = @('10.20.30.1'); DNSServerSearchOrder = @('10.20.1.10'); DHCPEnabled = $false; MACAddress = '00-50-56-aa-00-01'; DNSDomain = 'corp.example.test'; DNSDomainSuffixSearchOrder = $null; FullDNSRegistrationEnabled = $true; DomainDNSRegistrationEnabled = $false; WINSPrimaryServer = ''; WINSSecondaryServer = $null; TcpipNetbiosOptions = 1; IPConnectionMetric = 25 }
+        $r = ConvertTo-NetworkAdapterRecord $cfg 'Ethernet0' 0
+        $r.Mac | Should -Be '00:50:56:AA:00:01'
+        ($r.IPv4 -join ',') | Should -Be '10.20.30.40'
+        ($r.Mask -join ',') | Should -Be '255.255.255.0'
+        ($r.IPv6 -join ',') | Should -Be 'fe80::1'
+        @($r.Wins).Count | Should -Be 0
+        $r.NetBios | Should -Be 'Enabled'
+        $r.Metric | Should -Be '25'
+        $r.Vlan | Should -Be ''          # VLAN 0 means untagged
+        $r.RegisterInDns | Should -BeTrue
+        ConvertTo-MacKey '00-50-56-aa-00-01' | Should -Be (ConvertTo-MacKey '00:50:56:AA:00:01')
+    }
+    It 'nothing changed: no rows' {
+        @(Compare-NetworkAdapter @(New-TestAdapter) @(New-TestAdapter)).Count | Should -Be 0
+    }
+    It 'matches adapters by MAC, so a renamed adapter is only INFO' {
+        $rows = @(Compare-NetworkAdapter @(New-TestAdapter) @(New-TestAdapter -Name 'Ethernet 2'))
+        $rows.Count | Should -Be 1
+        $rows[0].Status | Should -Be 'INFO'
+        $rows[0].Item | Should -Be 'Network adapter changed: Ethernet 2'
+        $rows[0].Details | Should -Be 'Name: before Ethernet0, now Ethernet 2'
+    }
+    It 'a static adapter reset to DHCP is an ACTION with every difference listed' {
+        $after = New-TestAdapter -IPv4 @('10.20.99.7') -Gateway @('10.20.99.1') -Dns @('10.20.99.2') -Dhcp $true -Suffix ''
+        $rows = @(Compare-NetworkAdapter @(New-TestAdapter) @($after))
+        $rows.Count | Should -Be 1
+        $rows[0].Status | Should -Be 'ACTION'
+        $rows[0].Value | Should -Be 'MAC=00:50:56:00:00:01'
+        foreach ($want in @('DHCP: before False, now True', 'IPv4: before 10.20.30.40, now 10.20.99.7', 'Gateway: before 10.20.30.1, now 10.20.99.1', 'DNS servers: before 10.20.1.10,10.20.1.11, now 10.20.99.2', 'DNS suffix: before corp.example.test, now (none)')) {
+            $rows[0].Details | Should -Match ([regex]::Escape($want))
+        }
+        $rows[0].Recommendation | Should -Match 'network evidence file'
+    }
+    It 'a new address on a DHCP adapter is a WARNING, not an ACTION' {
+        $rows = @(Compare-NetworkAdapter @(New-TestAdapter -Dhcp $true) @(New-TestAdapter -Dhcp $true -IPv4 @('10.20.30.41')))
+        $rows[0].Status | Should -Be 'WARNING'
+    }
+    It 'DNS server order matters; WINS, NetBIOS, registration and global IPv6 are compared' {
+        $after = New-TestAdapter -Dns @('10.20.1.11', '10.20.1.10') -Wins @('10.20.1.20') -NetBios 'Disabled' -Register $false -IPv6 @('fe80::2')
+        $before = New-TestAdapter -IPv6 @('fe80::1', '2001:db8::40')
+        $rows = @(Compare-NetworkAdapter @($before) @($after))
+        $rows[0].Status | Should -Be 'WARNING'
+        foreach ($want in @('DNS servers:', 'WINS: before (none), now 10.20.1.20', 'NetBIOS over TCP/IP: before Default (set by DHCP), now Disabled', 'Register in DNS: before True, now False', 'IPv6: before 2001:db8::40, now (none)')) {
+            $rows[0].Details | Should -Match ([regex]::Escape($want))
+        }
+        # A new link-local address alone is not a change worth reporting.
+        @(Compare-NetworkAdapter @(New-TestAdapter) @(New-TestAdapter -IPv6 @('fe80::9'))).Count | Should -Be 0
+    }
+    It 'a changed VLAN is an ACTION' {
+        (@(Compare-NetworkAdapter @(New-TestAdapter -Vlan '20') @(New-TestAdapter -Vlan '')))[0].Status | Should -Be 'ACTION'
+    }
+    It 'an adapter that is gone is an ACTION; a new one is INFO' {
+        $rows = @(Compare-NetworkAdapter @(New-TestAdapter) @(New-TestAdapter -Name 'Ethernet1' -Mac '00:50:56:00:00:02'))
+        ($rows | Where-Object { $_.Item -eq 'Network adapter missing after upgrade: Ethernet0' }).Status | Should -Be 'ACTION'
+        ($rows | Where-Object { $_.Item -eq 'Network adapters new after upgrade' }).Details | Should -Match 'Ethernet1'
+    }
+    It 'Compare-IPUSnapshot uses the adapter comparison when both runs have it, and the flat lists otherwise' {
+        $before = [pscustomobject]@{ IPv4 = @('10.20.30.40'); Dns = @('10.20.1.10'); Adapters = @(New-TestAdapter) }
+        $after = [pscustomobject]@{ IPv4 = @('10.20.99.7'); Dns = @('10.20.1.10'); Adapters = @(New-TestAdapter -IPv4 @('10.20.99.7')) }
+        $d = Compare-IPUSnapshot $before $after
+        @($d | Where-Object { $_.Item -eq 'IPv4 addresses missing after upgrade' }).Count | Should -Be 0
+        @($d | Where-Object { $_.Item -eq 'Network adapter changed: Ethernet0' }).Count | Should -Be 1
+        # A baseline from 4.4.0 or older has no adapter list.
+        $old = [pscustomobject]@{ IPv4 = @('10.20.30.40'); Dns = @('10.20.1.10') }
+        $d = Compare-IPUSnapshot $old $after
+        @($d | Where-Object { $_.Item -eq 'IPv4 addresses missing after upgrade' }).Count | Should -Be 1
+    }
+    It 'a redacted report hides every address in the adapter details' {
+        $ctx = New-RedactionContext 'SRV01' 'corp.example.test'
+        $text = (Get-NetworkAdapterDetail (New-TestAdapter -IPv6 @('fe80::1', '2001:db8::40') -Wins @('10.20.1.20'))) -join ' | '
+        $red = Protect-ReportText $text $ctx
+        foreach ($addr in @('10.20.30.1', '10.20.1.10', '10.20.1.20', 'fe80::1', '2001:db8::40', '00:50:56:00:00:01', 'corp.example.test')) {
+            $red | Should -Not -Match ([regex]::Escape($addr))
+        }
+    }
+}
+
+Describe 'Save-NetworkEvidence (#149)' {
+    BeforeAll {
+        Mock Test-CommandAvailable { $false }
+    }
+    It 'saves each command output into the folder and zips it' {
+        Mock Invoke-NativeCapture { [pscustomobject]@{ ExitCode = 0; Output = ('output of ' + ($ArgumentList -join ' ')); Lines = @('x'); TimedOut = $false; Error = '' } }
+        $dest = Join-Path $TestDrive 'evidence\SRV-IPU-Network-1'
+        $r = Save-NetworkEvidence -Destination $dest
+        ($r.Files -join ',') | Should -Be 'ipconfig-all.txt,route-print.txt,netsh-ipv4-show-config.txt,netsh-interface-dump.txt'
+        @($r.Failed).Count | Should -Be 0
+        $r.Location | Should -Be ($dest + '.zip')
+        Test-Path -LiteralPath $r.Location | Should -BeTrue
+        [IO.File]::ReadAllText((Join-Path $dest 'netsh-interface-dump.txt')) | Should -Match 'output of -c interface dump'
+        Should -Invoke Invoke-NativeCapture -Times 4 -Exactly
+    }
+    It 'runs only read-only commands, each with a timeout' {
+        Mock Invoke-NativeCapture { [pscustomobject]@{ ExitCode = 0; Output = 'x'; Lines = @('x'); TimedOut = $false; Error = '' } }
+        $null = Save-NetworkEvidence -Destination (Join-Path $TestDrive 'ro') -Zip $false -TimeoutSeconds 30
+        Should -Invoke Invoke-NativeCapture -Times 4 -Exactly -ParameterFilter {
+            $TimeoutSeconds -eq 30 -and (($ArgumentList -join ' ') -in @('/all', 'print', 'interface ipv4 show config', '-c interface dump'))
+        }
+    }
+    It 'a command that times out is listed in Failed; the rest is saved' {
+        Mock Invoke-NativeCapture { [pscustomobject]@{ ExitCode = $null; Output = ''; Lines = @(); TimedOut = $true; Error = '' } } -ParameterFilter { $FilePath -like '*route.exe' }
+        Mock Invoke-NativeCapture { [pscustomobject]@{ ExitCode = 0; Output = 'x'; Lines = @('x'); TimedOut = $false; Error = '' } } -ParameterFilter { $FilePath -notlike '*route.exe' }
+        $r = Save-NetworkEvidence -Destination (Join-Path $TestDrive 'partial') -Zip $false
+        @($r.Files).Count | Should -Be 3
+        ($r.Failed -join ' ') | Should -Match 'route print: no answer within 60 seconds'
+    }
+    It 'throws when nothing could be saved' {
+        Mock Invoke-NativeCapture { [pscustomobject]@{ ExitCode = 1; Output = ''; Lines = @(); TimedOut = $false; Error = '' } }
+        { Save-NetworkEvidence -Destination (Join-Path $TestDrive 'none') -Zip $false } | Should -Throw '*No network command output*'
+    }
+    It '-RedactExisting leaves the evidence alone: it is not a report' {
+        $dir = Join-Path $TestDrive 'share'
+        New-Item -ItemType Directory -Path $dir | Out-Null
+        [IO.File]::WriteAllText((Join-Path $dir 'SRV01-IPU-Network-20261013-100000.txt'), 'IPv4 Address. . . : 10.20.30.40')
+        Invoke-RedactExisting $dir | Should -Be 1
+        @(Get-ChildItem -LiteralPath $dir -Filter 'REDACTED-*').Count | Should -Be 0
+    }
+}

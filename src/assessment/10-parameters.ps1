@@ -51,6 +51,11 @@ param(
     # "appcmd add backup" saves) into a restricted evidence folder and ZIP
     # under PolicyEvidenceRoot. A read-only copy; IIS itself is not touched.
     [bool]$EnableIISConfigEvidence = $true,
+    # Save ipconfig /all, route print and the netsh interface configuration
+    # (a script that can re-apply it) into a restricted evidence folder and
+    # ZIP under PolicyEvidenceRoot (#149). Never redacted: copy it off the
+    # server before the change, and do not share it.
+    [bool]$EnableNetworkEvidence = $true,
 
     # Output.
     [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$ReportDirectory = 'C:\Temp\IPU-Assessment',

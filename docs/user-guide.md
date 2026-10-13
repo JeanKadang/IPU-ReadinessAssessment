@@ -190,6 +190,7 @@ When the budget runs out, remaining slow checks are reported as `MANUAL` (skippe
 | `PolicyEvidenceRoot` | `C:\Temp\Tools\PolBackup` | Timestamped evidence folder and ZIP go here |
 | `CreatePolicyEvidenceZip` | `$true` | Zip the evidence |
 | `EnableIISConfigEvidence` | `$true` | When IIS is installed, copy its configuration files into a restricted evidence folder and ZIP under `PolicyEvidenceRoot` (see [IIS configuration copy](#iis-configuration-copy)) |
+| `EnableNetworkEvidence` | `$true` | Save `ipconfig /all`, `route print` and the netsh interface configuration into a restricted evidence folder and ZIP under `PolicyEvidenceRoot` (see [Network configuration copy](#network-configuration-copy)) |
 
 ### Output
 
@@ -471,7 +472,7 @@ mindmap
 | Hardware and Virtualization | Physical or virtual, VMware Tools and vSphere versions, non-Microsoft drivers, CPU and memory |
 | Storage | Volumes, free space, system and recovery partitions |
 | Clustering | Failover cluster membership |
-| Network | Adapters and teaming, hosts file, static routes, listening ports |
+| Network | Adapters (IPv4 and IPv6, gateway, DNS servers and suffix, DNS registration, WINS, NetBIOS over TCP/IP, metric, VLAN), teaming, hosts file, static routes, listening ports; a local copy of the network configuration |
 | Access and Remote Desktop | Domain or workgroup membership, secure channel, UAC, local administrators, Group Policy (applied and filtered GPOs, OS-dependent WMI filters, last applied), the computer's AD groups and OU path, RDP and NLA, local policy evidence |
 | IIS and Remote Desktop Services | IIS, RDS roles |
 | PKI and Certificates | CA role, certificates and TLS bindings |
@@ -503,6 +504,35 @@ and start IIS again. Or copy them into a new folder under `%windir%\System32\ine
 `appcmd restore backup <folder name>`. If the server uses **shared configuration** (`redirection.config` points to a
 share), the report says so: back up the files on that share as well.
 
+### Network configuration copy
+
+The `network` check saves the output of read-only commands into `<PolicyEvidenceRoot>\<Computer>-IPU-Network-<time>`
+and zips it (#149):
+
+| File | Command |
+|---|---|
+| `ipconfig-all.txt` | `ipconfig /all` |
+| `route-print.txt` | `route print` |
+| `netsh-ipv4-show-config.txt` | `netsh interface ipv4 show config` |
+| `netsh-interface-dump.txt` | `netsh -c interface dump` |
+| `adapter-advanced-properties.txt` | `Get-NetAdapterAdvancedProperty` (offloads, jumbo frames, VLAN), when the NetAdapter module is there |
+
+Each command has a 60-second timeout. A command that fails or times out makes the row `MANUAL` and is named in it; the
+others are still saved. The folder gets SYSTEM and Administrators access only.
+
+This copy is **not redacted** and is never part of the report or of `-RedactExisting`: it holds every address on the
+server. **Copy it off the server before the change** (together with the report), and do not share it outside the team.
+
+If the upgrade resets an adapter, use the files to put the configuration back by hand. `netsh-interface-dump.txt` is a
+netsh script that re-creates the interface configuration. Read it first: it sets every interface, including ones
+that are fine, and adapter names may have changed during Setup. To apply it on purpose, as a planned step:
+
+```
+netsh -f C:\path\to\netsh-interface-dump.txt
+```
+
+The assessment never runs it.
+
 ### Standard change checklist
 
 Always listed as `MANUAL` (cannot be proven from inside the guest): backup and fallback, credentials and console
@@ -520,9 +550,16 @@ It reads `<Computer>-IPU-Assessment.json` from the pre-upgrade run and reports:
 
 - whether the server reached the target release (`ACTION` if it did not, with the Setup log locations to read),
 - differences in services (automatic services no longer running, services gone), listening ports, static routes,
-  IPv4 addresses, DNS servers, hosts entries, applications, Windows features, scheduled tasks, applied GPOs,
+  network adapters, hosts entries, applications, Windows features, scheduled tasks, applied GPOs,
   file shares and the computer's AD groups,
 - a computer object that moved to another OU, a changed UAC setting, and RDP Network Level Authentication turned off (ACTION).
+
+Network adapters are compared one by one, matched by MAC address because Setup can rename them (from a 4.5.0 baseline;
+older baselines compare the address lists only). One row per adapter lists every difference: a static adapter that lost
+its addresses or gateway, or was switched to DHCP, or a changed VLAN is an ACTION; on a DHCP adapter a new address is a
+WARNING; changed DNS servers (order counts), DNS suffix, DNS registration, WINS, NetBIOS or global IPv6 addresses are a
+WARNING; a new name or metric alone is INFO. An adapter that is gone is an ACTION. The network configuration copy above
+has what you need to restore it.
 
 Changes that come with the new Windows release are listed as INFO, not as problems: services Microsoft now starts on demand or removed, ports that closed with a disabled service, and features removed or renamed (PowerShell 2.0, PowerShell ISE, Defender). Services that are now disabled get their own WARNING, because hardening after the upgrade often disables them on purpose. .NET Framework 3.5 removed by the upgrade is a WARNING with the reinstall command.
 
@@ -672,6 +709,7 @@ flowchart LR
 | `LGPO.exe /b` and `/parse` (if present) | `LGPO.exe /g` or `/m` |
 | With media only: mount and dismount an ISO; Setup's `/compat scanonly` creates `C:\$WINDOWS.~BT` | Start an upgrade |
 | Query registry, WMI, services, certificates | Query `Win32_Product` (it triggers MSI reconfiguration) |
+| `ipconfig /all`, `route print`, `netsh interface ipv4 show config`, `netsh -c interface dump` (each only prints the configuration) | `netsh -f` or any other netsh command that sets something |
 
 Reports contain a detailed inventory (ports, tasks, certificates, agents). Treat them as sensitive and restrict
 access to the output folder.

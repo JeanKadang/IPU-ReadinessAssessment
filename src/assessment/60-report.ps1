@@ -144,6 +144,7 @@ function New-IPUReportHtml {
         @('C: drive', $script:Data.CSummary),
         @('Memory GB / logical CPUs', ((Get-ResultText $Results 'PERFORMANCE' 'MemoryGB') + ' / ' + (Get-ResultText $Results 'PERFORMANCE' 'LogicalProcessors'))),
         @('Policy evidence', $script:Data.PolicyEvidence),
+        @('Network evidence', $script:Data.NetworkEvidence),
         @('Machine-readable result', $(if ($WriteJson) { $script:JsonPath } else { 'Disabled' }))
     )
     if ($isPost) {

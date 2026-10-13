@@ -130,6 +130,11 @@ BeforeAll {
         if ($script:Fake.IISCopyError) { throw $script:Fake.IISCopyError }
         return [pscustomobject]@{ Location = ($Destination + '.zip'); Folder = $Destination; Files = @('administration.config', 'applicationHost.config', 'redirection.config'); ApplicationHostSha256 = ('AB' * 32); SharedConfigPath = [string]$script:Fake.IISShared }
     }
+    function Save-NetworkEvidence {
+        param([string]$Destination, [bool]$Zip = $true, [int]$TimeoutSeconds = 60)
+        if ($script:Fake.NetEvidenceError) { throw $script:Fake.NetEvidenceError }
+        return [pscustomobject]@{ Location = ($Destination + '.zip'); Folder = $Destination; Files = @('ipconfig-all.txt', 'route-print.txt', 'netsh-ipv4-show-config.txt', 'netsh-interface-dump.txt'); Failed = @($script:Fake.NetEvidenceFailed | Where-Object { $_ }) }
+    }
     function Get-LocalGroupMembersBySid { param([string]$Sid) return ,@($script:Fake.Groups[$Sid]) }
     function Read-FileTail { param([string]$Path, [int]$MaxBytes = 0) return ,@($script:Fake.CbsLines) }
     function Test-CommandAvailable { param([string]$Name) return ($script:Fake.MissingCommands -notcontains $Name) }
@@ -1045,6 +1050,51 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $script:Fake.VMSwitches = @([pscustomobject]@{ Name = 'vSwitch'; NetAdapterInterfaceDescription = 'Microsoft Network Adapter Multiplexor Driver' })
             $null = Invoke-TestCheck 'network'
             (Get-Row 'NETWORK' 'LBFO team: Team1')[0].Value | Should -Be 'LBFO team bound to a Hyper-V virtual switch'
+        }
+        It 'adapter details: IPv6, DNS suffix, registration, WINS, NetBIOS, metric and VLAN (#149)' {
+            $script:Fake.Cim['Win32_NetworkAdapterConfiguration|IPEnabled=True'] = [pscustomobject]@{ Index = 1; IPAddress = @('10.20.30.40', 'fe80::1', '2001:db8::40'); IPSubnet = @('255.255.255.0', '64', '64'); DefaultIPGateway = @('10.20.30.1'); DNSServerSearchOrder = @('10.20.1.10'); DHCPEnabled = $false; MACAddress = '00:50:56:00:00:01'; Description = 'vmxnet3 Ethernet Adapter'; DNSDomain = 'corp.example.test'; DNSDomainSuffixSearchOrder = @('corp.example.test', 'example.test'); FullDNSRegistrationEnabled = $true; DomainDNSRegistrationEnabled = $false; WINSPrimaryServer = '10.20.1.20'; WINSSecondaryServer = $null; TcpipNetbiosOptions = 2; IPConnectionMetric = 15 }
+            $script:Fake.NetAdapters = @([pscustomobject]@{ Name = 'Ethernet0'; InterfaceDescription = 'vmxnet3 Ethernet Adapter'; MacAddress = '00-50-56-00-00-01'; VlanID = 20 })
+            $null = Invoke-TestCheck 'network'
+            $d = @((Get-Row 'NETWORK' 'Ethernet0')[0].Details) -join ' | '
+            foreach ($want in @('IPv6=fe80::1,2001:db8::40', 'DNS suffix=corp.example.test', 'Suffix search list=corp.example.test,example.test', 'Register in DNS=Yes, with suffix=No', 'WINS=10.20.1.20', 'NetBIOS over TCP/IP=Disabled', 'Metric=15', 'VLAN=20', 'MAC=00:50:56:00:00:01')) {
+                $d | Should -Match ([regex]::Escape($want))
+            }
+            $snap = @($script:Data.Snapshot.Adapters)
+            $snap.Count | Should -Be 1
+            $snap[0].Mac | Should -Be '00:50:56:00:00:01'
+            $snap[0].Vlan | Should -Be '20'
+            $snap[0].NetBios | Should -Be 'Disabled'
+            $script:Data.Snapshot.IPv4 | Should -Contain '10.20.30.40'
+        }
+        It 'saves the network evidence file in the evidence folder (#149)' {
+            $PolicyEvidenceRoot = Join-Path $TestDrive 'evidence'
+            $null = Invoke-TestCheck 'network'
+            $row = (Get-Row 'NETWORK' 'NetworkEvidence')[0]
+            $row.Status | Should -Be 'OK'
+            $row.Value | Should -BeLike (Join-Path $PolicyEvidenceRoot '*-IPU-Network-*.zip')
+            $row.Recommendation | Should -Match 'off the server'
+            $row.Recommendation | Should -Match 'not redacted'
+            $script:Data.NetworkEvidence | Should -Be $row.Value
+        }
+        It 'a command that failed makes the evidence MANUAL, listing it (#149)' {
+            $script:Fake.NetEvidenceFailed = @('route print: no answer within 60 seconds')
+            $null = Invoke-TestCheck 'network'
+            $row = (Get-Row 'NETWORK' 'NetworkEvidence')[0]
+            $row.Status | Should -Be 'MANUAL'
+            $row.Kind | Should -Be 'Finding'
+            (@($row.Details) -join ' ') | Should -Match 'Failed: route print: no answer'
+        }
+        It 'evidence that could not be saved is MANUAL, not silence (#149)' {
+            $script:Fake.NetEvidenceError = 'Access is denied'
+            $null = Invoke-TestCheck 'network'
+            $row = (Get-Row 'NETWORK' 'NetworkEvidence')[0]
+            $row.Status | Should -Be 'MANUAL'
+            $row.Details | Should -Match 'Access is denied'
+        }
+        It 'switched off: no evidence, and said so (#149)' {
+            $EnableNetworkEvidence = $false
+            $null = Invoke-TestCheck 'network'
+            (Get-Row 'NETWORK' 'NetworkEvidence')[0].Value | Should -Match 'EnableNetworkEvidence is off'
         }
         It 'without Get-NetRoute the routes are MANUAL' {
             $script:Fake.MissingCommands += 'Get-NetRoute'

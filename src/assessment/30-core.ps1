@@ -10,7 +10,7 @@ $script:ProfileSettingNames = @(
     'MinimumCFreeGB','ExtendBlockGB','MinimumMemoryGB','MaxPatchAgeDays','UptimeWarningDays','GroupPolicyMaxAgeDays','AVMaxAgeDays',
     'CertificateWarningDays','SystemPartitionMinFreeMB','RecoveryPartitionMinFreeMB',
     'RunDISMScanHealth','RunSFCVerifyOnly','DISMTimeoutMinutes','SFCTimeoutMinutes','SlowCheckBudgetMinutes','CompatScanTimeoutMinutes',
-    'EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip','EnableIISConfigEvidence',
+    'EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip','EnableIISConfigEvidence','EnableNetworkEvidence',
     'WriteJson','RestrictOutputAcl','NumberCultureName'
 )
 $script:PatternFields = @('Label','App','Service','Display','Driver','Disabled','Link','LinkTitle')
@@ -494,6 +494,62 @@ function Save-IISConfigEvidence {
         $location = $zipPath
     }
     return [pscustomobject]@{ Location = $location; Folder = $Destination; Files = @($files | ForEach-Object { $_.Name } | Sort-Object); ApplicationHostSha256 = $hash; SharedConfigPath = $shared }
+}
+
+function Save-NetworkEvidence {
+    # Saves the output of read-only network commands into a new, restricted
+    # evidence folder (#149): what the network team needs to put the IP
+    # configuration back by hand if the upgrade resets an adapter. Never
+    # redacted and never part of the report, so it gets the same
+    # SYSTEM/Administrators-only access as the other evidence. Every command
+    # has a timeout; one that fails is listed in Failed. Throws when nothing
+    # could be saved.
+    param(
+        [Parameter(Mandatory=$true)][string]$Destination,
+        [bool]$Zip = $true,
+        [int]$TimeoutSeconds = 60
+    )
+    $sys = Join-Path $env:windir 'System32'
+    $commands = @(
+        @{ File = 'ipconfig-all.txt';           Exe = (Join-Path $sys 'ipconfig.exe'); Args = @('/all') },
+        @{ File = 'route-print.txt';            Exe = (Join-Path $sys 'route.exe');    Args = @('print') },
+        @{ File = 'netsh-ipv4-show-config.txt'; Exe = (Join-Path $sys 'netsh.exe');    Args = @('interface', 'ipv4', 'show', 'config') },
+        @{ File = 'netsh-interface-dump.txt';   Exe = (Join-Path $sys 'netsh.exe');    Args = @('-c', 'interface', 'dump') }
+    )
+    # The evidence root first, so a root created by this run is restricted too.
+    $null = Initialize-OutputFolder (Split-Path -Parent $Destination)
+    $null = Initialize-OutputFolder $Destination
+    $utf8 = New-Object System.Text.UTF8Encoding($true)
+    $saved = @(); $failed = @()
+    foreach ($c in $commands) {
+        $label = [IO.Path]::GetFileNameWithoutExtension($c.Exe) + ' ' + ($c.Args -join ' ')
+        $r = Invoke-NativeCapture $c.Exe $c.Args $TimeoutSeconds
+        if ($r.Error) { $failed += ($label + ': ' + $r.Error); continue }
+        if ($r.TimedOut) { $failed += ($label + ': no answer within ' + $TimeoutSeconds + ' seconds'); continue }
+        if ($r.ExitCode -ne 0 -or -not [string]$r.Output) { $failed += ($label + ': exit code ' + $r.ExitCode + ', no output'); continue }
+        $text = '# ' + $label + "`r`n# " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + "`r`n`r`n" + ([string]$r.Output -replace '\r?\n', "`r`n") + "`r`n"
+        [IO.File]::WriteAllText((Join-Path $Destination $c.File), $text, $utf8)
+        $saved += $c.File
+    }
+    # Advanced adapter properties (offloads, jumbo frames, VLAN) are not in
+    # the netsh dump; the NetAdapter module is optional (#94).
+    if (Test-CommandAvailable 'Get-NetAdapterAdvancedProperty') {
+        try {
+            $props = @(Get-NetAdapterAdvancedProperty -ErrorAction Stop | Sort-Object Name, DisplayName)
+            $text = ($props | Format-Table Name, DisplayName, DisplayValue, RegistryKeyword -AutoSize | Out-String -Width 300)
+            [IO.File]::WriteAllText((Join-Path $Destination 'adapter-advanced-properties.txt'), $text, $utf8)
+            $saved += 'adapter-advanced-properties.txt'
+        } catch { $failed += ('Get-NetAdapterAdvancedProperty: ' + $_.Exception.Message) }
+    }
+    if ($saved.Count -eq 0) { throw ('No network command output could be saved: ' + ($failed -join '; ')) }
+    $location = $Destination
+    if ($Zip) {
+        $zipPath = $Destination + '.zip'
+        if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+        New-ZipFromFolder $Destination $zipPath
+        $location = $zipPath
+    }
+    return [pscustomobject]@{ Location = $location; Folder = $Destination; Files = $saved; Failed = $failed }
 }
 
 # Optional PowerShell modules and the checks that need them (#94). A missing

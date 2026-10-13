@@ -33,7 +33,7 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
         Services = @($script:Data.Services | ForEach-Object { [pscustomobject]@{ Name=[string]$_.Name; State=[string]$_.State; StartMode=[string]$_.StartMode } })
         Apps     = @($script:Data.Apps | ForEach-Object { [pscustomobject]@{ Name=$_.Name; Version=$_.Version } })
         Features = @()
-        Ports = @(); Routes = @(); IPv4 = @(); Dns = @(); Hosts = @(); Tasks = @()
+        Ports = @(); Routes = @(); IPv4 = @(); Dns = @(); Adapters = @(); Hosts = @(); Tasks = @()
     }
     if ($script:Data.Features) { $script:Data.Snapshot.Features = @($script:Data.Features.Keys | Where-Object { $script:Data.Features[$_] } | Sort-Object) }
 
@@ -625,13 +625,43 @@ Register-Check -Id 'storage' -Name 'Storage' -Script {
 
 # ---------------------------------------------------------------------------
 Register-Check -Id 'network' -Name 'Network, teaming, hosts and routes' -Script {
+    # VLAN IDs come from the NetAdapter module (optional, #94), by MAC (#149).
+    $vlanByMac = @{}
+    if (Test-CommandAvailable 'Get-NetAdapter') {
+        try {
+            foreach ($na in @(Get-NetAdapter -ErrorAction Stop)) {
+                if ($na -and $na.MacAddress) { $vlanByMac[(ConvertTo-MacKey ([string]$na.MacAddress))] = $na.VlanID }
+            }
+        } catch { Write-Swallowed $_ }
+    }
     foreach ($n in @(Get-CimRequired 'Win32_NetworkAdapterConfiguration' 'IPEnabled=True')) {
         $a = @(Get-CimSafe 'Win32_NetworkAdapter' ('Index=' + $n.Index)) | Select-Object -First 1
-        $ipv4 = @($n.IPAddress | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' })
         $name = [string]$a.NetConnectionID; if (-not $name) { $name = [string]$n.Description }
-        $script:Data.Snapshot.IPv4 += $ipv4
-        $script:Data.Snapshot.Dns += @($n.DNSServerSearchOrder | Where-Object { $_ })
-        Add-Result 'NETWORK' $name 'INFO' ('IPv4=' + ($ipv4 -join ',') + ' / ' + (@($n.IPSubnet) -join ',')) @(('Gateway=' + (@($n.DefaultIPGateway) -join ',')),('DNS=' + (@($n.DNSServerSearchOrder) -join ',')),('DHCP=' + $n.DHCPEnabled),('MAC=' + $n.MACAddress)) -Source 'Win32_NetworkAdapterConfiguration'
+        $rec = ConvertTo-NetworkAdapterRecord $n $name $vlanByMac[(ConvertTo-MacKey ([string]$n.MACAddress))]
+        $script:Data.Snapshot.IPv4 += $rec.IPv4
+        $script:Data.Snapshot.Dns += $rec.Dns
+        $script:Data.Snapshot.Adapters += $rec
+        Add-Result 'NETWORK' $name 'INFO' ('IPv4=' + ($rec.IPv4 -join ',') + ' / ' + ($rec.Mask -join ',')) (Get-NetworkAdapterDetail $rec) -Source 'Win32_NetworkAdapterConfiguration'
+    }
+
+    # A local copy of the full network configuration (#149), for the network
+    # team if the upgrade resets an adapter. Read-only commands.
+    if ($EnableNetworkEvidence) {
+        try {
+            $dest = Join-Path $PolicyEvidenceRoot ($script:SafeComputerName + '-IPU-Network-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+            $copy = Save-NetworkEvidence -Destination $dest -Zip $CreatePolicyEvidenceZip
+            $script:Data.NetworkEvidence = $copy.Location
+            $keep = 'Copy it off the server before the change: it holds the full IP configuration, is not redacted and must not be shared outside the team. netsh-interface-dump.txt is a netsh script that can put the configuration back (read it first; see the user guide).'
+            if (@($copy.Failed).Count -gt 0) {
+                Add-Result 'NETWORK' 'NetworkEvidence' 'MANUAL' $copy.Location (@(('Saved=' + ($copy.Files -join ', '))) + @($copy.Failed | ForEach-Object { 'Failed: ' + $_ })) -Recommendation ('Run the failed commands by hand and keep their output with the file. ' + $keep) -Kind 'Finding' -Source 'ipconfig, route, netsh (read-only)'
+            } else {
+                Add-Result 'NETWORK' 'NetworkEvidence' 'OK' $copy.Location ('Files=' + ($copy.Files -join ', ')) -Recommendation $keep -Source 'ipconfig, route, netsh (read-only)'
+            }
+        } catch {
+            Add-Result 'NETWORK' 'NetworkEvidence' 'MANUAL' 'Could not save the network configuration' $_.Exception.Message -Recommendation 'Before the change, save the output of "ipconfig /all", "route print" and "netsh -c interface dump" by hand and keep it off the server.' -Kind 'Finding' -Source 'ipconfig, route, netsh'
+        }
+    } else {
+        Add-Result 'NETWORK' 'NetworkEvidence' 'INFO' 'Not taken (EnableNetworkEvidence is off)' -Source 'SETTINGS'
     }
 
     # NIC teaming. Microsoft: disable LBFO teaming before IPU and re-enable
