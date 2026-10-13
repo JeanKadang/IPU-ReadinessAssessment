@@ -504,7 +504,9 @@ It reads `<Computer>-IPU-Assessment.json` from the pre-upgrade run and reports:
 - differences in services (automatic services no longer running, services gone), listening ports, static routes,
   IPv4 addresses, DNS servers, hosts entries, applications, Windows features, scheduled tasks, applied GPOs,
   file shares and the computer's AD groups,
-- a computer object that moved to another OU, and a changed UAC setting.
+- a computer object that moved to another OU, a changed UAC setting, and RDP Network Level Authentication turned off (ACTION).
+
+Changes that come with the new Windows release are listed as INFO, not as problems: services Microsoft now starts on demand or removed, ports that closed with a disabled service, and features removed or renamed (PowerShell 2.0, PowerShell ISE, Defender). Services that are now disabled get their own WARNING, because hardening after the upgrade often disables them on purpose. .NET Framework 3.5 removed by the upgrade is a WARNING with the reinstall command.
 
 If the pre-upgrade JSON is missing, you get a `MANUAL` finding and must compare by hand with the pre-upgrade
 HTML. The checklist and Setup compatibility scan are skipped in Post mode.

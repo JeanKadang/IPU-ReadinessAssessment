@@ -117,7 +117,9 @@
         "Ou": { "$ref": "#/definitions/text" },
         "Shares": { "$ref": "#/definitions/stringList" },
         "Groups": { "$ref": "#/definitions/stringList" },
-        "Uac": { "$ref": "#/definitions/text" }
+        "Uac": { "$ref": "#/definitions/text" },
+        "Nla": { "$ref": "#/definitions/text" },
+        "PortOwners": { "type": "object", "additionalProperties": { "type": "string" } }
       }
     }
   },
