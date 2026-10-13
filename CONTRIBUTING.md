@@ -21,6 +21,7 @@ commits show the wrong author.
 
 | Job | Runs on | What it does |
 |---|---|---|
+| `pester (unelevated)` | windows-2025 | All Pester tests with Windows PowerShell 5.1 as a temporary standard local user (no admin token), through a scheduled task (`build/Invoke-UnelevatedTests.ps1`, CI only). Fails if the run was elevated after all (#126) |
 | `pester (Windows PowerShell 5.1)`, `pester (PowerShell 7)` | windows-2025 | All Pester tests; coverage on PowerShell 7 |
 | `smoke (<shell>, windows-2025)`, `smoke (<shell>, windows-2022)` | Both Windows Server images, on every pull request, push to `main`, weekly run and manual run (#122) | The real script end to end (Pre, Post, redacted, site data files), JSON checked against the schema |
 | `lint (PSScriptAnalyzer)` | windows-2025 | First checks that `src/Windows-IPU-Readiness-Assessment.ps1` is exactly the build of its parts (`build/Build-Script.ps1 -Check`, see [docs/build.md](docs/build.md)). Fails on any warning. Also checks `src/` against Windows Server 2012 R2 / Windows PowerShell 4.0 (`PSScriptAnalyzerSettings.PS4.psd1`): a command, type or syntax that does not exist there fails the job |

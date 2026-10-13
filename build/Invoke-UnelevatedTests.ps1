@@ -56,16 +56,27 @@ try {
 
     $log = Join-Path $work 'pester-unelevated.log'
     $codeFile = Join-Path $work 'pester-unelevated.exit'
-    $command = "Set-Location '$work'; & .\build\Invoke-CiTests.ps1 *> '$log'; Set-Content -LiteralPath '$codeFile' -Value `$LASTEXITCODE"
+    $tokenFile = Join-Path $work 'pester-unelevated.token'
+    # The task first records who it runs as and whether the token is elevated.
+    $command = "Set-Location '$work'; `$id = [Security.Principal.WindowsIdentity]::GetCurrent(); Set-Content -LiteralPath '$tokenFile' -Value (`$id.Name + ' Elevated=' + (New-Object Security.Principal.WindowsPrincipal(`$id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)); & .\build\Invoke-CiTests.ps1 *> '$log'; Set-Content -LiteralPath '$codeFile' -Value `$LASTEXITCODE"
     $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -Command "' + $command + '"') -WorkingDirectory $work
     Register-ScheduledTask -TaskName $task -Action $action -User $name -Password $plain -RunLevel Limited | Out-Null
     Start-ScheduledTask -TaskName $task
     $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
     do { Start-Sleep -Seconds 15 } while ((Get-ScheduledTask -TaskName $task).State -eq 'Running' -and (Get-Date) -lt $deadline)
     $info = Get-ScheduledTaskInfo -TaskName $task
+    $token = ''
+    if (Test-Path -LiteralPath $tokenFile) { $token = [string](Get-Content -LiteralPath $tokenFile | Select-Object -First 1) }
+    Write-Host ('Test run as: ' + $token)
     if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log | ForEach-Object { Write-Host $_ } }
     if (Test-Path -LiteralPath $codeFile) { $exitCode = [int](Get-Content -LiteralPath $codeFile | Select-Object -First 1) }
     else { Write-Host ('::error title=Unelevated run::The test run did not finish (task result ' + $info.LastTaskResult + ').') }
+    if ($token -notmatch 'Elevated=False$') {
+        Write-Host ('::error title=Unelevated run::The tests did not run with a limited token (' + $token + ').')
+        $exitCode = 1
+    } else {
+        Write-Host ('::notice title=Unelevated run::Ran as ' + $token)
+    }
 } finally {
     Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue
     Remove-LocalUser -Name $name -ErrorAction SilentlyContinue

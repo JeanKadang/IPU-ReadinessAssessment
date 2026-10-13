@@ -130,7 +130,7 @@ jobs:
     # the weekly run and every push to main (#123): main was red on two
     # merges in a row without anyone noticing.
     name: notify (failed run on main)
-    needs: [pester, smoke, lint]
+    needs: [pester, pester-unelevated, smoke, lint]
     if: >-
       always() && (
         (github.event_name == 'schedule' && contains(needs.*.result, 'failure')) ||
