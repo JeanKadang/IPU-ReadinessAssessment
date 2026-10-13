@@ -1,0 +1,805 @@
+# =============================================================================
+# 3. CORE
+# =============================================================================
+$ProgressPreference = 'SilentlyContinue'
+$script:CollectorVersion  = '4.4.0'
+# Settings a profile file (-ProfileFile) may set. Mode, target, media path,
+# report folder and redaction describe one run, so they stay arguments only.
+$script:ProfileSettingNames = @(
+    'TargetMediaLanguage','BlockDomainControllerIPU',
+    'MinimumCFreeGB','ExtendBlockGB','MinimumMemoryGB','MaxPatchAgeDays','UptimeWarningDays','GroupPolicyMaxAgeDays','AVMaxAgeDays',
+    'CertificateWarningDays','SystemPartitionMinFreeMB','RecoveryPartitionMinFreeMB',
+    'RunDISMScanHealth','RunSFCVerifyOnly','DISMTimeoutMinutes','SFCTimeoutMinutes','SlowCheckBudgetMinutes','CompatScanTimeoutMinutes',
+    'EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip','EnableIISConfigEvidence',
+    'WriteJson','RestrictOutputAcl','NumberCultureName'
+)
+$script:PatternFields = @('Label','App','Service','Display','Driver','Disabled','Link','LinkTitle')
+$script:Results           = New-Object System.Collections.Generic.List[object]
+$script:CheckRuns         = New-Object System.Collections.Generic.List[object]
+$script:Checks            = New-Object System.Collections.Generic.List[object]
+$script:Data              = @{}
+$script:CurrentCheckId    = 'core'
+$script:CurrentCheckOutcome = $null
+$script:CurrentCheckMessage = $null
+$script:LogWriteFailures  = 0
+$script:SlowSecondsLeft   = 0
+$script:CollectionStarted = Get-Date
+$script:ComputerName      = $env:COMPUTERNAME
+if (-not $script:ComputerName) { $script:ComputerName = [Environment]::MachineName }
+$script:SafeComputerName  = ($script:ComputerName -replace '[^A-Za-z0-9_.-]','_')
+$script:ReportSuffix      = $(if ($AssessmentMode -eq 'Post') { '-IPU-PostUpgrade' } else { '-IPU-Assessment' })
+$script:ReportBaseName    = $script:SafeComputerName + $script:ReportSuffix
+# A redacted report must not carry the computer name in its file name.
+if ($RedactReport) { $script:ReportBaseName = 'REDACTED-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + $script:ReportSuffix }
+$script:ReportPath        = [IO.Path]::Combine($ReportDirectory, $script:ReportBaseName + '.html')
+$script:LogPath           = [IO.Path]::Combine($ReportDirectory, $script:SafeComputerName + $script:ReportSuffix + '.log')
+$script:JsonPath          = [IO.Path]::Combine($ReportDirectory, $script:ReportBaseName + '.json')
+$script:BaselinePath      = [IO.Path]::Combine($ReportDirectory, $script:SafeComputerName + '-IPU-Assessment.json')
+
+try { $script:NumberCulture = New-Object System.Globalization.CultureInfo($NumberCultureName) }
+catch { $script:NumberCulture = [System.Globalization.CultureInfo]::InvariantCulture }
+
+$script:StatusOrder  = @('BLOCKER','ACTION','WARNING','MANUAL','OK','INFO')
+$script:FindingStatuses = @('BLOCKER','ACTION','WARNING','MANUAL')
+$script:ValidKinds   = @('Finding','Observation','Evidence','Checklist')
+
+# The single definition of report areas. Name = what readers see, Chapter =
+# which collapsible chapter the area belongs to.
+$script:ChapterOrder = @(
+    'Post-Upgrade Comparison',
+    'Upgrade Path, Licensing and Windows Health',
+    'Workloads and Applications',
+    'Hardware and Virtualization',
+    'Storage',
+    'Clustering',
+    'Network',
+    'Access and Remote Desktop',
+    'IIS and Remote Desktop Services',
+    'PKI and Certificates',
+    'Security and Antivirus',
+    'Management Agents',
+    'Backup and Recovery',
+    'Services and Scheduled Tasks',
+    'Assessment and Collector'
+)
+$script:AreaMap = @{
+    'POST_UPGRADE'       = @{ Name='Before/after comparison';     Chapter='Post-Upgrade Comparison' }
+    'COMPAT_SCAN'        = @{ Name='Setup compatibility scan';    Chapter='Upgrade Path, Licensing and Windows Health' }
+    'FEATURE_LIFECYCLE'  = @{ Name='Removed/deprecated features'; Chapter='Workloads and Applications' }
+    'VMWARE'             = @{ Name='VMware guest readiness';      Chapter='Hardware and Virtualization' }
+    'DRIVERS'            = @{ Name='Non-Microsoft drivers';       Chapter='Hardware and Virtualization' }
+    'PORTS'              = @{ Name='Listening ports';             Chapter='Network' }
+    'TASKS'              = @{ Name='Scheduled tasks';             Chapter='Services and Scheduled Tasks' }
+    'UPGRADE_PATH'       = @{ Name='Upgrade path and media';      Chapter='Upgrade Path, Licensing and Windows Health' }
+    'LICENSING'          = @{ Name='Windows activation';          Chapter='Upgrade Path, Licensing and Windows Health' }
+    'WINDOWS_HEALTH'     = @{ Name='Windows health';              Chapter='Upgrade Path, Licensing and Windows Health' }
+    'UPGRADE_HISTORY'    = @{ Name='Upgrade history';             Chapter='Upgrade Path, Licensing and Windows Health' }
+    'EXCHANGE'           = @{ Name='Exchange Server';             Chapter='Workloads and Applications' }
+    'SQL'                = @{ Name='SQL Server';                  Chapter='Workloads and Applications' }
+    'DOMAIN_CONTROLLER'  = @{ Name='Domain controller';           Chapter='Workloads and Applications' }
+    'WORKLOAD'           = @{ Name='Roles and workloads';         Chapter='Workloads and Applications' }
+    'FILE_SHARES'        = @{ Name='File shares';                 Chapter='Workloads and Applications' }
+    'ROLES'              = @{ Name='Installed roles/features';    Chapter='Workloads and Applications' }
+    'APPLICATIONS'       = @{ Name='Installed applications';      Chapter='Workloads and Applications' }
+    'PLATFORM'           = @{ Name='Platform';                    Chapter='Hardware and Virtualization' }
+    'HARDWARE'           = @{ Name='Physical hardware';           Chapter='Hardware and Virtualization' }
+    'PERFORMANCE'        = @{ Name='CPU and memory';              Chapter='Hardware and Virtualization' }
+    'STORAGE'            = @{ Name='Storage';                     Chapter='Storage' }
+    'CLUSTER'            = @{ Name='Failover clustering';         Chapter='Clustering' }
+    'NETWORK'            = @{ Name='Network adapters and teaming';Chapter='Network' }
+    'NETWORK_DEPENDENCY' = @{ Name='Hosts file and static routes';Chapter='Network' }
+    'ACCESS'             = @{ Name='Access and credentials';      Chapter='Access and Remote Desktop' }
+    'RDP'                = @{ Name='RDP access and policy';       Chapter='Access and Remote Desktop' }
+    'GROUP_POLICY'       = @{ Name='Group Policy and AD groups';  Chapter='Access and Remote Desktop' }
+    'POLICY_EVIDENCE'    = @{ Name='Policy evidence files';       Chapter='Access and Remote Desktop' }
+    'IIS'                = @{ Name='IIS';                         Chapter='IIS and Remote Desktop Services' }
+    'RDS'                = @{ Name='Remote Desktop Services';     Chapter='IIS and Remote Desktop Services' }
+    'PKI'                = @{ Name='Certification Authority';     Chapter='PKI and Certificates' }
+    'CERTIFICATES'       = @{ Name='Certificates and bindings';   Chapter='PKI and Certificates' }
+    'ANTIVIRUS'          = @{ Name='Antivirus';                   Chapter='Security and Antivirus' }
+    'SECURITY'           = @{ Name='Security configuration';      Chapter='Security and Antivirus' }
+    'AGENTS'             = @{ Name='Management agents';           Chapter='Management Agents' }
+    'BACKUP'             = @{ Name='Backup and VSS';              Chapter='Backup and Recovery' }
+    'SERVICES'           = @{ Name='Services';                    Chapter='Services and Scheduled Tasks' }
+    'CHECKLIST'          = @{ Name='Change checklist';            Chapter='Assessment and Collector' }
+    'COLLECTOR'          = @{ Name='Collector coverage';          Chapter='Assessment and Collector' }
+    'ASSESSMENT'         = @{ Name='Assessment metadata';         Chapter='Assessment and Collector' }
+}
+
+function Write-AssessmentLog {
+    param([string]$Level = 'INFO', [string]$Phase = '', [string]$Message = '')
+    try {
+        $line = '{0};{1};{2};{3}{4}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),$Level,$Phase,(($Message -replace '[\r\n;]+',' | ')),[Environment]::NewLine
+        [IO.File]::AppendAllText($script:LogPath,$line,(New-Object System.Text.UTF8Encoding($false)))
+    } catch {
+        # The log itself cannot record this; count it so the report can say
+        # the log is incomplete. Logging must never stop the assessment.
+        $script:LogWriteFailures++
+    }
+}
+
+function ConvertTo-CleanText {
+    param([object]$Value)
+    if ($null -eq $Value) { return '' }
+    $s = [string]$Value
+    $s = $s -replace '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]',''
+    $s = $s -replace '[\r\n]+',' | '
+    return $s.Trim()
+}
+
+function ConvertTo-SAField {
+    param([object]$Value)
+    return ((ConvertTo-CleanText $Value) -replace ';',',')
+}
+
+function Write-Swallowed {
+    # Records an intentionally ignored failure of an optional query in the log,
+    # so "not found" and "could not look" can be told apart afterwards.
+    param($ErrorRecord)
+    try {
+        $where = ''
+        if ($ErrorRecord -and $ErrorRecord.InvocationInfo) { $where = ' (line ' + $ErrorRecord.InvocationInfo.ScriptLineNumber + ')' }
+        Write-AssessmentLog 'DEBUG' $script:CurrentCheckId ('Optional query failed' + $where + ': ' + $ErrorRecord.Exception.Message)
+    } catch {
+        $script:LogWriteFailures++
+    }
+}
+
+function Find-DetectionMatch {
+    # Pure: matches one pattern table (section 2) against the inventories and
+    # returns one object per detected product with the evidence that matched.
+    param([object[]]$Patterns, [object[]]$Apps = @(), [object[]]$Services = @(), [string[]]$Drivers = @())
+    $found = @()
+    foreach ($pattern in $Patterns) {
+        $mApps = @(); $mSvcs = @(); $mDrv = @()
+        if ($pattern.App) { $mApps = @($Apps | Where-Object { $_.Name -match $pattern.App -and $_.Name -notmatch 'VirtualBox' }) }
+        if ($pattern.Service -or $pattern.Display) {
+            $mSvcs = @($Services | Where-Object { ($pattern.Service -and $_.Name -match $pattern.Service) -or ($pattern.Display -and $_.DisplayName -match $pattern.Display) })
+        }
+        if ($pattern.Driver) { $mDrv = @($Drivers | Where-Object { $_ -match $pattern.Driver }) }
+        if (($mApps.Count + $mSvcs.Count + $mDrv.Count) -gt 0) {
+            $found += [pscustomobject]@{ Label=$pattern.Label; Apps=$mApps; Services=$mSvcs; Drivers=$mDrv; Link=[string]$pattern.Link; LinkTitle=[string]$pattern.LinkTitle }
+        }
+    }
+    return ,$found
+}
+
+function Get-DetectionEvidence {
+    param($Match)
+    $parts = @()
+    foreach ($a in $Match.Apps) { $parts += ($a.Name + ' ' + $a.Version).Trim() }
+    foreach ($s in $Match.Services) { $parts += ('Service ' + $s.Name + ' (' + $s.State + ')') }
+    if (@($Match.Drivers).Count -gt 0) { $parts += ('Drivers ' + (@($Match.Drivers) -join ',')) }
+    return ,$parts
+}
+
+function Format-Duration {
+    param([TimeSpan]$Duration)
+    if ($Duration.Days -gt 0) {
+        return ('{0}.{1:00}:{2:00}:{3:00}' -f $Duration.Days,$Duration.Hours,$Duration.Minutes,$Duration.Seconds)
+    }
+    return ('{0:00}:{1:00}:{2:00}' -f [math]::Floor($Duration.TotalHours),$Duration.Minutes,$Duration.Seconds)
+}
+
+function Format-Number {
+    param([double]$Value, [int]$Decimals = 2)
+    return $Value.ToString(('N' + $Decimals), $script:NumberCulture)
+}
+
+function Add-Result {
+    param(
+        [Parameter(Mandatory=$true,Position=0)][string]$Area,
+        [Parameter(Mandatory=$true,Position=1)][string]$Item,
+        [Parameter(Position=2)][ValidateSet('BLOCKER','ACTION','WARNING','MANUAL','OK','INFO')][string]$Status = 'INFO',
+        [Parameter(Position=3)][object]$Value = '',
+        [Parameter(Position=4)][object]$Details = '',
+        [string]$Recommendation = '',
+        [string]$Kind = '',
+        [string]$Source = '',
+        # Optional "how" and "read more" (#79). The script only shows the
+        # command; it never runs it. Check = read-only, Change = run in the
+        # change window.
+        [string]$Command = '',
+        [ValidateSet('','Check','Change')][string]$CommandKind = '',
+        [string]$Link = '',
+        [string]$LinkTitle = ''
+    )
+    if ($Command -and -not $CommandKind) { throw 'Add-Result: -Command needs -CommandKind Check or Change.' }
+    if ($Link -and $Link -notmatch '^https://[^\s"<>]+$') { throw ('Add-Result: -Link must be an https URL: ' + $Link) }
+    if (-not $script:AreaMap.ContainsKey($Area)) { throw ("Unknown report area '{0}'. Add it to `$script:AreaMap." -f $Area) }
+    if (-not $Kind) {
+        if ($script:FindingStatuses -contains $Status) { $Kind = 'Finding' } else { $Kind = 'Evidence' }
+    }
+    if ($script:ValidKinds -notcontains $Kind) { throw ("Unknown result kind '{0}'." -f $Kind) }
+    $detailParts = @()
+    foreach ($part in @($Details)) {
+        $clean = ConvertTo-CleanText $part
+        if ($clean) { $detailParts += $clean }
+    }
+    $script:Results.Add([pscustomobject]@{
+        CheckId        = $script:CurrentCheckId
+        Area           = $Area
+        Item           = (ConvertTo-CleanText $Item)
+        Status         = $Status
+        Kind           = $Kind
+        Value          = (ConvertTo-CleanText $Value)
+        Details        = ($detailParts -join ' | ')
+        Recommendation = (ConvertTo-CleanText $Recommendation)
+        Source         = (ConvertTo-CleanText $Source)
+        Command        = (ConvertTo-CleanText $Command)
+        CommandKind    = $(if ($Command) { $CommandKind } else { '' })
+        Link           = $Link
+        LinkTitle      = $(if ($Link) { $(if ($LinkTitle) { ConvertTo-CleanText $LinkTitle } else { $Link }) } else { '' })
+    })
+}
+
+function Register-Check {
+    param(
+        [Parameter(Mandatory=$true)][string]$Id,
+        [Parameter(Mandatory=$true)][string]$Name,
+        [ValidateSet('Fast','Slow')][string]$Phase = 'Fast',
+        [Parameter(Mandatory=$true)][scriptblock]$Script
+    )
+    $script:Checks.Add([pscustomobject]@{ Id=$Id; Name=$Name; Phase=$Phase; Script=$Script })
+}
+
+function Invoke-Check {
+    param([Parameter(Mandatory=$true)]$Check)
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $script:CurrentCheckId = $Check.Id
+    $script:CurrentCheckOutcome = $null
+    $script:CurrentCheckMessage = $null
+    $outcome = 'Completed'
+    $message = ''
+    Write-AssessmentLog 'INFO' $Check.Id 'Started.'
+    try {
+        # Inside a check every error is terminating. Optional queries must use
+        # -ErrorAction SilentlyContinue or try/catch explicitly, so an
+        # unexpected failure is visible instead of looking like a clean result.
+        $ErrorActionPreference = 'Stop'
+        $null = & $Check.Script
+        if ($script:CurrentCheckOutcome) { $outcome = $script:CurrentCheckOutcome }
+        if ($script:CurrentCheckMessage) { $message = $script:CurrentCheckMessage }
+    } catch {
+        $outcome = 'Failed'
+        $message = $_.Exception.GetType().Name + ': ' + $_.Exception.Message
+        $position = ''
+        if ($_.InvocationInfo) { $position = 'Line ' + $_.InvocationInfo.ScriptLineNumber }
+        Write-AssessmentLog 'ERROR' $Check.Id ($message + ' | ' + $position)
+        try {
+            Add-Result 'COLLECTOR' $Check.Name 'MANUAL' 'Check did not complete' @($message,$position) -Recommendation 'This area was only partially assessed. Absence of findings here is NOT evidence of readiness. Review it manually, or fix the cause and re-run.' -Kind 'Finding' -Source ('Check ' + $Check.Id)
+        } catch { Write-Swallowed $_ }
+    }
+    $sw.Stop()
+    $script:CheckRuns.Add([pscustomobject]@{
+        Id=$Check.Id; Name=$Check.Name; Phase=$Check.Phase; Outcome=$outcome
+        Duration=(Format-Duration $sw.Elapsed); Seconds=[math]::Round($sw.Elapsed.TotalSeconds,1); Message=$message
+    })
+    Write-AssessmentLog 'INFO' $Check.Id ('Finished. Outcome={0} | Duration={1}' -f $outcome,(Format-Duration $sw.Elapsed))
+    $script:CurrentCheckId = 'core'
+}
+
+function New-RestrictedDirectorySecurity {
+    # SYSTEM and Administrators full control, inheritance from the parent
+    # removed. Built from SIDs so it works on every OS language.
+    $security = New-Object System.Security.AccessControl.DirectorySecurity
+    $security.SetAccessRuleProtection($true, $false)
+    $inherit = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    foreach ($sid in @('S-1-5-18', 'S-1-5-32-544')) {
+        $identity = New-Object System.Security.Principal.SecurityIdentifier($sid)
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity, [System.Security.AccessControl.FileSystemRights]::FullControl, $inherit, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)
+        $security.AddAccessRule($rule)
+    }
+    return $security
+}
+
+function Set-RestrictedFolderAcl {
+    param([string]$Path)
+    Set-Acl -LiteralPath $Path -AclObject (New-RestrictedDirectorySecurity) -ErrorAction Stop
+}
+
+function Initialize-OutputFolder {
+    # Creates a folder for the script's own output. Only a folder created by
+    # this run is restricted; an existing folder keeps its permissions (it may
+    # be shared, e.g. C:\Temp) and the report says whether it is too open.
+    param([string]$Path, [bool]$Restrict = $RestrictOutputAcl)
+    if (Test-Path -LiteralPath $Path -PathType Container) { return 'Existing' }
+    New-Item -ItemType Directory -Path $Path -Force -ErrorAction Stop | Out-Null
+    if (-not $Restrict) { return 'Created' }
+    try {
+        Set-RestrictedFolderAcl $Path
+        return 'CreatedRestricted'
+    } catch {
+        Write-AssessmentLog 'WARNING' 'ACL' ('Could not restrict ' + $Path + ': ' + $_.Exception.Message)
+        return 'CreatedUnrestricted'
+    }
+}
+
+function Get-GpResultXml {
+    # Runs "gpresult /scope computer /x" into a temp file and returns the
+    # XML text. Throws with gpresult's own message when it fails.
+    $file = Join-Path ([IO.Path]::GetTempPath()) ('IPU-gpresult-' + [guid]::NewGuid().ToString('N') + '.xml')
+    try {
+        $r = Invoke-NativeCapture (Join-Path $env:windir 'System32\gpresult.exe') @('/scope','computer','/x',$file,'/f') 180
+        if ($r.TimedOut) { throw 'gpresult did not finish within 3 minutes' }
+        if (-not (Test-Path -LiteralPath $file)) { throw ('gpresult wrote no result (exit ' + $r.ExitCode + '): ' + (@($r.Lines) -join ' ')) }
+        return [IO.File]::ReadAllText($file)
+    } finally {
+        Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-GpoListRegistryEntry {
+    # The GPOs that applied at the last machine policy refresh, as recorded
+    # by the Group Policy service (#160). Readable as SYSTEM when gpresult
+    # says the computer "does not have RSoP data". Read-only.
+    $root = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine\GPO-List'
+    $list = @()
+    foreach ($k in @(Get-ChildItem -LiteralPath $root -ErrorAction Stop | Sort-Object { [int]$_.PSChildName })) {
+        $p = Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction SilentlyContinue
+        if ($p) { $list += [pscustomobject]@{ DisplayName = [string]$p.DisplayName; GPOName = [string]$p.GPOName; Link = [string]$p.Link } }
+    }
+    return ,$list
+}
+
+function ConvertFrom-GpoListEntry {
+    # Pure (#160): registry GPO-List entries -> the same shape as
+    # ConvertFrom-GpResultXml. Only applied GPOs are recorded there, without
+    # filter names; WMI filters are still looked up in AD by GUID.
+    param([object[]]$Entries)
+    $gpos = @()
+    foreach ($e in @($Entries)) {
+        if (-not $e.DisplayName) { continue }
+        $link = [string]$e.Link
+        if ($link -match '^LDAP://(.+)$') { $link = ConvertTo-AdLocation ('CN=x,' + $Matches[1]) }
+        $guid = [string]$e.GPOName
+        if ($guid -and $guid -notmatch '^\{') { $guid = '' }
+        $gpos += [pscustomobject]@{ Name = [string]$e.DisplayName; Guid = $guid; Applied = $true; Reason = ''; Links = @($link | Where-Object { $_ }); FilterName = '' }
+    }
+    return [pscustomobject]@{ Domain = ''; Site = ''; Gpos = $gpos; Groups = @() }
+}
+
+function Get-AdComputerGroup {
+    # The computer object's security groups from AD, nested groups included
+    # (tokenGroups), read as the computer account itself - no RSAT needed.
+    $searcher = New-Object System.DirectoryServices.DirectorySearcher
+    $searcher.Filter = '(&(objectCategory=computer)(sAMAccountName=' + $env:COMPUTERNAME + '$))'
+    $searcher.ClientTimeout = [TimeSpan]::FromSeconds(30)
+    $hit = $searcher.FindOne()
+    if (-not $hit) { throw ('Computer object ' + $env:COMPUTERNAME + '$ not found in AD') }
+    $entry = $hit.GetDirectoryEntry()
+    $entry.RefreshCache([string[]]@('tokenGroups'))
+    $names = @()
+    foreach ($bytes in @($entry.Properties['tokenGroups'])) {
+        $sid = New-Object System.Security.Principal.SecurityIdentifier ([byte[]]$bytes), 0
+        try { $names += $sid.Translate([System.Security.Principal.NTAccount]).Value } catch { $names += $sid.Value }
+    }
+    return ,@($names | Sort-Object -Unique)
+}
+
+function Get-AdComputerDn {
+    # The computer object's distinguished name, read as the computer account.
+    $searcher = New-Object System.DirectoryServices.DirectorySearcher
+    $searcher.Filter = '(&(objectCategory=computer)(sAMAccountName=' + $env:COMPUTERNAME + '$))'
+    $searcher.ClientTimeout = [TimeSpan]::FromSeconds(30)
+    $null = $searcher.PropertiesToLoad.Add('distinguishedName')
+    $hit = $searcher.FindOne()
+    if (-not $hit) { throw ('Computer object ' + $env:COMPUTERNAME + '$ not found in AD') }
+    return [string]$hit.Properties['distinguishedname'][0]
+}
+
+function ConvertTo-AdLocation {
+    # Pure (#99): "CN=SRV01,OU=Web,OU=Servers,DC=corp,DC=example,DC=test" ->
+    # "corp.example.test/Servers/Web" (the way AD tools show the OU path).
+    # Commas escaped with a backslash inside a name are kept.
+    param([string]$DistinguishedName)
+    if (-not $DistinguishedName) { return '' }
+    $parts = [regex]::Split($DistinguishedName, '(?<!\\),')
+    $dc = @(); $ou = @()
+    foreach ($p in $parts) {
+        if ($p -match '^\s*DC=(.+)$') { $dc += $Matches[1] }
+        elseif ($p -match '^\s*(OU|CN)=(.+)$') { $ou += ($Matches[2] -replace '\\,', ',') }
+    }
+    if ($ou.Count -gt 0) { $ou = $ou[1..($ou.Count - 1)] }   # drop the computer's own CN
+    [array]::Reverse($ou)
+    return ((@(($dc -join '.')) + @($ou)) -join '/')
+}
+
+function Get-WmiFilterQuery {
+    # WMI filter name and queries for the given GPO GUIDs, from AD.
+    # Returns GUID -> @{ Name; Queries }; GPOs without a filter are absent.
+    param([string[]]$GpoGuids)
+    $result = @{}
+    $root = New-Object System.DirectoryServices.DirectoryEntry('LDAP://RootDSE')
+    $nc = [string]$root.Properties['defaultNamingContext'][0]
+    foreach ($guid in @($GpoGuids | Where-Object { $_ } | Sort-Object -Unique)) {
+        $s = New-Object System.DirectoryServices.DirectorySearcher([ADSI]('LDAP://CN=Policies,CN=System,' + $nc))
+        $s.Filter = '(&(objectClass=groupPolicyContainer)(cn=' + $guid + '))'
+        $null = $s.PropertiesToLoad.Add('gPCWQLFilter')
+        $gpo = $s.FindOne()
+        if (-not $gpo -or $gpo.Properties['gpcwqlfilter'].Count -eq 0) { continue }
+        $link = [string]$gpo.Properties['gpcwqlfilter'][0]
+        $m = [regex]::Match($link, '\{[0-9A-Fa-f-]{36}\}')
+        if (-not $m.Success) { continue }
+        $f = New-Object System.DirectoryServices.DirectorySearcher([ADSI]('LDAP://CN=SOM,CN=WMIPolicy,CN=System,' + $nc))
+        $f.Filter = '(&(objectClass=msWMI-Som)(msWMI-ID=' + $m.Value + '))'
+        foreach ($p in 'msWMI-Name','msWMI-Parm2') { $null = $f.PropertiesToLoad.Add($p) }
+        $hit = $f.FindOne()
+        if (-not $hit) { continue }
+        $result[$guid] = @{ Name = [string]$hit.Properties['mswmi-name'][0]; Queries = (ConvertFrom-WmiFilterParm ([string]$hit.Properties['mswmi-parm2'][0])) }
+    }
+    return $result
+}
+
+function Get-GroupPolicyLastApplied {
+    # Last time the computer's Group Policy core processing ran, from the
+    # registry (FILETIME as two DWORDs). $null when not recorded.
+    $key = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine\Extension-List\{00000000-0000-0000-0000-000000000000}'
+    $hi = Get-RegistryValueSafe $key 'EndTimeHi'
+    $lo = Get-RegistryValueSafe $key 'EndTimeLo'
+    if (-not $hi.Exists -or -not $lo.Exists) { return $null }
+    return (ConvertFrom-FileTimeValue $hi.Value $lo.Value)
+}
+
+function New-ZipFromFolder {
+    # Zips a folder with .NET 4.5 (System.IO.Compression.FileSystem), which
+    # Windows PowerShell 4.0 does not load by default. The type is resolved
+    # after Add-Type, so a missing assembly is a clear error (#94).
+    param([Parameter(Mandatory=$true)][string]$Folder, [Parameter(Mandatory=$true)][string]$ZipPath)
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zipType = 'System.IO.Compression.ZipFile' -as [type]
+    $level = 'System.IO.Compression.CompressionLevel' -as [type]
+    if (-not $zipType -or -not $level) { throw '.NET Framework 4.5 or later is needed to create ZIP files.' }
+    $zipType::CreateFromDirectory($Folder, $ZipPath, $level::Optimal, $false)
+}
+
+function Save-IISConfigEvidence {
+    # Copies the IIS configuration files into a new, restricted evidence
+    # folder and zips it (#76). Read-only for IIS: nothing under inetsrv is
+    # written. applicationHost.config can hold encrypted secrets, so the
+    # folder gets the same SYSTEM/Administrators-only access as the other
+    # evidence. Throws when nothing could be copied.
+    param(
+        [Parameter(Mandatory=$true)][string]$Destination,
+        [string]$SourceFolder = (Join-Path $env:windir 'System32\inetsrv\config'),
+        [bool]$Zip = $true
+    )
+    $files = @(Get-ChildItem -LiteralPath $SourceFolder -Filter '*.config' -File -ErrorAction Stop)
+    if ($files.Count -eq 0) { throw ('No .config files found in ' + $SourceFolder) }
+    $null = Initialize-OutputFolder $Destination
+    foreach ($f in $files) { Copy-Item -LiteralPath $f.FullName -Destination $Destination -Force -ErrorAction Stop }
+    $hash = ''
+    $appHost = Join-Path $Destination 'applicationHost.config'
+    if (Test-Path -LiteralPath $appHost) {
+        try { $hash = (Get-FileHash -LiteralPath $appHost -Algorithm SHA256 -ErrorAction Stop).Hash } catch { Write-Swallowed $_ }
+    }
+    # Shared configuration: redirection.config points to the real files.
+    $shared = ''
+    $redirection = Join-Path $Destination 'redirection.config'
+    if (Test-Path -LiteralPath $redirection) {
+        try {
+            [xml]$doc = [IO.File]::ReadAllText($redirection)
+            $node = $doc.SelectSingleNode('//configurationRedirection')
+            if ($node -and [string]$node.GetAttribute('enabled') -eq 'true') { $shared = [string]$node.GetAttribute('path') }
+        } catch { Write-Swallowed $_ }
+    }
+    $location = $Destination
+    if ($Zip) {
+        $zipPath = $Destination + '.zip'
+        if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+        New-ZipFromFolder $Destination $zipPath
+        $location = $zipPath
+    }
+    return [pscustomobject]@{ Location = $location; Folder = $Destination; Files = @($files | ForEach-Object { $_.Name } | Sort-Object); ApplicationHostSha256 = $hash; SharedConfigPath = $shared }
+}
+
+# Optional PowerShell modules and the checks that need them (#94). A missing
+# module does not stop the run; the affected checks report it.
+$script:OptionalModules = [ordered]@{
+    ServerManager  = 'roles and features (baseline, workloads, IIS, RDS, clustering)'
+    Storage        = 'storage (disks, partitions, volumes)'
+    NetAdapter     = 'network adapters and teaming'
+    NetTCPIP       = 'listening ports, routes and IP configuration'
+    ScheduledTasks = 'scheduled tasks'
+    Dism           = 'Setup compatibility scan (image selection)'
+    SmbShare       = 'file shares'
+}
+
+function Get-PrerequisiteDecision {
+    # Pure (#94): what is missing for a reliable run, in words an operator can
+    # act on. Required items stop the run before anything is collected;
+    # optional items only reduce what some checks can see.
+    param(
+        [Version]$PowerShellVersion,
+        [int]$DotNetRelease,
+        [bool]$IsElevated,
+        [string[]]$MissingModules = @(),
+        [hashtable]$ModuleUse = $script:OptionalModules
+    )
+    $required = @()
+    if ($null -eq $PowerShellVersion -or $PowerShellVersion.Major -lt 4) {
+        $required += ('Windows PowerShell 4.0 or later (found ' + $(if ($PowerShellVersion) { $PowerShellVersion.ToString() } else { 'unknown' }) + '). Install Windows Management Framework 4.0 or later (5.1 recommended) and run again.')
+    }
+    if ($DotNetRelease -lt 378389) {
+        $found = 'not found'; if ($DotNetRelease -gt 0) { $found = 'release ' + $DotNetRelease }
+        $required += ('.NET Framework 4.5 or later (' + $found + '). Install .NET Framework 4.8 and run again.')
+    }
+    if (-not $IsElevated) {
+        $required += 'Administrator rights. Run the script elevated (Run as administrator), or as SYSTEM through OpenText SA.'
+    }
+    $optional = @()
+    foreach ($m in @($MissingModules | Where-Object { $_ })) {
+        $use = $ModuleUse[$m]; if (-not $use) { $use = 'some checks' }
+        $optional += ('PowerShell module ' + $m + ' is not available: ' + $use + ' cannot be fully assessed.')
+    }
+    return [pscustomobject]@{ CanRun = ($required.Count -eq 0); Required = $required; Optional = $optional }
+}
+
+function Get-PrerequisiteState {
+    # Reads what Get-PrerequisiteDecision needs. Never throws.
+    $release = 0
+    try {
+        $v = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full' -Name Release -ErrorAction Stop
+        $release = [int]$v.Release
+    } catch { Write-Swallowed $_ }
+    $elevated = $false
+    try {
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+        $elevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -or $identity.IsSystem
+    } catch { Write-Swallowed $_ }
+    $missing = @()
+    foreach ($m in @($script:OptionalModules.Keys)) {
+        if (-not (Get-Module -ListAvailable -Name $m -ErrorAction SilentlyContinue)) { $missing += $m }
+    }
+    return [pscustomobject]@{ PowerShellVersion = $PSVersionTable.PSVersion; DotNetRelease = $release; IsElevated = $elevated; MissingModules = $missing }
+}
+
+function Get-BroadFolderReader {
+    # Returns the broad groups (Everyone, Authenticated Users, Users) that are
+    # allowed to read the folder. Empty when the ACL cannot be read.
+    param([string]$Path)
+    $broad = @{ 'S-1-1-0' = 'Everyone'; 'S-1-5-11' = 'Authenticated Users'; 'S-1-5-32-545' = 'Users' }
+    $found = @()
+    try {
+        $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+        foreach ($rule in @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))) {
+            $sid = [string]$rule.IdentityReference
+            if ($broad.ContainsKey($sid) -and [string]$rule.AccessControlType -eq 'Allow' -and ([int]$rule.FileSystemRights -band [int][System.Security.AccessControl.FileSystemRights]::ReadData)) {
+                if ($found -notcontains $broad[$sid]) { $found += $broad[$sid] }
+            }
+        }
+    } catch { Write-Swallowed $_ }
+    return $found
+}
+
+function Test-CommandAvailable {
+    # True when a cmdlet or function exists on this server. One place, so
+    # tests can simulate servers with and without optional modules.
+    param([string]$Name)
+    return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Get-RegistryValueSafe {
+    param([string]$Path, [string]$Name)
+    $result = New-Object PSObject -Property @{ Exists=$false; Value=$null }
+    try {
+        if (Test-Path -LiteralPath $Path) {
+            $item = Get-ItemProperty -LiteralPath $Path -ErrorAction Stop
+            if ($item.PSObject.Properties[$Name]) {
+                $result.Exists = $true
+                $result.Value = $item.$Name
+            }
+        }
+    } catch { Write-Swallowed $_ }
+    return $result
+}
+
+function Get-CimRequired {
+    # Essential CIM query: a failure throws, so the calling check is reported
+    # as "did not complete" instead of looking clean. CIM cmdlets exist from
+    # PowerShell 3.0; a local query needs no WinRM.
+    param([string]$Class, [string]$Filter = '', [string]$Namespace = 'root\cimv2')
+    $p = @{ ClassName=$Class; Namespace=$Namespace; ErrorAction='Stop' }
+    if ($Filter) { $p.Filter = $Filter }
+    return @(Get-CimInstance @p)
+}
+
+function Get-CimSafe {
+    # Optional CIM query: a failure returns nothing and is logged.
+    param([string]$Class, [string]$Filter = '', [string]$Namespace = 'root\cimv2')
+    try { return @(Get-CimRequired $Class $Filter $Namespace) } catch { Write-Swallowed $_; return @() }
+}
+
+function ConvertTo-DateTimeValue {
+    # Pure: CIM returns [datetime]; WMI-era data and some providers return
+    # DMTF strings (20260929011022.500000+120) or plain date text. Returns
+    # $null when the value cannot be read as a date.
+    param([object]$Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [datetime]) { return $Value }
+    $text = [string]$Value
+    if (-not $text) { return $null }
+    if ($text -match '^\d{14}\.\d{6}[+-]\d{3}$') {
+        try { return [Management.ManagementDateTimeConverter]::ToDateTime($text) } catch { Write-Swallowed $_ }
+    }
+    if ($text -match '^\d{8}$') {
+        $parsed = [datetime]::MinValue
+        if ([datetime]::TryParseExact($text, 'yyyyMMdd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$parsed)) { return $parsed }
+    }
+    $any = [datetime]::MinValue
+    if ([datetime]::TryParse($text, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$any)) { return $any }
+    return $null
+}
+
+function ConvertFrom-NativeByteArray {
+    # Native tools write either UTF-16LE (sfc.exe, secedit) or the OEM code
+    # page (dism.exe, netsh, vssadmin). Detect which and strip control chars.
+    param([byte[]]$Bytes)
+    if ($null -eq $Bytes -or $Bytes.Length -eq 0) { return '' }
+    $text = ''
+    $isUnicode = $false
+    if ($Bytes.Length -ge 2 -and $Bytes[0] -eq 0xFF -and $Bytes[1] -eq 0xFE) { $isUnicode = $true }
+    else {
+        $sample = [Math]::Min($Bytes.Length, 512)
+        $oddPositions = 0; $oddZeros = 0
+        for ($i = 1; $i -lt $sample; $i += 2) { $oddPositions++; if ($Bytes[$i] -eq 0) { $oddZeros++ } }
+        if ($oddPositions -gt 0 -and ($oddZeros / $oddPositions) -gt 0.3) { $isUnicode = $true }
+    }
+    if ($isUnicode) { $text = [Text.Encoding]::Unicode.GetString($Bytes) }
+    else {
+        $encoding = $null
+        try { $encoding = [Text.Encoding]::GetEncoding([Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage) } catch { Write-Swallowed $_ }
+        if ($null -eq $encoding) { $encoding = New-Object System.Text.UTF8Encoding($false) }
+        $text = $encoding.GetString($Bytes)
+    }
+    $text = $text.TrimStart([char]0xFEFF)
+    return ($text -replace '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]','')
+}
+
+function Invoke-NativeCapture {
+    # Runs a native command with a timeout and captured output. Used for every
+    # external tool so that stderr output never becomes a terminating
+    # PowerShell error and a hung tool cannot stall the whole assessment.
+    # The process is started through System.Diagnostics.Process (not
+    # Start-Process -PassThru), so the exit code is available even when the
+    # tool exits at once (#66). Output is read as raw bytes in the background
+    # and decoded by ConvertFrom-NativeByteArray (sfc.exe writes UTF-16).
+    param(
+        [Parameter(Mandatory=$true)][string]$FilePath,
+        [string[]]$ArgumentList = @(),
+        [int]$TimeoutSeconds = 120
+    )
+    $result = [pscustomobject]@{ ExitCode=$null; Output=''; Lines=@(); TimedOut=$false; Error='' }
+    $process = $null
+    try {
+        $quoted = @()
+        foreach ($arg in $ArgumentList) {
+            if ($arg -match '\s' -and $arg -notmatch '^".*"$') { $quoted += ('"' + $arg + '"') } else { $quoted += $arg }
+        }
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $FilePath
+        $psi.Arguments = ($quoted -join ' ')
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $psi
+        $null = $process.Start()
+        $outBuffer = New-Object System.IO.MemoryStream
+        $errBuffer = New-Object System.IO.MemoryStream
+        $readers = [System.Threading.Tasks.Task[]]@(
+            $process.StandardOutput.BaseStream.CopyToAsync($outBuffer),
+            $process.StandardError.BaseStream.CopyToAsync($errBuffer)
+        )
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            $result.TimedOut = $true
+            try { $null = Invoke-NativeTreeKill $process.Id } catch { Write-Swallowed $_ }
+            try { $null = $process.WaitForExit(15000) } catch { Write-Swallowed $_ }
+        } else {
+            $process.WaitForExit()
+            $result.ExitCode = $process.ExitCode
+        }
+        # A child process that outlives the tool can keep the pipes open;
+        # never wait for it longer than 15 seconds.
+        try { $null = [System.Threading.Tasks.Task]::WaitAll($readers, 15000) } catch { Write-Swallowed $_ }
+        $chunks = @()
+        foreach ($buffer in @($outBuffer,$errBuffer)) { $chunks += (ConvertFrom-NativeByteArray $buffer.ToArray()) }
+        $result.Output = (($chunks | Where-Object { $_ }) -join "`n")
+        $result.Lines = @($result.Output -split '\r?\n' | ForEach-Object { $_.TrimEnd() } | Where-Object { $_ -ne '' })
+    } catch {
+        $result.Error = $_.Exception.Message
+    } finally {
+        if ($process) { try { $process.Dispose() } catch { Write-Swallowed $_ } }
+    }
+    return $result
+}
+
+function Invoke-NativeTreeKill {
+    param([int]$ProcessId)
+    $taskkill = Join-Path $env:windir 'System32\taskkill.exe'
+    if (Test-Path -LiteralPath $taskkill) {
+        $p = Start-Process -FilePath $taskkill -ArgumentList @('/PID',[string]$ProcessId,'/T','/F') -PassThru -NoNewWindow -Wait -ErrorAction SilentlyContinue
+        return $p
+    }
+    Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+}
+
+function Get-InstalledApplication {
+    $items = @()
+    foreach ($path in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*')) {
+        foreach ($entry in @(Get-ItemProperty $path -ErrorAction SilentlyContinue)) {
+            if ($entry.DisplayName -and -not $entry.SystemComponent) {
+                $items += [pscustomobject]@{
+                    Name=[string]$entry.DisplayName; Version=[string]$entry.DisplayVersion
+                    Publisher=[string]$entry.Publisher; InstallDate=[string]$entry.InstallDate
+                }
+            }
+        }
+    }
+    return @($items | Sort-Object Name,Version -Unique)
+}
+
+function Get-FeatureState {
+    param([string]$Name)
+    if ($null -eq $script:Data.Features) { return $null }
+    if ($script:Data.Features.ContainsKey($Name)) { return [bool]$script:Data.Features[$Name] }
+    return $false
+}
+
+function ConvertTo-NormalizedThumbprint {
+    param([object]$Value)
+    if ($null -eq $Value) { return '' }
+    if ($Value -is [byte[]]) { return (($Value | ForEach-Object { $_.ToString('X2') }) -join '') }
+    return (([string]$Value) -replace '[^0-9A-Fa-f]','').ToUpperInvariant()
+}
+
+function Resolve-PolicyAccountName {
+    param([string]$Account)
+    if (-not $Account) { return '' }
+    $clean = ($Account.Trim() -replace '^\*','')
+    if ($clean -match '^S-\d-') {
+        try {
+            $sid = New-Object Security.Principal.SecurityIdentifier($clean)
+            return $sid.Translate([Security.Principal.NTAccount]).Value + ' [' + $clean + ']'
+        } catch { return $clean }
+    }
+    return $clean
+}
+
+function Get-LocalGroupMembersBySid {
+    param([string]$Sid)
+    $members = @()
+    $group = @(Get-CimSafe 'Win32_Group' ("LocalAccount=True AND SID='" + $Sid + "'")) | Select-Object -First 1
+    if ($group) {
+        try {
+            $adsi = [ADSI]('WinNT://' + $script:ComputerName + '/' + $group.Name + ',group')
+            foreach ($member in @($adsi.psbase.Invoke('Members'))) {
+                $name = $member.GetType().InvokeMember('Name','GetProperty',$null,$member,$null)
+                $path = $member.GetType().InvokeMember('ADsPath','GetProperty',$null,$member,$null)
+                $members += ($name + ' [' + $path + ']')
+            }
+        } catch { Write-Swallowed $_ }
+    }
+    return ,$members
+}
+
+function Read-FileTail {
+    # Reads the last part of a log that another process may hold open.
+    param([string]$Path, [int]$MaxBytes = 20MB)
+    $lines = @()
+    if (-not (Test-Path -LiteralPath $Path)) { return ,$lines }
+    $stream = $null; $reader = $null
+    try {
+        $stream = New-Object IO.FileStream($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
+        if ($stream.Length -gt $MaxBytes) { $null = $stream.Seek(-1 * $MaxBytes, [IO.SeekOrigin]::End) }
+        $reader = New-Object IO.StreamReader($stream)
+        $lines = @($reader.ReadToEnd() -split '\r?\n')
+    } catch { Write-Swallowed $_ } finally {
+        if ($reader) { $reader.Dispose() } elseif ($stream) { $stream.Dispose() }
+    }
+    return ,$lines
+}
+
+

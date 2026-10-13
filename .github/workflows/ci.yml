@@ -104,6 +104,8 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Built file matches its parts (ADR 0002)
+        run: ./build/Build-Script.ps1 -Check
       - name: Install PSScriptAnalyzer
         run: Install-Module PSScriptAnalyzer -RequiredVersion $env:PSSA_VERSION -Scope CurrentUser -Force
       - name: Run PSScriptAnalyzer

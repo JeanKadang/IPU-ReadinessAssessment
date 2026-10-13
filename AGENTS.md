@@ -23,7 +23,7 @@ If the machine enforces signed scripts, start the session with `pwsh -ExecutionP
 
 - **The script must stay non-remediating.** No installs, removals or configuration changes. DISM `/ScanHealth` and SFC `/verifyonly` only; `LGPO.exe` only with `/b` and `/parse`. No `Win32_Product`.
 - **Windows PowerShell 4.0 compatibility.** The target hosts run Windows PowerShell, not PowerShell 7. Avoid newer syntax and cmdlets without a fallback.
-- **One file for SA, source in parts.** Operators run one `.ps1` from OpenText Server Automation. Decided in [ADR 0002](docs/adr/0002-source-in-parts-built-into-one-file.md) (supersedes ADR 0001): the source may be split into parts that a build step joins into that single file, and CI tests the built file. Until the build step lands (#151), keep `src/Windows-IPU-Readiness-Assessment.ps1` as one file. Never edit a built file by hand.
+- **One file for SA, source in parts.** Operators run one `.ps1` from OpenText Server Automation. Decided in [ADR 0002](docs/adr/0002-source-in-parts-built-into-one-file.md): edit the parts in `src/assessment/` (order in `manifest.txt`), run `build/Build-Script.ps1`, and commit the parts together with the rebuilt `src/Windows-IPU-Readiness-Assessment.ps1`. Never edit the built file by hand; CI (`Build-Script.ps1 -Check`) fails when it does not match its parts. See `docs/build.md`.
 - **Failures stay visible.** A check that errors must report `MANUAL`; never turn an error into a clean result.
 - **New decision logic is a pure function with a Pester test.** Keep system access out of `Get-*Decision` style functions.
 - **No host data in the repo.** No real hostnames, credentials, report output or customer names in code, tests or docs.

@@ -1,0 +1,85 @@
+# =============================================================================
+# 1. PARAMETERS / SETTINGS (defaults are what SA uses when no arguments are given)
+# =============================================================================
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleCommands', 'Get-MpComputerStatus', Justification = 'Called only after Test-CommandAvailable confirms it exists (Defender is not part of Windows Server 2012 R2).')]
+[CmdletBinding()]
+param(
+    # Planned destination release.
+    [ValidateSet('2025','2022')][string]$TargetServerVersion = '2025',
+
+    # Pre = readiness assessment before the upgrade.
+    # Post = verification after the upgrade, compared with the Pre result.
+    [ValidateSet('Pre','Post')][string]$AssessmentMode = 'Pre',
+
+    # Language of the target ISO, e.g. 'en-US'. Blank = report tells you.
+    [ValidatePattern('^$|^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*$')][string]$TargetMediaLanguage = '',
+
+    # Optional: target installation media for Setup's own compatibility scan.
+    # A folder or drive containing setup.exe, a UNC share (the computer
+    # account needs read access), or an .iso file on the server. Blank = skip.
+    [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$TargetMediaPath = '',
+
+    # Company policy: domain controllers are replaced side-by-side.
+    [bool]$BlockDomainControllerIPU = $true,
+
+    # Operational thresholds (project values, not Microsoft minimums unless noted).
+    [ValidateRange(1, 2048)][int]$MinimumCFreeGB = 40,
+    [ValidateRange(1, 1024)][int]$ExtendBlockGB = 10,
+    [ValidateRange(1, 4096)][int]$MinimumMemoryGB = 8,
+    [ValidateRange(1, 3650)][int]$MaxPatchAgeDays = 60,
+    [ValidateRange(1, 3650)][int]$UptimeWarningDays = 60,
+    [ValidateRange(1, 365)][int]$GroupPolicyMaxAgeDays = 7,
+    [ValidateRange(1, 365)][int]$AVMaxAgeDays = 3,
+    [ValidateRange(1, 3650)][int]$CertificateWarningDays = 90,
+    [ValidateRange(1, 10240)][int]$SystemPartitionMinFreeMB = 50,
+    [ValidateRange(1, 10240)][int]$RecoveryPartitionMinFreeMB = 250,   # Microsoft's WinRE servicing guidance
+
+    # Slow, read-only checks. Each is time-boxed; DISM and SFC share one budget.
+    [bool]$RunDISMScanHealth = $true,
+    [bool]$RunSFCVerifyOnly = $true,
+    [ValidateRange(1, 240)][int]$DISMTimeoutMinutes = 30,
+    [ValidateRange(1, 240)][int]$SFCTimeoutMinutes = 30,
+    [ValidateRange(1, 600)][int]$SlowCheckBudgetMinutes = 50,
+    [ValidateRange(1, 240)][int]$CompatScanTimeoutMinutes = 45,
+
+    # RDP access/policy evidence. LGPO.exe is optional (backup only).
+    [bool]$EnableRDPPolicyEvidence = $true,
+    [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$LgpoExe = 'C:\Temp\Tools\LGPO.exe',
+    [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$PolicyEvidenceRoot = 'C:\Temp\Tools\PolBackup',
+    [bool]$CreatePolicyEvidenceZip = $true,
+    # When IIS is installed, copy its configuration files (the same files
+    # "appcmd add backup" saves) into a restricted evidence folder and ZIP
+    # under PolicyEvidenceRoot. A read-only copy; IIS itself is not touched.
+    [bool]$EnableIISConfigEvidence = $true,
+
+    # Output.
+    [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$ReportDirectory = 'C:\Temp\IPU-Assessment',
+    [bool]$WriteJson = $true,
+    # Replace host names, IP and MAC addresses, accounts, SIDs and certificate
+    # details with placeholders (HOST-1, IP-3, ...) in the HTML and JSON, for
+    # sharing a report outside the team. Best effort - read before sharing.
+    # Output files are then named REDACTED-<time>-..., and a redacted result
+    # cannot serve as the post-upgrade baseline. The log is not redacted.
+    [bool]$RedactReport = $false,
+    # Write REDACTED- copies of reports that already exist (a folder or one
+    # report file), without collecting anything (#101). The originals stay.
+    [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$RedactExisting = '',
+    # Folders this run creates (report, policy evidence) get SYSTEM and
+    # Administrators access only; reports describe the server in detail.
+    # Existing folders are never changed. $false keeps inherited permissions.
+    [bool]$RestrictOutputAcl = $true,
+    [string]$NumberCultureName = 'da-DK',
+
+    # Optional site data files (JSON), see the user guide, "Site data files".
+    # PatternFile adds, replaces or disables detection patterns (section 2).
+    # ProfileFile sets site defaults for the settings above; an argument given
+    # to the script still wins. A file that cannot be used is reported as
+    # MANUAL and nothing from it is applied. Blank = built-in values only.
+    [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$PatternFile = '',
+    [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$ProfileFile = ''
+)
+
+# Settings given as arguments; they take precedence over a profile file.
+$script:BoundParameterNames = @($PSBoundParameters.Keys)
+
+

@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- The assessment's source is kept in parts (`src/assessment/`, one per numbered section) and `build/Build-Script.ps1` joins them into `src/Windows-IPU-Readiness-Assessment.ps1`, which stays committed at the same path. CI checks that the built file matches its parts. Nothing changes for operators: still one `.ps1` from the Release page (ADR 0002, #151).
+
 ### Added
 - Windows activation in plain words per channel (#171). A KMS client shows the KMS host that activated it, whether it was found via DNS or set on the server, and the days until the activation must be renewed (WARNING under 30 days); "Not explicitly configured (DNS auto-discovery or not KMS)" is gone. MAK, AVMA, OEM and retail get their own text, e.g. "Licensed (MAK), activated permanently - no renewal needed". The KMS host name is redacted in shared copies.
 - RDP Network Level Authentication in the Summary ("RDP access: GO, NLA on"; after the upgrade "NLA off (was on before the upgrade)" when it changed), as `Facts.Nla` in the JSON, and as an "RDP NLA" column in the fleet overview and servers CSV (`Merge-IPUAssessments.ps1` 1.1.0) (#174).

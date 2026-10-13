@@ -23,7 +23,7 @@ commits show the wrong author.
 |---|---|---|
 | `pester (Windows PowerShell 5.1)`, `pester (PowerShell 7)` | windows-2025 | All Pester tests; coverage on PowerShell 7 |
 | `smoke (<shell>, windows-2025)`, `smoke (<shell>, windows-2022)` | Both Windows Server images, on every pull request, push to `main`, weekly run and manual run (#122) | The real script end to end (Pre, Post, redacted, site data files), JSON checked against the schema |
-| `lint (PSScriptAnalyzer)` | windows-2025 | Fails on any warning. Also checks `src/` against Windows Server 2012 R2 / Windows PowerShell 4.0 (`PSScriptAnalyzerSettings.PS4.psd1`): a command, type or syntax that does not exist there fails the job |
+| `lint (PSScriptAnalyzer)` | windows-2025 | First checks that `src/Windows-IPU-Readiness-Assessment.ps1` is exactly the build of its parts (`build/Build-Script.ps1 -Check`, see [docs/build.md](docs/build.md)). Fails on any warning. Also checks `src/` against Windows Server 2012 R2 / Windows PowerShell 4.0 (`PSScriptAnalyzerSettings.PS4.psd1`): a command, type or syntax that does not exist there fails the job |
 | `label` (workflow *Label pull requests*) | ubuntu-latest | Adds labels to each pull request |
 | `release` (workflow *Release*) | ubuntu-latest | Publishes a release: **Actions → Release → Run workflow** on `main` with the version (for example `4.1.0`), or push a tag `v4.1.0`. The version must match the script header and CHANGELOG, and the CI run for the push of that commit to `main` must have succeeded: the workflow waits for a running one (up to 45 minutes) and refuses a failed, cancelled or missing one (#121). Tick *dry_run* to do every check and build the files without publishing; a dry run may start from any ref |
 | `notify (failed run on main)` | ubuntu-latest | For the weekly run and for every push to `main` (#123): when a job failed, opens or updates the issue "CI failed on main" (push) or "Scheduled CI run failed" (weekly run) |
@@ -34,6 +34,7 @@ the `smoke` matrix in `.github/workflows/ci.yml` and this table in the same pull
 ## Conventions
 
 - Scripts live in `src/`, tests in `tests/`, docs in `docs/`.
+- **Edit the assessment in its parts**, `src/assessment/*.ps1`, then run `pwsh ./build/Build-Script.ps1` and commit both the parts and the rebuilt `src/Windows-IPU-Readiness-Assessment.ps1`. Never edit the built file by hand: CI fails when it does not match its parts. See [docs/build.md](docs/build.md).
 - Every new check needs a Pester test and a named recommendation.
 - Do not commit assessment output, hostnames, credentials or other host data.
 
