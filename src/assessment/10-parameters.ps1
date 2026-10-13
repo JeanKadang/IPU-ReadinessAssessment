@@ -19,7 +19,9 @@ param(
     # account needs read access), or an .iso file on the server. Blank = skip.
     [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$TargetMediaPath = '',
 
-    # Company policy: domain controllers are replaced side-by-side.
+    # Site policy, on by default: a domain controller is reported as SPECIAL
+    # (replace it side-by-side) instead of as a normal in-place upgrade. A
+    # profile file can switch it off (see the user guide).
     [bool]$BlockDomainControllerIPU = $true,
 
     # Operational thresholds (project values, not Microsoft minimums unless noted).
@@ -73,6 +75,8 @@ param(
     # Administrators access only; reports describe the server in detail.
     # Existing folders are never changed. $false keeps inherited permissions.
     [bool]$RestrictOutputAcl = $true,
+    # Culture for numbers in the SA result line. The default is kept for the
+    # site's existing SA jobs; set your own in a profile file.
     [string]$NumberCultureName = 'da-DK',
 
     # Optional site data files (JSON), see the user guide, "Site data files".

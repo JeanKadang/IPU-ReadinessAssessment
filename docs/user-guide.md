@@ -199,7 +199,7 @@ When the budget runs out, remaining slow checks are reported as `MANUAL` (skippe
 | `ReportDirectory` | `C:\Temp\IPU-Assessment` | Where HTML, JSON and log are written |
 | `WriteJson` | `$true` | Write the JSON result (also the post-upgrade baseline) |
 | `RestrictOutputAcl` | `$true` | Folders the script creates (report folder, policy evidence) get access for SYSTEM and Administrators only. Existing folders are never changed; the report warns, with the `icacls` command to fix it, if an existing folder is readable by Everyone, Authenticated Users or Users. `$false` keeps inherited permissions |
-| `NumberCultureName` | `da-DK` | Culture used to format numbers in the SA result line. Invalid values fall back to invariant |
+| `NumberCultureName` | `da-DK` | Culture used to format numbers in the SA result line. Invalid values fall back to invariant. The default is kept for existing SA jobs; set your own in a [profile file](#site-data-files-patterns-and-profile) |
 | `RedactExisting` | blank | A folder or report file: write redacted copies of existing reports and stop (see [Sharing a report: redaction](#sharing-a-report-redaction)) |
 | `RedactReport` | `$false` | Replace names, addresses, accounts, SIDs and certificate details with placeholders in the HTML and JSON, for sharing outside the team. See [Sharing a report: redaction](#sharing-a-report-redaction) |
 
@@ -272,6 +272,13 @@ be set in a profile. Settings passed as arguments win; the *Profile file* row na
 ```
 
 Both examples are in [`docs/examples`](examples/). A JSON backslash must be doubled: `"C:\\Tools\\LGPO.exe"`.
+
+**Defaults that come from one site.** A few defaults reflect the site the tool was first built for:
+`NumberCultureName` is `da-DK`, `BlockDomainControllerIPU` is on (a domain controller is SPECIAL, see above), and
+`Merge-IPUAssessments.ps1` writes CSV files with `;`. They stay as they are so existing SA jobs that pass no
+arguments behave the same (#131). Another site sets its own values in a profile file, for example
+`"NumberCultureName": "en-US"` or `"BlockDomainControllerIPU": false`, and runs the merge with `-Delimiter ','` if
+its Excel expects commas.
 
 ## 5. Outputs
 
@@ -653,7 +660,7 @@ process).
 | `InputFolder` | required | Folder with the `*-IPU-Assessment.json` and `*-IPU-PostUpgrade.json` files |
 | `OutputFolder` | the input folder | Where the three output files are written (created if missing) |
 | `Mode` | `All` | `Pre`, `Post` or `All`: which kind of result to include |
-| `Delimiter` | `;` | CSV separator. `;` opens in columns in Excel with Danish regional settings |
+| `Delimiter` | `;` | CSV separator. `;` opens in columns in Excel where the list separator is `;` (common in European regional settings); use `,` where it is `,` |
 
 The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`) and the paths written.
 
