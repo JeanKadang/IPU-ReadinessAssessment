@@ -25,6 +25,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Post-upgrade comparison: per-user services (e.g. CDPUserSvc) that exist only while a user is signed in, and ports whose service no longer starts automatically (e.g. SSDP Discovery, Function Discovery), are INFO instead of WARNING (#173).
 
 ### Security
+- `-RedactExisting` now also replaces the first label of a KMS host name (`kms01` as well as `kms01.corp.example`), as the live run does. Found by a new test suite that runs a synthetic worst-case report with random names through the live JSON and HTML redaction and through `-RedactExisting`, and fails when any input value survives (#124).
 - `Merge-IPUAssessments.ps1` (1.1.0) limits an output folder it creates to SYSTEM, Administrators and the current user, and warns when an existing output folder can be read by Everyone, Authenticated Users or Users: the overview combines findings from every server (#128).
 - `-RedactExisting` now replaces file share names and descriptions; a live run had left share names readable in a redacted copy. A test fails when a new collector name source has no matching recovery rule. Servers are numbered `HOST-1..HOST-n` in the file names (#172).
 
