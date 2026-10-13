@@ -2391,7 +2391,9 @@ Describe 'Redact existing reports: one placeholder per server across files (#157
         $json = [IO.File]::ReadAllText((Join-Path $sample 'sample-result.json'))
         $html = [IO.File]::ReadAllText((Join-Path $sample 'sample-report.html'))
         foreach ($f in @(@{ Name = 'SRV-APP01-IPU-Assessment'; Host = 'SRV-APP01' }, @{ Name = 'SRV-APP01-IPU-PostUpgrade'; Host = 'SRV-APP01' }, @{ Name = 'SRV-DB02-IPU-Assessment'; Host = 'SRV-DB02' })) {
-            [IO.File]::WriteAllText((Join-Path $dir ($f.Name + '.json')), $json.Replace('SRV-APP01', $f.Host))
+            $obj = $json.Replace('SRV-APP01', $f.Host) | ConvertFrom-Json
+            if ($f.Name -like '*PostUpgrade') { $obj.Mode = 'Post' }
+            [IO.File]::WriteAllText((Join-Path $dir ($f.Name + '.json')), ($obj | ConvertTo-Json -Depth 8))
             [IO.File]::WriteAllText((Join-Path $dir ($f.Name + '.html')), $html.Replace('SRV-APP01', $f.Host))
         }
         $script:FleetCode = Invoke-RedactExisting $dir
@@ -2407,6 +2409,17 @@ Describe 'Redact existing reports: one placeholder per server across files (#157
             $tag = [regex]::Match($f.Name, 'HOST-\d+').Value
             ([IO.File]::ReadAllText($f.FullName) | ConvertFrom-Json).ComputerName | Should -Be $tag
         }
+    }
+    It 'a fleet overview of the redacted copies shows one row per server and mode' {
+        $only = Join-Path $TestDrive 'fleet-redacted'
+        $mergeOut = Join-Path $TestDrive 'fleet-overview'
+        New-Item -ItemType Directory -Path $only, $mergeOut | Out-Null
+        foreach ($f in $script:FleetJson) { Copy-Item -LiteralPath $f.FullName -Destination $only }
+        $null = & (Join-Path $PSScriptRoot '..\src\Merge-IPUAssessments.ps1') -InputFolder $only -OutputFolder $mergeOut
+        $rows = @(Import-Csv -LiteralPath (Join-Path $mergeOut 'IPU-Fleet-Servers.csv') -Delimiter ';')
+        $rows.Count | Should -Be 3
+        @($rows | ForEach-Object { $_.ComputerName + '|' + $_.Mode } | Sort-Object -Unique).Count | Should -Be 3
+        @($rows | ForEach-Object { $_.ComputerName } | Sort-Object -Unique).Count | Should -Be 2
     }
     It 'gives one server the same placeholder in pre and post, and different servers different ones' {
         $tags = @($script:FleetJson | ForEach-Object { [regex]::Match($_.Name, 'HOST-\d+').Value + '|' + [regex]::Match($_.Name, 'Assessment|PostUpgrade').Value })
