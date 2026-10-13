@@ -2354,3 +2354,16 @@ Describe 'Recovery partition after C: (#161)' {
         $lines[-2] | Should -Be 'reagentc /enable'
     }
 }
+
+Describe 'LGPO edge cases (#150)' {
+    It 'points to the LGPO backup only when this run makes one' {
+        Get-LocalPolicyAdvice $true $true | Should -Match 'local policy backup \(LGPO\)'
+        Get-LocalPolicyAdvice $false $true | Should -Not -Match 'LGPO'
+        Get-LocalPolicyAdvice $true $false | Should -Not -Match 'LGPO'
+        Get-LocalPolicyAdvice $false $false | Should -Match 'gpresult /scope computer'
+    }
+    It 'an empty -LgpoExe means LGPO is not available, without testing an empty path' {
+        $LgpoExe = ''
+        Test-LgpoAvailable | Should -BeFalse
+    }
+}

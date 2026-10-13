@@ -133,6 +133,8 @@ BeforeAll {
     # ------------------------------------------------- core cmdlet stand-ins
     function Test-Path {
         [CmdletBinding()] param([Parameter(Position = 0)][string]$Path, [string]$LiteralPath, [string]$PathType)
+        # Like Windows PowerShell 4.0/5.1, refuse an empty -LiteralPath (#150).
+        if ($PSBoundParameters.ContainsKey('LiteralPath') -and $LiteralPath -eq '') { throw 'Cannot bind argument to parameter ''LiteralPath'' because it is an empty string.' }
         $p = Get-PathArg $Path $LiteralPath
         if (Test-RealPath $p) {
             if ($PathType) { return Microsoft.PowerShell.Management\Test-Path -LiteralPath $p -PathType $PathType }
@@ -724,6 +726,13 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             (Get-Row 'RDP' 'SeRemoteInteractiveLogonRight')[0].Value | Should -Match 'S-1-5-32-544'
             $script:Data.PolicyEvidence | Should -Match '\.zip$'
             $script:Data.PolicyEvidence | Should -Exist
+        }
+        It 'an empty -LgpoExe skips LGPO and the rest of the evidence completes (#150)' {
+            $PolicyEvidenceRoot = $script:EvidenceRoot
+            $LgpoExe = ''
+            (Invoke-TestCheck 'rdp').Outcome | Should -Be 'Completed'
+            (Get-Row 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup')[0].Value | Should -Match 'LGPO disabled'
+            (Get-Row 'RDP' 'RDPAccessReadiness')[0].Value | Should -Be 'GO'
         }
         It 'RDP disabled is NO-GO' {
             $PolicyEvidenceRoot = $script:EvidenceRoot
