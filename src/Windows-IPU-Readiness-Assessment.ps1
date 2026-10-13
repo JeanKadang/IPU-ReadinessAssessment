@@ -1827,6 +1827,62 @@ function Get-NlaFactText {
     return $t
 }
 
+function Get-OptionalProperty {
+    # A property that older Windows releases may not have; $null when absent.
+    param($Object, [string]$Name)
+    if ($null -eq $Object) { return $null }
+    $p = $Object.PSObject.Properties[$Name]
+    if ($p) { return $p.Value }
+    return $null
+}
+
+function Get-ActivationDecision {
+    # Pure (#171): the activation row per channel. KMS clients name the host
+    # that activated them, how it was found and the days to renewal; MAK,
+    # AVMA, OEM and retail get their own plain text, never KMS wording.
+    param([string]$Kind, [int]$LicenseStatus, [string]$StateName, [string]$Channel, $GraceMinutes, [string]$DiscoveredHost, [string]$DiscoveredPort, [string]$ConfiguredHost, [string]$ConfiguredPort, [int]$RenewWarnDays = 30)
+    $licensed = ($LicenseStatus -eq 1)
+    $days = $null; if ($null -ne $GraceMinutes -and [int64]$GraceMinutes -gt 0) { $days = [int][math]::Floor([int64]$GraceMinutes / 1440) }
+    $r = [pscustomobject]@{ Status = 'OK'; Value = ''; Details = @(); Text = ''; KmsHost = ''; KmsEndpoint = '' }
+    switch ($Kind) {
+        'KMS' {
+            $hostName = $DiscoveredHost; $port = $DiscoveredPort; $how = 'found via DNS'
+            if ($ConfiguredHost) { $hostName = $ConfiguredHost; $port = $ConfiguredPort; $how = 'set manually on this server' }
+            if ($hostName) {
+                $r.KmsHost = $hostName
+                $r.KmsEndpoint = $hostName + $(if ($port) { ':' + $port } else { '' })
+            }
+            if ($licensed) {
+                $r.Value = 'Licensed (KMS client)'
+                if ($r.KmsEndpoint) { $r.Value += ', activated by ' + $r.KmsEndpoint + ', ' + $how } else { $r.Value += ', KMS host not reported' }
+                if ($null -ne $days) {
+                    $r.Value += '. Renewal due in ' + $days + ' days'
+                    if ($days -lt $RenewWarnDays) { $r.Status = 'WARNING'; $r.Text = 'The activation has not been renewed recently: the server has not reached a KMS host for a while. Check that the KMS host is reachable (DNS SRV record _vlmcs._tcp, TCP 1688) before the upgrade.' }
+                }
+                $r.Details = @(('KMS host: ' + $(if ($r.KmsEndpoint) { $r.KmsEndpoint + ' (' + $how + ')' } else { 'not reported' })))
+            } else {
+                $r.Status = 'ACTION'
+                $r.Value = 'Not activated (' + $StateName + ', KMS client)'
+                $r.Text = 'The server could not activate with a KMS host. Check the DNS SRV record _vlmcs._tcp (or the host set with slmgr /skms) and that TCP 1688 to the KMS host is open, then run slmgr /ato. Resolve before the upgrade.'
+            }
+        }
+        'MAK' {
+            if ($licensed) { $r.Value = 'Licensed (MAK), activated permanently - no renewal needed' }
+            else { $r.Status = 'ACTION'; $r.Value = 'Not activated (' + $StateName + ', MAK)'; $r.Text = 'Activate with the MAK (slmgr /ato, online or by phone) before the upgrade.' }
+        }
+        'AVMA' {
+            if ($licensed) { $r.Value = 'Licensed (AVMA), activated through the Hyper-V host' }
+            else { $r.Status = 'ACTION'; $r.Value = 'Not activated (' + $StateName + ', AVMA)'; $r.Text = 'AVMA needs a Hyper-V host running Datacenter that is itself activated. Check the host, then the guest.' }
+        }
+        default {
+            $label = $Kind; if (-not $label -or $label -eq 'Unknown') { $label = $Channel }
+            if ($licensed) { $r.Value = 'Licensed (' + $label + ')' }
+            else { $r.Status = 'ACTION'; $r.Value = 'Not activated (' + $StateName + ', ' + $label + ')'; $r.Text = 'Resolve the activation before the upgrade (slmgr /dlv shows the details).' }
+        }
+    }
+    return $r
+}
+
 function Get-DomainRoleText {
     # Pure (#98): the domain role in the words operators use. Win32 calls a
     # non-domain server "Standalone server"; most people say workgroup server.
@@ -2128,7 +2184,7 @@ function Add-RedactionLiteral {
     # Remembers a name seen during collection that must be replaced in a
     # redacted report wherever it appears (#100): accounts without a domain
     # prefix, GPO names, WMI filter names. Kept for every run (cheap).
-    param([string]$Value, [ValidateSet('ACCOUNT','GPO','NAME')][string]$Kind)
+    param([string]$Value, [ValidateSet('ACCOUNT','GPO','NAME','HOST')][string]$Kind)
     if (-not $Value) { return }
     $v = $Value.Trim()
     if ($Kind -eq 'ACCOUNT' -and $v -match '^(.+)\\(.+)$') {
@@ -2464,7 +2520,7 @@ Register-Check -Id 'licensing' -Name 'Windows activation' -Script {
     $products = @()
     $queryError = ''
     try {
-        $products = @(Get-CimInstance -Query "SELECT Name,Description,LicenseStatus,PartialProductKey,ProductKeyChannel,GracePeriodRemaining FROM SoftwareLicensingProduct WHERE ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f' AND PartialProductKey IS NOT NULL" -ErrorAction Stop |
+        $products = @(Get-CimInstance -Query "SELECT Name,Description,LicenseStatus,PartialProductKey,ProductKeyChannel,GracePeriodRemaining,DiscoveredKeyManagementServiceMachineName,DiscoveredKeyManagementServiceMachinePort,KeyManagementServiceMachine,KeyManagementServicePort FROM SoftwareLicensingProduct WHERE ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f' AND PartialProductKey IS NOT NULL" -ErrorAction Stop |
             Where-Object { $_.Name -match '^Windows' })
     } catch {
         # Older builds do not expose ProductKeyChannel; retry with all columns.
@@ -2474,7 +2530,7 @@ Register-Check -Id 'licensing' -Name 'Windows activation' -Script {
         } catch { $queryError = $_.Exception.Message }
     }
     $spp = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform' -ErrorAction SilentlyContinue
-    $kms = 'Not explicitly configured (DNS auto-discovery or not KMS)'
+    $kms = 'Not set on this server (a KMS client finds its host via DNS)'
     if ($spp.KeyManagementServiceName) { $kms = [string]$spp.KeyManagementServiceName; if ($spp.KeyManagementServicePort) { $kms += ':' + $spp.KeyManagementServicePort } }
     $script:Data.KmsEndpoint = $kms
 
@@ -2493,15 +2549,21 @@ Register-Check -Id 'licensing' -Name 'Windows activation' -Script {
         $d = [string]$primary.Description
         if ($d -match 'VOLUME_KMSCLIENT') { $channel = 'Volume:GVLK (KMS client)' } elseif ($d -match 'VOLUME_MAK') { $channel = 'Volume:MAK' } elseif ($d -match 'OEM') { $channel = 'OEM' } elseif ($d -match 'RETAIL') { $channel = 'Retail' } else { $channel = 'Unknown' }
     }
-    $summary = 'Status=' + $state + ', Channel=' + $channel
     $script:Data.ActivationKind = Get-ActivationChannelKind $channel ([string]$primary.Description)
-    $script:Data.ActivationSummary = $summary
-    $details = @(('PartialProductKey=' + $primary.PartialProductKey),('KMS=' + $kms))
-    if ([int]$primary.LicenseStatus -eq 1) {
-        Add-Result 'LICENSING' 'CurrentActivation' 'OK' $summary $details -Source 'SoftwareLicensingProduct (only the last 5 key characters are read)'
-    } else {
-        Add-Result 'LICENSING' 'CurrentActivation' 'ACTION' $summary $details -Recommendation 'Resolve the current activation state before IPU.' -Source 'SoftwareLicensingProduct'
-    }
+    # What actually activated the server (#171): the KMS host the client
+    # found (via DNS) or the one set on the server, and the days until the
+    # activation must be renewed.
+    $discHost = [string](Get-OptionalProperty $primary 'DiscoveredKeyManagementServiceMachineName')
+    $discPort = [string](Get-OptionalProperty $primary 'DiscoveredKeyManagementServiceMachinePort')
+    $confHost = [string](Get-OptionalProperty $primary 'KeyManagementServiceMachine')
+    $confPort = [string](Get-OptionalProperty $primary 'KeyManagementServicePort')
+    if (-not $confHost -and $spp.KeyManagementServiceName) { $confHost = [string]$spp.KeyManagementServiceName; $confPort = [string]$spp.KeyManagementServicePort }
+    $grace = $null; if ($null -ne $primary.GracePeriodRemaining) { $grace = [int64]$primary.GracePeriodRemaining }
+    $act = Get-ActivationDecision $script:Data.ActivationKind ([int]$primary.LicenseStatus) $state $channel $grace $discHost $discPort $confHost $confPort
+    if ($act.KmsHost) { foreach ($h in @($act.KmsHost, ($act.KmsHost -split '\.')[0]) | Select-Object -Unique) { Add-RedactionLiteral $h 'HOST' }; $script:Data.KmsEndpoint = $act.KmsEndpoint } elseif ($script:Data.ActivationKind -eq 'KMS') { $script:Data.KmsEndpoint = 'found via DNS' }
+    $script:Data.ActivationSummary = $act.Value
+    $details = @(('Channel=' + $channel), ('PartialProductKey=' + $primary.PartialProductKey)) + @($act.Details)
+    Add-Result 'LICENSING' 'CurrentActivation' $act.Status $act.Value $details -Recommendation $act.Text -Source 'SoftwareLicensingProduct (only the last 5 key characters are read)'
     if ($channel -match 'OEM') {
         Add-Result 'LICENSING' 'OEMLicense' 'WARNING' $channel -Recommendation 'An OEM licence is tied to the original hardware and release. Confirm the target licence/key before IPU.' -Source 'SoftwareLicensingProduct'
     }
@@ -4272,6 +4334,8 @@ function Get-RedactionLiteralFromResult {
         if ($r.Area -eq 'SERVICES' -and [string]$r.Details -match '(?:^|\|\s*)LogOnAs=([^|]+)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'ACCOUNT' } }
         if ($r.Area -eq 'GROUP_POLICY' -and [string]$r.Item -match '^GPO: (.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'GPO' } }
         if ($r.Area -eq 'GROUP_POLICY' -and [string]$r.Details -match '(?:^|\|\s*)WMI filter: ([^|]+)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'NAME' } }
+        # The KMS host that activated the server (#171).
+        if ($r.Area -eq 'LICENSING' -and (@($r.Details) -join ' | ') -match 'KMS host: ([^\s:|(]+)') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'HOST' } }
         # File shares (#172): the share name from the per-share row, and its
         # description.
         if ($r.Area -eq 'FILE_SHARES' -and [string]$r.Item -match '^Share: (.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'NAME' } }

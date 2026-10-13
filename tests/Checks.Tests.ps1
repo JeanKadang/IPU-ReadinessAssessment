@@ -523,6 +523,18 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             (Get-Row 'LICENSING' 'CurrentActivation')[0].Status | Should -Be 'OK'
             $script:Data.KmsEndpoint | Should -Be 'kms.example.test:1688'
         }
+        It 'a KMS client found via DNS shows the host and the renewal days (#171)' {
+            $script:Fake.ItemProperty['HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform'] = [pscustomobject]@{}
+            $script:Fake.Licensing[0] | Add-Member -NotePropertyName DiscoveredKeyManagementServiceMachineName -NotePropertyValue 'kms01.corp.example.test' -Force
+            $script:Fake.Licensing[0] | Add-Member -NotePropertyName DiscoveredKeyManagementServiceMachinePort -NotePropertyValue 1688 -Force
+            $script:Fake.Licensing[0].GracePeriodRemaining = 250000
+            $null = Invoke-TestCheck 'licensing'
+            $r = (Get-Row 'LICENSING' 'CurrentActivation')[0]
+            $r.Status | Should -Be 'OK'
+            $r.Value | Should -Be 'Licensed (KMS client), activated by kms01.corp.example.test:1688, found via DNS. Renewal due in 173 days'
+            $script:Data.KmsEndpoint | Should -Be 'kms01.corp.example.test:1688'
+            $script:Data.RedactLiterals.ContainsKey('kms01') | Should -BeTrue
+        }
         It 'an unlicensed server is an ACTION' {
             $script:Fake.Licensing[0].LicenseStatus = 0
             $null = Invoke-TestCheck 'licensing'
