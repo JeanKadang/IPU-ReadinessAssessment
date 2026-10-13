@@ -241,3 +241,38 @@ Describe 'Merge-IPUAssessments.ps1 - RDP NLA column (#174)' {
         [IO.File]::ReadAllText((Join-Path $out 'IPU-Fleet-Overview.html')) | Should -Match '<th>RDP NLA</th>'
     }
 }
+
+Describe 'Merge-IPUAssessments.ps1 - output folder permissions (#128)' {
+    BeforeAll {
+        $script:AclIn = Join-Path $TestDrive 'acl-in'
+        New-Item -ItemType Directory -Path $script:AclIn | Out-Null
+        Save-Result (New-FakeResult 'SRV-ACL') $script:AclIn 'SRV-ACL-IPU-Assessment.json'
+        $script:BroadSids = @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545')
+        function Get-AllowedSid([string]$Path) {
+            @((Get-Acl -LiteralPath $Path).GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | Where-Object { [string]$_.AccessControlType -eq 'Allow' } | ForEach-Object { [string]$_.IdentityReference })
+        }
+    }
+    It 'a folder created by the merge is limited to SYSTEM, Administrators and the current user' {
+        $out = Join-Path $TestDrive 'acl-new\overview'
+        $null = & $script:MergeScript -InputFolder $script:AclIn -OutputFolder $out -WarningVariable w -WarningAction SilentlyContinue
+        $sids = Get-AllowedSid $out
+        @($sids | Where-Object { $script:BroadSids -contains $_ }) | Should -BeNullOrEmpty
+        $sids | Should -Contain 'S-1-5-18'
+        $sids | Should -Contain 'S-1-5-32-544'
+        $sids | Should -Contain ([System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+        (Get-Acl -LiteralPath $out).AreAccessRulesProtected | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $out 'IPU-Fleet-Overview.html') | Should -BeTrue
+        @($w) | Should -BeNullOrEmpty
+    }
+    It 'an existing folder that Users can read is left unchanged, with a warning' {
+        $out = Join-Path $TestDrive 'acl-open'
+        New-Item -ItemType Directory -Path $out | Out-Null
+        $acl = Get-Acl -LiteralPath $out
+        $users = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
+        $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($users, 'ReadAndExecute', 'ContainerInherit, ObjectInherit', 'None', 'Allow')))
+        Set-Acl -LiteralPath $out -AclObject $acl
+        $null = & $script:MergeScript -InputFolder $script:AclIn -OutputFolder $out -WarningVariable w -WarningAction SilentlyContinue
+        (@($w) -join ' ') | Should -Match 'can be read by Users'
+        Get-AllowedSid $out | Should -Contain 'S-1-5-32-545'
+    }
+}
