@@ -2916,3 +2916,41 @@ Describe 'Print servers (#148)' {
         (@($l | ForEach-Object { $_.Kind + '=' + $_.Value }) -join '; ') | Should -Be 'NAME=Floor2-Color; NAME=Floor2C; NAME=Local-Only; NAME=lpr-label; HOST=labelhost.corp.example.test; NAME=IP_10.20.40.11'
     }
 }
+
+Describe 'Read-only system helpers (#127: every function runs in a test)' {
+    It 'Get-PrerequisiteState never throws and reads this host' {
+        $s = Get-PrerequisiteState
+        $s.PowerShellVersion | Should -Be $PSVersionTable.PSVersion
+        $s.DotNetRelease | Should -BeOfType [int]
+        $s.IsElevated | Should -BeOfType [bool]
+        , @($s.MissingModules) | Should -BeOfType [object[]]
+    }
+    It 'Get-AdComputerDn returns a DN or throws with a message (never an empty name)' {
+        $r = try { Get-AdComputerDn } catch { 'threw: ' + $_.Exception.Message }
+        $r | Should -Match '^(CN=.+|threw: .+)'
+    }
+    It 'Get-GpoListRegistryEntry reads the GPO-List keys in numeric order' {
+        Mock Get-ChildItem { @([pscustomobject]@{ PSChildName = '10'; PSPath = 'k10' }, [pscustomobject]@{ PSChildName = '2'; PSPath = 'k2' }) }
+        Mock Get-ItemProperty { if ($LiteralPath -eq 'k2') { [pscustomobject]@{ DisplayName = 'Second'; GPOName = '{2}'; Link = 'Local' } } else { [pscustomobject]@{ DisplayName = 'Tenth'; GPOName = '{10}'; Link = 'Local' } } }
+        $list = Get-GpoListRegistryEntry
+        ($list | ForEach-Object { $_.DisplayName }) -join ',' | Should -Be 'Second,Tenth'
+    }
+    It 'Get-FileCompanyName: empty for a missing file, the company for a real one' {
+        Get-FileCompanyName '' | Should -Be ''
+        Get-FileCompanyName (Join-Path $TestDrive 'missing.dll') | Should -Be ''
+        $exe = (Get-Process -Id $PID).Path
+        Get-FileCompanyName $exe | Should -BeOfType [string]
+    }
+    It 'Get-PrintDriverStoreSize adds up every file under spool\drivers' {
+        Mock Get-ChildItem { @([pscustomobject]@{ Length = 1000 }, [pscustomobject]@{ Length = 2500 }) }
+        Get-PrintDriverStoreSize | Should -Be 3500
+    }
+    It 'Get-PrintMonitorInventory lists port monitors and print processors with their company' {
+        Mock Get-ChildItem { @([pscustomobject]@{ PSChildName = 'Local Port'; PSPath = 'mon1' }) } -ParameterFilter { $LiteralPath -like '*\Monitors' }
+        Mock Get-ChildItem { @([pscustomobject]@{ PSChildName = 'winprint'; PSPath = 'pp1' }) } -ParameterFilter { $LiteralPath -like '*Print Processors' }
+        Mock Get-ItemProperty { if ($LiteralPath -eq 'mon1') { [pscustomobject]@{ Driver = 'localspl.dll' } } else { [pscustomobject]@{ Driver = 'winprint.dll' } } }
+        Mock Get-FileCompanyName { 'Microsoft Corporation' }
+        $items = Get-PrintMonitorInventory
+        ($items | ForEach-Object { $_.Type + ':' + $_.Name + ':' + $_.Driver + ':' + $_.Company }) -join ';' | Should -Be 'PortMonitor:Local Port:localspl.dll:Microsoft Corporation;PrintProcessor:winprint:winprint.dll:Microsoft Corporation'
+    }
+}

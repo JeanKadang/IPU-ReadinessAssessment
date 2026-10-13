@@ -63,7 +63,7 @@ jobs:
           Install-Module Pester -RequiredVersion $env:PESTER_VERSION -Scope CurrentUser -Force -SkipPublisherCheck
       - name: Run Pester
         run: |
-          if ('${{ matrix.coverage }}' -eq 'true') { ./build/Invoke-CiTests.ps1 -Coverage } else { ./build/Invoke-CiTests.ps1 }
+          if ('${{ matrix.coverage }}' -eq 'true') { ./build/Invoke-CiTests.ps1 -Coverage -MinimumCoverage 85 } else { ./build/Invoke-CiTests.ps1 }
 
   pester-unelevated:
     # #126: the suite as a standard user (no admin token), as on a
