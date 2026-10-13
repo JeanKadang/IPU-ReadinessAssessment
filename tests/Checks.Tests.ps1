@@ -731,6 +731,7 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
 
     Context 'special (#152)' {
         It 'a cluster node gets the SPECIAL row and the facts to choose a plan' {
+            $script:Fake.MissingCommands = @('Get-VMSwitch')
             $script:Fake.Features['Failover-Clustering'] = $true
             $script:Fake.Cluster = [pscustomobject]@{ Name = 'CL01' }
             $script:Fake.ClusterNodes = @([pscustomobject]@{ Name = 'SRV01'; State = 'Up' }, [pscustomobject]@{ Name = 'SRV02'; State = 'Up' })
