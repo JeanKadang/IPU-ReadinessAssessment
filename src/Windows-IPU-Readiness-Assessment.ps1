@@ -2044,7 +2044,7 @@ function Protect-ReportText {
         $t = [regex]::Replace($t, '\b[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.' + $dom + '\b', { param($m) Get-RedactionPlaceholder $ctx 'HOST' $m.Value }, $ic)
         # With any DNS suffix that follows (#156), so "CORP.LOCALDOM" is
         # replaced as a whole when only "corp" is known.
-        $t = [regex]::Replace($t, '\b' + $dom + '(?:\.[A-Za-z0-9-]+)*\b', { param($m) Get-RedactionPlaceholder $ctx 'DOMAIN' $ctx.DomainFqdn }, $ic)
+        $t = [regex]::Replace($t, '\b' + $dom + '(?:\.[A-Za-z0-9-]+)*\b', { param($m) Get-RedactionPlaceholder $ctx 'DOMAIN' (Get-RedactionDomainKey $ctx $m.Value) }, $ic)
     }
     # Any other host name with a public or internal top-level domain (#100),
     # except documentation and vendor domains used in report links.
