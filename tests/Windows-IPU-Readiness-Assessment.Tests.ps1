@@ -2814,3 +2814,34 @@ Describe 'Save-NetworkEvidence (#149)' {
         @(Get-ChildItem -LiteralPath $dir -Filter 'REDACTED-*').Count | Should -Be 0
     }
 }
+
+Describe 'Dated facts have a source and a recent check (#132)' {
+    It 'every fact table is listed with a date and an https source' {
+        foreach ($name in 'SupportedUpgradePaths', 'SqlSupportedOnTarget', 'ReleaseEndOfSupport', 'FeatureLifecycle', 'VMwareToolsMinimum', 'ExpectedWindowsChanges', 'WinReMinPartitionMB', 'DocLinks') {
+            $script:FactSources.Contains($name) | Should -BeTrue -Because $name
+        }
+        @(Get-StaleFactSource $script:FactSources ([datetime]'2026-10-13')) | Should -BeNullOrEmpty
+    }
+    It 'no fact table was last checked more than six months ago' {
+        $stale = Get-StaleFactSource $script:FactSources (Get-Date)
+        @($stale) | Should -BeNullOrEmpty -Because ('these need a recheck (CONTRIBUTING, "Dated facts"): ' + (@($stale) -join '; '))
+    }
+    It 'a back-dated entry is reported with its source; a missing date or source too' {
+        $sources = [ordered]@{
+            Old = @{ Verified = '2026-01-01'; Source = 'https://learn.microsoft.com/example' }
+            Fresh = @{ Verified = '2026-09-01'; Source = 'https://learn.microsoft.com/example' }
+            NoDate = @{ Verified = 'soon'; Source = 'https://learn.microsoft.com/example' }
+            NoSource = @{ Verified = '2026-09-01'; Source = '' }
+        }
+        $stale = Get-StaleFactSource $sources ([datetime]'2026-10-13')
+        @($stale).Count | Should -Be 3
+        $stale[0] | Should -Be 'Old: last verified 2026-01-01, recheck against https://learn.microsoft.com/example'
+        ($stale -join ' ') | Should -Match 'NoDate: no valid'
+        ($stale -join ' ') | Should -Match 'NoSource: no valid'
+    }
+    It 'six months is the limit' {
+        $s = [ordered]@{ T = @{ Verified = '2026-04-13'; Source = 'https://x.example' } }
+        @(Get-StaleFactSource $s ([datetime]'2026-10-13')).Count | Should -Be 0
+        @(Get-StaleFactSource $s ([datetime]'2026-10-14')).Count | Should -Be 1
+    }
+}
