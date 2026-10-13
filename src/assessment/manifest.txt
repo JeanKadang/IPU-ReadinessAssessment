@@ -1,0 +1,10 @@
+# Parts of Windows-IPU-Readiness-Assessment.ps1, in build order (ADR 0002).
+# build/Build-Script.ps1 joins them into src/Windows-IPU-Readiness-Assessment.ps1.
+00-header.ps1
+10-parameters.ps1
+20-detection-patterns.ps1
+30-core.ps1
+40-decision-rules.ps1
+50-checks.ps1
+60-report.ps1
+70-main.ps1

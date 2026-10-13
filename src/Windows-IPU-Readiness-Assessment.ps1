@@ -8,6 +8,8 @@
                and a JSON result file written on the assessed server.
  EXECUTION   : OpenText Server Automation (SA) Ad-Hoc Scripting, normally as
                the SA Agent / LocalSystem account. Windows PowerShell 4.0+.
+ BUILT FROM  : src/assessment/*.ps1 by build/Build-Script.ps1. Edit the parts,
+               not this file (ADR 0002).
 ===============================================================================
 
 .SYNOPSIS
