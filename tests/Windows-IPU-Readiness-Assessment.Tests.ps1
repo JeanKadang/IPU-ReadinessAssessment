@@ -2367,3 +2367,18 @@ Describe 'LGPO edge cases (#150)' {
         Test-LgpoAvailable | Should -BeFalse
     }
 }
+
+Describe 'Group Policy from the registry when gpresult has no RSoP data (#160)' {
+    It 'converts GPO-List entries to applied GPOs with readable link paths' {
+        $gp = ConvertFrom-GpoListEntry @(
+            [pscustomobject]@{ DisplayName = 'Server Baseline'; GPOName = '{11111111-1111-1111-1111-111111111111}'; Link = 'LDAP://OU=Web,OU=Servers,DC=corp,DC=example,DC=test' },
+            [pscustomobject]@{ DisplayName = 'Local Group Policy'; GPOName = 'LocalGPO'; Link = 'Local' },
+            [pscustomobject]@{ DisplayName = ''; GPOName = ''; Link = '' })
+        @($gp.Gpos).Count | Should -Be 2
+        $gp.Gpos[0].Applied | Should -BeTrue
+        $gp.Gpos[0].Guid | Should -Be '{11111111-1111-1111-1111-111111111111}'
+        $gp.Gpos[0].Links | Should -Be 'corp.example.test/Servers/Web'
+        $gp.Gpos[1].Guid | Should -Be ''
+        $gp.Gpos[1].Links | Should -Be 'Local'
+    }
+}

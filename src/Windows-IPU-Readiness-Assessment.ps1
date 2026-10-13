@@ -623,6 +623,36 @@ function Get-GpResultXml {
     }
 }
 
+function Get-GpoListRegistryEntry {
+    # The GPOs that applied at the last machine policy refresh, as recorded
+    # by the Group Policy service (#160). Readable as SYSTEM when gpresult
+    # says the computer "does not have RSoP data". Read-only.
+    $root = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine\GPO-List'
+    $list = @()
+    foreach ($k in @(Get-ChildItem -LiteralPath $root -ErrorAction Stop | Sort-Object { [int]$_.PSChildName })) {
+        $p = Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction SilentlyContinue
+        if ($p) { $list += [pscustomobject]@{ DisplayName = [string]$p.DisplayName; GPOName = [string]$p.GPOName; Link = [string]$p.Link } }
+    }
+    return ,$list
+}
+
+function ConvertFrom-GpoListEntry {
+    # Pure (#160): registry GPO-List entries -> the same shape as
+    # ConvertFrom-GpResultXml. Only applied GPOs are recorded there, without
+    # filter names; WMI filters are still looked up in AD by GUID.
+    param([object[]]$Entries)
+    $gpos = @()
+    foreach ($e in @($Entries)) {
+        if (-not $e.DisplayName) { continue }
+        $link = [string]$e.Link
+        if ($link -match '^LDAP://(.+)$') { $link = ConvertTo-AdLocation ('CN=x,' + $Matches[1]) }
+        $guid = [string]$e.GPOName
+        if ($guid -and $guid -notmatch '^\{') { $guid = '' }
+        $gpos += [pscustomobject]@{ Name = [string]$e.DisplayName; Guid = $guid; Applied = $true; Reason = ''; Links = @($link | Where-Object { $_ }); FilterName = '' }
+    }
+    return [pscustomobject]@{ Domain = ''; Site = ''; Gpos = $gpos; Groups = @() }
+}
+
 function Get-AdComputerGroup {
     # The computer object's security groups from AD, nested groups included
     # (tokenGroups), read as the computer account itself - no RSAT needed.
@@ -2528,6 +2558,17 @@ Register-Check -Id 'grouppolicy' -Name 'Group Policy and AD groups' -Script {
     $domainMember = [bool]$script:Data.CS.PartOfDomain
     $gp = $null; $gpError = ''
     try { $gp = ConvertFrom-GpResultXml (Get-GpResultXml) } catch { $gpError = $_.Exception.Message; Write-Swallowed $_ }
+    # gpresult run as SYSTEM can answer "does not have RSoP data" on 2012 R2
+    # to 2019 (#160). The Group Policy service's own record of the applied
+    # GPOs is the fallback; MANUAL stays only when both fail.
+    $gpSource = 'gpresult'
+    if (-not $gp -and $domainMember) {
+        try {
+            $entries = Get-GpoListRegistryEntry
+            $fallback = ConvertFrom-GpoListEntry @($entries)
+            if (@($fallback.Gpos).Count -gt 0) { $gp = $fallback; $gpSource = 'registry' }
+        } catch { Write-Swallowed $_ }
+    }
     $groups = @(); $filters = @{}; $adError = ''; $adRead = $true
     if ($domainMember) {
         try {
@@ -2558,6 +2599,9 @@ Register-Check -Id 'grouppolicy' -Name 'Group Policy and AD groups' -Script {
     foreach ($row in (Get-GroupPolicyDecision $domainMember ($null -ne $gp) $adRead $last (Get-Date) $GroupPolicyMaxAgeDays $gpError $adError)) {
         Add-Result 'GROUP_POLICY' $row.Item $row.Status $row.Value $row.Details -Recommendation $row.Recommendation -Kind $row.Kind -Source 'gpresult, Active Directory, Group Policy state'
     }
+    if ($gpSource -eq 'registry') {
+        Add-Result 'GROUP_POLICY' 'GroupPolicySource' 'INFO' 'Applied GPOs read from the Group Policy state in the registry' @('gpresult: ' + $gpError, 'Only applied GPOs are recorded there: GPOs filtered out (and why) are not listed.') -Source 'HKLM\...\Group Policy\State\Machine\GPO-List'
+    }
     if ($gp) {
         $target = Get-ReleaseDisplayName $TargetServerVersion
         foreach ($g in @($gp.Gpos)) {
@@ -2575,23 +2619,24 @@ Register-Check -Id 'grouppolicy' -Name 'Group Policy and AD groups' -Script {
             if ($osDependent) {
                 Add-Result 'GROUP_POLICY' ('GPO: ' + $g.Name) 'WARNING' ($state + ' - WMI filter depends on the Windows version') $details -Recommendation ('After the upgrade the server reports ' + $target + '. Check that this filter still matches (or still excludes) it as intended, before the change.') -Source 'gpresult, WMI filter in AD'
             } else {
-                Add-Result 'GROUP_POLICY' ('GPO: ' + $g.Name) 'INFO' $state $details -Source 'gpresult'
+                Add-Result 'GROUP_POLICY' ('GPO: ' + $g.Name) 'INFO' $state $details -Source $gpSource
             }
         }
-        if ($domainMember) {
-            if ($adRead) {
-                foreach ($n in $groups) { Add-Result 'GROUP_POLICY' 'ADGroup' 'INFO' $n -Source 'AD tokenGroups (nested groups included)' }
-            }
-        } else {
+        if (-not $domainMember) {
             Add-Result 'GROUP_POLICY' 'ADGroup' 'INFO' 'Not applicable (workgroup)' -Source 'Win32_ComputerSystem'
         }
         if ($script:Data.Snapshot) {
             $script:Data.Snapshot.Gpos = @($gp.Gpos | Where-Object { $_.Applied } | ForEach-Object { $_.Name } | Sort-Object -Unique)
-            if ($domainMember -and $adRead) { $script:Data.Snapshot.Groups = @($groups) }
         }
     } elseif (-not $domainMember) {
         # Workgroup server and gpresult failed: still only local policy.
         Add-Result 'GROUP_POLICY' 'LocalPolicy' 'MANUAL' 'Could not list the local policy (gpresult)' $gpError -Recommendation (Get-LocalPolicyAdvice (Test-LgpoAvailable) $EnableRDPPolicyEvidence) -Kind 'Observation' -Source 'gpresult'
+    }
+    # The AD groups come from AD, not gpresult: list them even when no GPO
+    # list could be read (#160).
+    if ($domainMember -and $adRead) {
+        foreach ($n in $groups) { Add-Result 'GROUP_POLICY' 'ADGroup' 'INFO' $n -Source 'AD tokenGroups (nested groups included)' }
+        if ($script:Data.Snapshot) { $script:Data.Snapshot.Groups = @($groups) }
     }
 }
 
