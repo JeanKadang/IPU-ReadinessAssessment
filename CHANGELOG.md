@@ -4,6 +4,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [4.4.0] - 2026-10-13
+
+Fixes from a live run of four upgrades (Windows Server 2016 and 2019 to 2025). The build step, the new checks (print servers, network, SPECIAL) and the review items moved to 4.5.0.
+
 ### Added
 - Recovery partition after C: (#161). Setup silently creates one when no recovery partition is big enough for the new WinRE, which blocks extending C: later. The pre-upgrade report warns when this is likely and the checklist shows `setup.exe /ResizeRecoveryPartition Disable`; a recovery partition after C: is reported with its number and the removal steps (`reagentc /disable` first). WinRE status from `reagentc /info` (read-only). New user-guide section "Recovery partition after an upgrade".
 
@@ -139,7 +143,8 @@ Restructure of the 3.x script (released as a script file only).
 
 Local Group Policy backup and RDP readiness. Superseded by 4.0.0.
 
-[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.3.0...HEAD
+[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.4.0...HEAD
+[4.4.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.4.0
 [4.3.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.3.0
 [4.2.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.2.0
 [4.1.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.1.0
