@@ -1810,6 +1810,23 @@ function Get-LocalPolicyAdvice {
     return $manual
 }
 
+function Get-RdpAccessFact {
+    # The Summary's "RDP access" line with NLA folded in (#174).
+    $rdp = [string]$script:Data.RdpSummary
+    if (-not $rdp) { $rdp = 'Not reported' }
+    return ($rdp + ', ' + (Get-NlaFactText ([string]$script:Data.NlaState) ([string]$script:Data.NlaBefore)))
+}
+
+function Get-NlaFactText {
+    # Pure (#174): RDP Network Level Authentication for the Summary. Unknown
+    # is never shown as on; a change since the pre-upgrade run is named.
+    param([string]$Now, [string]$Before = '')
+    if ($Now -ne 'On' -and $Now -ne 'Off') { return 'NLA unknown' }
+    $t = 'NLA ' + $Now.ToLowerInvariant()
+    if (($Before -eq 'On' -or $Before -eq 'Off') -and $Before -ne $Now) { $t += ' (was ' + $Before.ToLowerInvariant() + ' before the upgrade)' }
+    return $t
+}
+
 function Get-DomainRoleText {
     # Pure (#98): the domain role in the words operators use. Win32 calls a
     # non-domain server "Standalone server"; most people say workgroup server.
@@ -3777,7 +3794,9 @@ function Invoke-RdpPolicyAssessment {
     $portValue = Get-RegistryValueSafe $tcpPath 'PortNumber'
     if ($portValue.Exists) { $port = [int]$portValue.Value }
     $nla = Get-RegistryValueSafe $tcpPath 'UserAuthentication'
-    if ($nla.Exists -and $script:Data.Snapshot) { $script:Data.Snapshot.Nla = $(if ([int]$nla.Value -eq 0) { 'Off' } else { 'On' }) }
+    $script:Data.NlaState = 'Unknown'
+    if ($nla.Exists) { $script:Data.NlaState = $(if ([int]$nla.Value -eq 0) { 'Off' } else { 'On' }) }
+    if ($nla.Exists -and $script:Data.Snapshot) { $script:Data.Snapshot.Nla = $script:Data.NlaState }
     Add-Result 'RDP' 'Listener' 'INFO' ('Port=' + $port) ('NLA=' + $(if ($nla.Exists) { $nla.Value } else { 'Unknown' })) -Source 'RDP-Tcp registry'
     if ($nla.Exists -and [int]$nla.Value -eq 0) {
         $nlaPolicy = Get-RegistryValueSafe $policyPath 'UserAuthentication'
@@ -4018,7 +4037,7 @@ function New-IPUReportHtml {
         @('Endpoint protection', (& $factValue $epp 'antivirus')),
         @('VMware Tools', (Get-ResultText $Results 'VMWARE' 'VMwareTools')),
         @('Setup compatibility scan', (Get-ResultText $Results 'COMPAT_SCAN' 'SetupCompatibilityScan')),
-        @('RDP access', $script:Data.RdpSummary),
+        @('RDP access', (Get-RdpAccessFact)),
         @('RDP drive redirection', $script:Data.DriveRedirection),
         @('C: drive', $script:Data.CSummary),
         @('Memory GB / logical CPUs', ((Get-ResultText $Results 'PERFORMANCE' 'MemoryGB') + ' / ' + (Get-ResultText $Results 'PERFORMANCE' 'LogicalProcessors'))),
@@ -4032,7 +4051,7 @@ function New-IPUReportHtml {
             @('Upgrade result', (Get-ResultText $Results 'POST_UPGRADE' 'UpgradeReachedTarget')),
             @('Baseline', (Get-ResultText $Results 'POST_UPGRADE' 'Baseline')),
             @('Windows activation', (Get-ResultText $Results 'LICENSING' 'CurrentActivation')),
-            @('RDP access', $script:Data.RdpSummary),
+            @('RDP access', (Get-RdpAccessFact)),
             @('UAC', $script:Data.UacSummary),
             @('C: drive', $script:Data.CSummary),
             @('Endpoint protection', (& $factValue $epp 'antivirus'))
@@ -4229,6 +4248,7 @@ function New-AssessmentJsonObject {
             Platform         = (Get-ResultText $Results 'PLATFORM' 'PhysicalOrVirtual')
             DomainRole       = $script:Data.DomainRoleText
             Uac              = $script:Data.UacSummary
+            Nla              = $(if ($script:Data.NlaState) { [string]$script:Data.NlaState } else { 'Unknown' })
             AdLocation       = $script:Data.AdLocation
             SqlServer        = $script:Data.SqlSummary
             Activation       = $script:Data.ActivationSummary
@@ -4432,6 +4452,7 @@ function Invoke-PostUpgradeComparison {
             $listener = @($baseline.Results | Where-Object { $_.Area -eq 'RDP' -and $_.Item -eq 'Listener' }) | Select-Object -First 1
             if ($listener -and (@($listener.Details) -join ' ') -match 'NLA=(\d)') { $before | Add-Member -NotePropertyName Nla -NotePropertyValue $(if ($Matches[1] -eq '0') { 'Off' } else { 'On' }) -Force }
         }
+        if ($before -and $before.PSObject.Properties['Nla']) { $script:Data.NlaBefore = [string]$before.Nla }
         $diffs = Compare-IPUSnapshot $before ([pscustomobject]$script:Data.Snapshot)
         foreach ($d in $diffs) { Add-Result 'POST_UPGRADE' $d.Item $d.Status $d.Value $d.Details -Recommendation $d.Recommendation -Source 'Pre-upgrade snapshot vs now' }
         if ($diffs.Count -eq 0) { Add-Result 'POST_UPGRADE' 'Comparison' 'OK' 'No lost services, ports, routes, IP/DNS settings, hosts entries, applications, features or tasks' -Source 'Pre-upgrade snapshot vs now' }

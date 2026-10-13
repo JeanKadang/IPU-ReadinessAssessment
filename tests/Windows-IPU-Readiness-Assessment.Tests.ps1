@@ -2541,3 +2541,23 @@ Describe 'Post-upgrade comparison: per-user services and on-demand ports (#173)'
         (Get-Row173 'Listening ports missing after upgrade').Details | Should -Be 'TCP:8080, TCP:9000'
     }
 }
+
+Describe 'RDP NLA in the Summary (#174)' {
+    It '<Now> / <Before> -> <Text>' -TestCases @(
+        @{ Now = 'On';  Before = '';    Text = 'NLA on' }
+        @{ Now = 'Off'; Before = '';    Text = 'NLA off' }
+        @{ Now = 'Off'; Before = 'On';  Text = 'NLA off (was on before the upgrade)' }
+        @{ Now = 'On';  Before = 'Off'; Text = 'NLA on (was off before the upgrade)' }
+        @{ Now = 'On';  Before = 'On';  Text = 'NLA on' }
+        @{ Now = '';    Before = 'On';  Text = 'NLA unknown' }
+        @{ Now = 'Unknown'; Before = ''; Text = 'NLA unknown' }
+    ) {
+        Get-NlaFactText $Now $Before | Should -Be $Text
+    }
+    It 'folds NLA into the RDP access line' {
+        $script:Data = @{ RdpSummary = 'GO (no local blocker)'; NlaState = 'Off'; NlaBefore = 'On' }
+        Get-RdpAccessFact | Should -Be 'GO (no local blocker), NLA off (was on before the upgrade)'
+        $script:Data = @{}
+        Get-RdpAccessFact | Should -Be 'Not reported, NLA unknown'
+    }
+}
