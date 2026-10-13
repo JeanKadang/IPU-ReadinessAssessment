@@ -99,6 +99,7 @@ Lists may be empty or `null`.
 | `IPv4`, `Dns` | IPv4 addresses and DNS servers of enabled adapters |
 | `Adapters` | Per enabled adapter (from 4.5.0): `Name`, `Mac`, `IPv4`, `Mask`, `IPv6`, `Gateway`, `Dns`, `Suffix`, `SuffixSearch`, `RegisterInDns`, `RegisterSuffix`, `Wins`, `NetBios`, `Metric`, `Dhcp`, `Vlan`. The post-upgrade comparison matches adapters by `Mac` |
 | `Hosts` | Active hosts-file entries |
+| `Printers`, `PrinterPorts`, `PrinterDrivers` | On a print server (from 4.5.0): printer names, the ports they use, and `Printer`/`Driver` pairs. The post-upgrade comparison reports printers and ports that are gone and changed drivers |
 | `Tasks` | Non-Microsoft scheduled tasks, for example `\Example\Nightly export` |
 | `Ou` | The computer object's distinguished name in AD (from 4.3.0); the post-upgrade comparison reports a move |
 | `Shares` | Names of shared folders (from 4.3.0); the post-upgrade comparison reports shares that are gone |

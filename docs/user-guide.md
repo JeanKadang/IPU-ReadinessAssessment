@@ -190,6 +190,8 @@ When the budget runs out, remaining slow checks are reported as `MANUAL` (skippe
 | `PolicyEvidenceRoot` | `C:\Temp\Tools\PolBackup` | Timestamped evidence folder and ZIP go here |
 | `CreatePolicyEvidenceZip` | `$true` | Zip the evidence |
 | `EnableIISConfigEvidence` | `$true` | When IIS is installed, copy its configuration files into a restricted evidence folder and ZIP under `PolicyEvidenceRoot` (see [IIS configuration copy](#iis-configuration-copy)) |
+| `EnablePrintBackup` | `$true` | On a print server, export printers, ports and drivers with `PrintBrm -B` into a restricted evidence folder under `PolicyEvidenceRoot`; skipped (MANUAL, with the command) when the drive lacks 1.5 x the size of `spool\drivers` + 1 GB (see [Print server backup](#print-server-backup)) |
+| `PrintBackupTimeoutMinutes` | `30` | Time limit for the export; counted against the slow-check budget. A timeout is MANUAL |
 | `EnableNetworkEvidence` | `$true` | Save `ipconfig /all`, `route print` and the netsh interface configuration into a restricted evidence folder and ZIP under `PolicyEvidenceRoot` (see [Network configuration copy](#network-configuration-copy)) |
 
 ### Output
@@ -199,7 +201,7 @@ When the budget runs out, remaining slow checks are reported as `MANUAL` (skippe
 | `ReportDirectory` | `C:\Temp\IPU-Assessment` | Where HTML, JSON and log are written |
 | `WriteJson` | `$true` | Write the JSON result (also the post-upgrade baseline) |
 | `RestrictOutputAcl` | `$true` | Folders the script creates (report folder, policy evidence) get access for SYSTEM and Administrators only. Existing folders are never changed; the report warns, with the `icacls` command to fix it, if an existing folder is readable by Everyone, Authenticated Users or Users. `$false` keeps inherited permissions |
-| `NumberCultureName` | `da-DK` | Culture used to format numbers in the SA result line. Invalid values fall back to invariant |
+| `NumberCultureName` | `da-DK` | Culture used to format numbers in the SA result line. Invalid values fall back to invariant. The default is kept for existing SA jobs; set your own in a [profile file](#site-data-files-patterns-and-profile) |
 | `RedactExisting` | blank | A folder or report file: write redacted copies of existing reports and stop (see [Sharing a report: redaction](#sharing-a-report-redaction)) |
 | `RedactReport` | `$false` | Replace names, addresses, accounts, SIDs and certificate details with placeholders in the HTML and JSON, for sharing outside the team. See [Sharing a report: redaction](#sharing-a-report-redaction) |
 
@@ -272,6 +274,13 @@ be set in a profile. Settings passed as arguments win; the *Profile file* row na
 ```
 
 Both examples are in [`docs/examples`](examples/). A JSON backslash must be doubled: `"C:\\Tools\\LGPO.exe"`.
+
+**Defaults that come from one site.** A few defaults reflect the site the tool was first built for:
+`NumberCultureName` is `da-DK`, `BlockDomainControllerIPU` is on (a domain controller is SPECIAL, see above), and
+`Merge-IPUAssessments.ps1` writes CSV files with `;`. They stay as they are so existing SA jobs that pass no
+arguments behave the same (#131). Another site sets its own values in a profile file, for example
+`"NumberCultureName": "en-US"` or `"BlockDomainControllerIPU": false`, and runs the merge with `-Delimiter ','` if
+its Excel expects commas.
 
 ## 5. Outputs
 
@@ -418,7 +427,7 @@ Most severe on the left. The **overall status is the most severe *finding***.
 
 The [checks reference](checks.md) lists every check with what it looks at and the results it can produce.
 
-33 checks. Fast checks run first; the three slow ones run after the checkpoint report.
+36 checks. Fast checks run first; the slow ones (print server backup, DISM, SFC, Setup compatibility scan) run after the checkpoint report.
 
 ```mermaid
 mindmap
@@ -448,6 +457,8 @@ mindmap
       Remote Desktop Services
       Failover clustering
       File shares
+      Print server and backup
+      SPECIAL server
     Security and access
       Domain role and access
       Group Policy and AD groups
@@ -533,6 +544,36 @@ netsh -f C:\path\to\netsh-interface-dump.txt
 
 The assessment never runs it.
 
+### Print server backup
+
+On a print server (Print Server role installed, or printers shared) the `printers` check lists printers, the ports they
+use, drivers, port monitors and print processors (#148). Third-party drivers need the vendor's confirmation for the
+target; from 15 January 2026 Microsoft no longer publishes new third-party printer drivers to Windows Update for
+Windows Server 2025, but installed drivers keep working
+([Microsoft](https://learn.microsoft.com/en-us/windows-hardware/drivers/print/end-of-servicing-plan-for-third-party-printer-drivers-on-windows)).
+Third-party port monitors and print processors load into the spooler and are a common cause of failed upgrades: get
+the vendor's version for the target first. LPR ports and the LPD Service are deprecated by Microsoft.
+
+The `printbackup` check then exports the whole print configuration (printers, ports, drivers, queues) with
+`PrintBrm.exe -B` into `<PolicyEvidenceRoot>\<Computer>-IPU-Print-<time>\<Computer>-printers.printerExport`. PrintBrm
+only reads the spooler configuration. The export holds every driver package and can be a few MB or several GB, so it
+runs only when the drive has 1.5 times the size of `%windir%\System32\spool\drivers` plus 1 GB free; otherwise the row
+is MANUAL with the command to run to another drive. It is a slow check with a timeout (*PrintBackupTimeoutMinutes*,
+also limited by the slow-check budget); a timeout is MANUAL and the partial file is removed.
+
+The file is **not redacted** and is never part of the report or of `-RedactExisting`. **Copy it off the server before
+the change**: a backup on C: does not survive a failed upgrade that needs a rebuild.
+
+To restore, on the upgraded server or a new one, as an administrator:
+
+```
+%windir%\System32\spool\tools\PrintBrm.exe -R -F <path>\<Computer>-printers.printerExport
+```
+
+Add `-O FORCE` to overwrite printers that already exist. Then print a test page on each shared printer and test from a
+client. The post-upgrade run reports printers and ports that are gone (ACTION) and printers that now use another driver
+(WARNING).
+
 ### Standard change checklist
 
 Always listed as `MANUAL` (cannot be proven from inside the guest): backup and fallback, credentials and console
@@ -550,7 +591,7 @@ It reads `<Computer>-IPU-Assessment.json` from the pre-upgrade run and reports:
 
 - whether the server reached the target release (`ACTION` if it did not, with the Setup log locations to read),
 - differences in services (automatic services no longer running, services gone), listening ports, static routes,
-  network adapters, hosts entries, applications, Windows features, scheduled tasks, applied GPOs,
+  network adapters, printers and printer ports, hosts entries, applications, Windows features, scheduled tasks, applied GPOs,
   file shares and the computer's AD groups,
 - a computer object that moved to another OU, a changed UAC setting, and RDP Network Level Authentication turned off (ACTION).
 
@@ -651,9 +692,9 @@ process).
 | Parameter | Default | Meaning |
 |---|---|---|
 | `InputFolder` | required | Folder with the `*-IPU-Assessment.json` and `*-IPU-PostUpgrade.json` files |
-| `OutputFolder` | the input folder | Where the three output files are written (created if missing) |
+| `OutputFolder` | the input folder | Where the three output files are written. A folder the merge creates gets access for SYSTEM, Administrators and you only; an existing folder is not changed, but you get a warning when Everyone, Authenticated Users or Users can read it (#128) |
 | `Mode` | `All` | `Pre`, `Post` or `All`: which kind of result to include |
-| `Delimiter` | `;` | CSV separator. `;` opens in columns in Excel with Danish regional settings |
+| `Delimiter` | `;` | CSV separator. `;` opens in columns in Excel where the list separator is `;` (common in European regional settings); use `,` where it is `,` |
 
 The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`) and the paths written.
 
@@ -668,7 +709,7 @@ The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`
 ### How it decides
 
 - **Newest wins.** If a server has several results for the same mode, only the newest (by `Completed`) is used. A server can still appear twice, once for Pre and once for Post, when `Mode` is `All`.
-- **Worst first.** Servers are sorted `BLOCKER`, `ACTION`, `WARNING`, `MANUAL`, `OK`, then by name.
+- **Worst first.** Servers are sorted `SPECIAL`, `BLOCKER`, `ACTION`, `WARNING`, `MANUAL`, `OK`, then by name.
 - **`TopIssues`** lists the BLOCKER and ACTION findings for that server. **`NotAssessed`** lists checks that did not complete (skipped checks are not counted).
 - **Partial results** are shown with a `partial` marker: the slow checks had not finished on that server.
 - **Unreadable files** (not valid JSON, or a `Schema` other than `IPU-Assessment/1`) are listed in the report and skipped. They do not stop the run.
@@ -709,6 +750,7 @@ flowchart LR
 | `LGPO.exe /b` and `/parse` (if present) | `LGPO.exe /g` or `/m` |
 | With media only: mount and dismount an ISO; Setup's `/compat scanonly` creates `C:\$WINDOWS.~BT` | Start an upgrade |
 | Query registry, WMI, services, certificates | Query `Win32_Product` (it triggers MSI reconfiguration) |
+| `PrintBrm.exe -B` (export only, on a print server) | `PrintBrm.exe -R` (restore) |
 | `ipconfig /all`, `route print`, `netsh interface ipv4 show config`, `netsh -c interface dump` (each only prints the configuration) | `netsh -f` or any other netsh command that sets something |
 
 Reports contain a detailed inventory (ports, tasks, certificates, agents). Treat them as sensitive and restrict
