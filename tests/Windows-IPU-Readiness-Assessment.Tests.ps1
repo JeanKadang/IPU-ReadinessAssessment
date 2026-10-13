@@ -2603,7 +2603,8 @@ Describe 'Activation per channel, with the KMS host and renewal (#171)' {
     }
     It 'RedactExisting recovers a KMS host FQDN and its first label, like the live run (#124)' {
         $rows = @([pscustomobject]@{ Area = 'LICENSING'; Item = 'CurrentActivation'; Value = 'Licensed (KMS client)'; Details = @('KMS host: kms01.corp.example.test:1688 (set on this server)') })
-        (@(Get-RedactionLiteralFromResult $rows | ForEach-Object { $_.Kind + '=' + $_.Value }) -join ';') | Should -Be 'HOST=kms01.corp.example.test;HOST=kms01'
+        $l = Get-RedactionLiteralFromResult $rows
+        (@($l | ForEach-Object { $_.Kind + '=' + $_.Value }) -join ';') | Should -Be 'HOST=kms01.corp.example.test;HOST=kms01'
     }
 }
 
