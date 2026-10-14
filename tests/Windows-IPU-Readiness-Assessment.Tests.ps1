@@ -2471,6 +2471,14 @@ Describe 'Post-upgrade comparison: expected changes and NLA (#158)' {
         $r.Details | Should -Match 'IKEEXT'
         $r.Details | Should -Match 'tiledatamodelsvc'
     }
+    It 'a task renamed only by its version or GUID is not missing; a removed task still is (#196)' {
+        $old = '\ExampleVendor\Updater\UpdaterTaskSystem156.0.8067.0{F1E18D42-90EA-4F0D-AFDA-E08AB09647CA}'
+        $new = '\ExampleVendor\Updater\UpdaterTaskSystem157.0.8089.0{0A1B2C3D-4E5F-6071-8293-A4B5C6D7E8F9}'
+        ConvertTo-TaskBaseName $old | Should -Be '\ExampleVendor\Updater\UpdaterTaskSystem'
+        ConvertTo-TaskBaseName '\Backup\Nightly' | Should -Be '\Backup\Nightly'
+        $d = Compare-IPUSnapshot ([pscustomobject]@{ Tasks = @($old, '\Backup\Nightly') }) ([pscustomobject]@{ Tasks = @($new) })
+        (@($d | Where-Object { $_.Item -eq 'Scheduled tasks missing after upgrade' }))[0].Details | Should -Be '\Backup\Nightly'
+    }
     It 'per-user services with a new suffix are not missing; other missing services still are' {
         (Get-DiffRow 'Services no longer present').Details | Should -Be 'GoneSvc'
         ConvertTo-ServiceBaseName 'CDPUserSvc_11a24784c' | Should -Be 'CDPUserSvc'
