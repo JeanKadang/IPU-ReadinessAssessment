@@ -2485,6 +2485,14 @@ Describe 'Post-upgrade comparison: expected changes and NLA (#158)' {
         (Get-DiffRow '.NET Framework 3.5 removed by the upgrade').Recommendation | Should -Match 'Install-WindowsFeature NET-Framework-Core'
         (Get-DiffRow 'Windows features missing after upgrade').Details | Should -Be 'SNMP-Service'
     }
+    It 'AzureArcSetup, a Feature on Demand from Windows Server 2025 on, is INFO, not missing (#197)' {
+        $d = Compare-IPUSnapshot ([pscustomobject]@{ Features = @('AzureArcSetup', 'FS-FileServer') }) ([pscustomobject]@{ Features = @('FS-FileServer') })
+        $r = @($d | Where-Object { $_.Item -eq 'Windows features removed or renamed by Microsoft' })[0]
+        $r.Status | Should -Be 'INFO'
+        $r.Details | Should -Be 'AzureArcSetup'
+        $r.Recommendation | Should -Match 'Feature on Demand'
+        @($d | Where-Object { $_.Item -eq 'Windows features missing after upgrade' }).Count | Should -Be 0
+    }
     It 'NLA turned off is an ACTION; unchanged or turned on is not reported' {
         (Get-DiffRow 'RDP Network Level Authentication turned off').Status | Should -Be 'ACTION'
         # Assign first: the function returns the list as one object.
