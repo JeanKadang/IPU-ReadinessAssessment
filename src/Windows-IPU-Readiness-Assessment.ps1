@@ -1369,7 +1369,8 @@ $script:FactSources = [ordered]@{
     # FeatureLifecycle: the 2025 page was checked; the 2022 page lists more removals (#187).
     FeatureLifecycle       = @{ Verified = '2026-10-13'; Source = 'https://learn.microsoft.com/en-us/windows-server/get-started/removed-deprecated-features-windows-server-2025' }
     VMwareToolsMinimum     = @{ Verified = '2026-10-13'; Source = 'https://blogs.vmware.com/cloud-foundation/2024/11/07/vmware-tools-12-5-0-is-ready-for-the-latest-windows-operating-systems/' }
-    ExpectedWindowsChanges = @{ Verified = '2026-10-13'; Source = 'https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/158' }
+    # ExpectedWindowsChanges: live runs (#158); AzureArcSetup per learn.microsoft.com/en-us/azure/azure-arc/servers/onboard-windows-server (#197).
+    ExpectedWindowsChanges = @{ Verified = '2026-10-14'; Source = 'https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/158' }
     WinReMinPartitionMB    = @{ Verified = '2026-10-13'; Source = 'https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/161' }
     DocLinks               = @{ Verified = '2026-10-13'; Source = 'https://learn.microsoft.com/en-us/windows-server/get-started/perform-in-place-upgrade' }
 }
@@ -1762,7 +1763,9 @@ function ConvertTo-PendingRenamePath {
 $script:ExpectedManualServices = @('IKEEXT','NlaSvc')
 # Services and features removed or renamed in newer Windows Server releases:
 $script:ExpectedRemovedServices = @('tiledatamodelsvc')
-$script:ExpectedRemovedFeatures = @('PowerShell-V2','PowerShell-ISE','Windows-Defender-Features','Windows-Defender-Gui')
+# AzureArcSetup is a Feature on Demand (a capability) from Windows Server
+# 2025 on, so it is no longer listed as a feature after the upgrade (#197).
+$script:ExpectedRemovedFeatures = @('PowerShell-V2','PowerShell-ISE','Windows-Defender-Features','Windows-Defender-Gui','AzureArcSetup')
 # Well-known Windows ports and the service that opens them, for baselines
 # without port owners (4.3.0 and older).
 $script:KnownPortServices = @{ 'UDP:500' = 'IKEEXT'; 'UDP:4500' = 'IKEEXT'; 'UDP:1900' = 'SSDPSRV'; 'TCP:2869' = 'SSDPSRV'; 'TCP:5357' = 'FDResPub'; 'UDP:3702' = 'FDResPub' }
@@ -2131,7 +2134,7 @@ function Compare-IPUSnapshot {
             # Removed or renamed by Microsoft: expected (#158). .NET 3.5 is
             # removed by the upgrade and often needed by applications.
             $known = @($lost | Where-Object { $script:ExpectedRemovedFeatures -contains $_ })
-            if ($known.Count -gt 0) { $diff += (& $make 'INFO' 'Windows features removed or renamed by Microsoft' ('Count=' + $known.Count) ($known -join ', ') 'Expected with the new Windows release (PowerShell 2.0 is removed in Windows Server 2025; Defender features were renamed). No action unless something depended on them.') }
+            if ($known.Count -gt 0) { $diff += (& $make 'INFO' 'Windows features removed or renamed by Microsoft' ('Count=' + $known.Count) ($known -join ', ') 'Expected with the new Windows release (PowerShell 2.0 is removed in Windows Server 2025; Defender features were renamed; Azure Arc Setup became a Feature on Demand). No action unless something depended on them.') }
             if ($lost -contains 'NET-Framework-Core') { $diff += (& $make 'WARNING' '.NET Framework 3.5 removed by the upgrade' 'NET-Framework-Core' 'Installed before the upgrade, not after.' 'Reinstall .NET Framework 3.5 if an application on this server needs it (from the sources\sxs folder of the installation media): Install-WindowsFeature NET-Framework-Core -Source <media>\sources\sxs') }
             $lost = @($lost | Where-Object { $script:ExpectedRemovedFeatures -notcontains $_ -and $_ -ne 'NET-Framework-Core' })
         }
