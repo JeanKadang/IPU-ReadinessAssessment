@@ -1376,6 +1376,8 @@ $script:SupportedUpgradePaths = @{
 # Server in Windows" compatibility matrix).
 # Verified: see $script:FactSources.SqlSupportedOnTarget.
 $script:SqlReleaseNames = @{ 9='2005'; 10='2008 / 2008 R2'; 11='2012'; 12='2014'; 13='2016'; 14='2017'; 15='2019'; 16='2022'; 17='2025' }
+# Default instance names: product names, kept readable in redacted reports (#195).
+$script:SqlDefaultInstanceNames = @('MSSQLSERVER','SQLEXPRESS','SSRS','PBIRS')
 $script:SqlSupportedOnTarget = @{
     '2022' = @(14,15,16,17)
     '2025' = @(15,16,17)
@@ -3752,6 +3754,8 @@ Register-Check -Id 'sql' -Name 'SQL Server' -Script {
     $instances = @($instances | Sort-Object Type,Instance,Id -Unique)
     $script:Data.SqlSummary = ''
     if ($instances.Count -eq 0) { return }
+    # Named instances are often named after the application or the customer (#195).
+    foreach ($i in $instances) { if ($script:SqlDefaultInstanceNames -notcontains $i.Instance) { Add-RedactionLiteral $i.Instance 'NAME'; Add-RedactionLiteral $i.Id 'NAME' } }
     $summary = @()
     foreach ($i in $instances) {
         $major = 0
@@ -5128,6 +5132,11 @@ function Get-RedactionLiteralFromResult {
         # description.
         if ($r.Area -eq 'FILE_SHARES' -and [string]$r.Item -match '^Share: (.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'NAME' } }
         if ($r.Area -eq 'FILE_SHARES' -and (@($r.Details) -join ' | ') -match '(?:^|\|\s*)Description=([^|]+)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'NAME' } }
+        # Named SQL Server instances and their instance ids (#195).
+        if ($r.Area -eq 'SQL' -and [string]$r.Item -match '^(?:Database Engine|Reporting Services|Analysis Services): (.+)$' -and $script:SqlDefaultInstanceNames -notcontains $Matches[1]) {
+            $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'NAME' }
+            if ((@($r.Details) -join ' | ') -match '(?:^|\|\s*)InstanceId=([^|\s]+)') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'NAME' } }
+        }
         # Print servers (#148): printer, share and port names, port host names.
         if ($r.Area -eq 'PRINTING' -and [string]$r.Item -match '^(?:Printer|Port): (.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'NAME' } }
         if ($r.Area -eq 'PRINTING' -and (@($r.Details) -join ' | ') -match '(?:^|\|\s*)Share=([^|]+)' -and $Matches[1].Trim() -ne '(not shared)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'NAME' } }

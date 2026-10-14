@@ -1287,6 +1287,21 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $r.Recommendation | Should -Match 'Windows Server 2022'
             $script:Data.SqlSummary | Should -Be 'MSSQLSERVER=SQL Server 2017'
         }
+        It 'named instances are redaction literals; the default instance is not (#195)' {
+            $root = 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server'
+            $script:Fake.ItemProperty[$root + '\Instance Names\SQL'] = [pscustomobject]@{ MSSQLSERVER = 'MSSQL16.MSSQLSERVER'; APPDB = 'MSSQL16.APPDB' }
+            $script:Fake.ItemProperty[$root + '\MSSQL16.MSSQLSERVER\Setup'] = [pscustomobject]@{ Version = '16.0.1000.6'; Edition = 'Standard Edition' }
+            $script:Fake.ItemProperty[$root + '\MSSQL16.APPDB\Setup'] = [pscustomobject]@{ Version = '16.0.1000.6'; Edition = 'Standard Edition' }
+            $null = Invoke-TestCheck 'sql'
+            $script:Data.RedactLiterals['APPDB'] | Should -Be 'NAME'
+            $script:Data.RedactLiterals['MSSQL16.APPDB'] | Should -Be 'NAME'
+            $script:Data.RedactLiterals.ContainsKey('MSSQLSERVER') | Should -BeFalse
+            $ctx = New-RedactionContext 'SRV01' 'corp.example.test'
+            foreach ($k in @($script:Data.RedactLiterals.Keys)) { $ctx.Literals[$k] = $script:Data.RedactLiterals[$k] }
+            $t = Protect-ReportText 'APPDB=SQL Server 2022 | MSSQL$APPDB | SQLAgent$APPDB | InstanceId=MSSQL16.APPDB | MSSQLSERVER' $ctx
+            $t | Should -Not -Match 'APPDB'
+            $t | Should -Match 'MSSQLSERVER'
+        }
     }
 
     Context 'workloads' {

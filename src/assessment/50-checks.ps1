@@ -773,6 +773,8 @@ Register-Check -Id 'sql' -Name 'SQL Server' -Script {
     $instances = @($instances | Sort-Object Type,Instance,Id -Unique)
     $script:Data.SqlSummary = ''
     if ($instances.Count -eq 0) { return }
+    # Named instances are often named after the application or the customer (#195).
+    foreach ($i in $instances) { if ($script:SqlDefaultInstanceNames -notcontains $i.Instance) { Add-RedactionLiteral $i.Instance 'NAME'; Add-RedactionLiteral $i.Id 'NAME' } }
     $summary = @()
     foreach ($i in $instances) {
         $major = 0

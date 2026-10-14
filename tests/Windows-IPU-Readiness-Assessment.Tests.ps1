@@ -2527,7 +2527,8 @@ Describe 'RedactExisting recovers every name the collector registers (#172)' {
             'foreach ($n in @(Get-ClusterNode -ErrorAction SilentlyContinue)) { Add-RedactionLiteral ([string]$n.Name) ''HOST''; Add-Result ''CLUSTER'' (''Node: '' + $n.Name) ''INFO'' (''State='' + $n.State) -Source ''Get-ClusterNode'' }',
             'if ($act.KmsHost) { foreach ($h in @($act.KmsHost, ($act.KmsHost -split ''\.'')[0]) | Select-Object -Unique) { Add-RedactionLiteral $h ''HOST'' }; $script:Data.KmsEndpoint = $act.KmsEndpoint } elseif ($script:Data.ActivationKind -eq ''KMS'') { $script:Data.KmsEndpoint = ''found via DNS'' }',
             'foreach ($p in $printers) { Add-RedactionLiteral $p.Name ''NAME''; if ($p.ShareName) { Add-RedactionLiteral $p.ShareName ''NAME'' } }',
-            'foreach ($pt in $ports) { Add-RedactionLiteral $pt.Name ''NAME''; if ($pt.Address -and $pt.Address -notmatch ''^[0-9.:]+$'') { Add-RedactionLiteral $pt.Address ''HOST'' } }'
+            'foreach ($pt in $ports) { Add-RedactionLiteral $pt.Name ''NAME''; if ($pt.Address -and $pt.Address -notmatch ''^[0-9.:]+$'') { Add-RedactionLiteral $pt.Address ''HOST'' } }',
+            'foreach ($i in $instances) { if ($script:SqlDefaultInstanceNames -notcontains $i.Instance) { Add-RedactionLiteral $i.Instance ''NAME''; Add-RedactionLiteral $i.Id ''NAME'' } }'
         )
         @($sites | Where-Object { $known -notcontains $_ }) | Should -BeNullOrEmpty
     }
@@ -2614,6 +2615,14 @@ Describe 'Activation per channel, with the KMS host and renewal (#171)' {
         $rows = @([pscustomobject]@{ Area = 'LICENSING'; Item = 'CurrentActivation'; Value = 'Licensed (KMS client), activated by kms01:1688, found via DNS'; Details = @('Channel=Volume:GVLK', 'PartialProductKey=ABCDE', 'KMS host: kms01:1688 (found via DNS)') })
         $l = Get-RedactionLiteralFromResult $rows
         (@($l | ForEach-Object { $_.Kind + '=' + $_.Value }) -join ';') | Should -Be 'HOST=kms01'
+    }
+    It 'RedactExisting recovers named SQL instances and their ids, not the default instance (#195)' {
+        $rows = @(
+            [pscustomobject]@{ Area = 'SQL'; Item = 'Database Engine: APPDB'; Value = 'SQL Server 2022'; Details = @('Version=16.0.1000.6', 'InstanceId=MSSQL16.APPDB') }
+            [pscustomobject]@{ Area = 'SQL'; Item = 'Database Engine: MSSQLSERVER'; Value = 'SQL Server 2019'; Details = @('InstanceId=MSSQL15.MSSQLSERVER') }
+        )
+        $l = Get-RedactionLiteralFromResult $rows
+        (@($l | ForEach-Object { $_.Kind + '=' + $_.Value }) -join ';') | Should -Be 'NAME=APPDB;NAME=MSSQL16.APPDB'
     }
     It 'RedactExisting recovers a KMS host FQDN and its first label, like the live run (#124)' {
         $rows = @([pscustomobject]@{ Area = 'LICENSING'; Item = 'CurrentActivation'; Value = 'Licensed (KMS client)'; Details = @('KMS host: kms01.corp.example.test:1688 (set on this server)') })
@@ -3020,6 +3029,7 @@ Describe 'Redaction covers every collected kind (#124)' {
             Mac = ((1..6 | ForEach-Object { New-Hex 2 }) -join '-').ToUpperInvariant()
             Sid = 'S-1-5-21-' + $rng.Next(100000, 999999) + '-' + $rng.Next(100000, 999999) + '-' + $rng.Next(100000, 999999) + '-1105'
             Thumbprint = (New-Hex 40).ToUpperInvariant()
+            SqlInstance = 'SQ' + (New-Word 6).ToUpperInvariant()
             Printer = 'PR-' + (New-Word); PrinterShare = 'PS' + (New-Word); PrinterPort = 'port_' + (New-Word); PrinterHost = 'prn' + (New-Word 5) + '.' + $fqdn
         }
         $script:RedValues = $v
@@ -3035,6 +3045,7 @@ Describe 'Redaction covers every collected kind (#124)' {
         Add-RedactionLiteral $v.Share 'NAME'; Add-RedactionLiteral $v.ShareDescription 'NAME'
         Add-RedactionLiteral $v.Cluster 'HOST'; Add-RedactionLiteral $v.Node 'HOST'
         Add-RedactionLiteral ($v.KmsHost + '.' + $fqdn) 'HOST'; Add-RedactionLiteral $v.KmsHost 'HOST'
+        Add-RedactionLiteral $v.SqlInstance 'NAME'; Add-RedactionLiteral ('MSSQL16.' + $v.SqlInstance) 'NAME'
         Add-RedactionLiteral $v.Printer 'NAME'; Add-RedactionLiteral $v.PrinterShare 'NAME'; Add-RedactionLiteral $v.PrinterPort 'NAME'; Add-RedactionLiteral $v.PrinterHost 'HOST'
         $script:Results.Clear(); $script:CheckRuns.Clear()
         Add-Result 'ACCESS' 'DomainMembership' 'INFO' ('Domain=' + $fqdn) ('NetBIOS=' + $nb)
@@ -3052,6 +3063,8 @@ Describe 'Redaction covers every collected kind (#124)' {
         Add-Result 'LICENSING' 'WindowsActivation' 'OK' 'Licensed (KMS)' ('KMS host: ' + $v.KmsHost + '.' + $fqdn + ':1688 (found via DNS)')
         Add-Result 'NETWORK' 'Ethernet0' 'INFO' ('IPv4=' + $v.IPv4 + ' / 255.255.255.0') @(('Gateway=' + $v.IPv4Gateway), ('DNS=' + $v.IPv4Gateway), ('MAC=' + $v.Mac), ('IPv6=' + $v.IPv6 + ',' + $v.LinkLocal), ('DNS suffix=' + $fqdn))
         Add-Result 'PKI' 'Certificate' 'INFO' ('CN=' + $v.HostInDomain + ', O=' + $v.Org) ('Thumbprint=' + $v.Thumbprint)
+        Add-Result 'SQL' ('Database Engine: ' + $v.SqlInstance) 'OK' 'SQL Server 2022' @('Version=16.0.1000.6', 'Edition=Standard Edition', ('InstanceId=MSSQL16.' + $v.SqlInstance))
+        Add-Result 'SERVICES' ('MSSQL$' + $v.SqlInstance) 'INFO' ('SQL Server (' + $v.SqlInstance + ')') 'State=Running | StartMode=Auto | LogOnAs=NT Service\MSSQLSERVER'
         Add-Result 'PRINTING' ('Printer: ' + $v.Printer) 'INFO' ('Driver=Example PCL6; Port=' + $v.PrinterPort) @(('Share=' + $v.PrinterShare), 'Published in AD=True')
         Add-Result 'PRINTING' ('Port: ' + $v.PrinterPort) 'WARNING' 'LPR port monitor' @(('Address=' + $v.PrinterHost), 'Queue=labels')
         Add-Result 'NETWORK_DEPENDENCY' 'Hosts line 1' 'INFO' ('Address=' + $v.IPv4) ('Names=' + $v.HostCom + ',' + $v.HostDk + ',' + $v.HostLocal + ',' + $v.HostInternal)
@@ -3059,7 +3072,7 @@ Describe 'Redaction covers every collected kind (#124)' {
         $script:RedRows = $script:Results.ToArray()
         $script:RedObject = [ordered]@{
             Schema = 'IPU-Assessment/1'; ComputerName = $computer; Mode = 'Pre'; Overall = 'WARNING'
-            Facts = [ordered]@{ DomainRole = 'Member server'; ComputerObjectOu = ('OU=' + $v.Ou + ',DC=' + $label + ',DC=corp,DC=test'); KmsHost = $v.KmsHost }
+            Facts = [ordered]@{ SqlServer = ($v.SqlInstance + '=SQL Server 2022'); DomainRole = 'Member server'; ComputerObjectOu = ('OU=' + $v.Ou + ',DC=' + $label + ',DC=corp,DC=test'); KmsHost = $v.KmsHost }
             Results = $script:RedRows; CheckRuns = $script:CheckRuns.ToArray()
             Snapshot = [ordered]@{ IPv4 = @($v.IPv4); Dns = @($v.IPv4Gateway); Shares = @($v.Share); Gpos = @($v.Gpo); Groups = @($nb + '\Patch Ring 2'); Ou = ('OU=' + $v.Ou + ',DC=' + $label + ',DC=corp,DC=test')
                 Adapters = @([pscustomobject]@{ Name = 'Ethernet0'; Mac = $v.Mac; IPv4 = @($v.IPv4); IPv6 = @($v.IPv6); Gateway = @($v.IPv4Gateway); Dns = @($v.IPv4Gateway); Suffix = $fqdn }) }
