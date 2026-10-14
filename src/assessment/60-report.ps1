@@ -47,7 +47,9 @@ function Get-CoverageNotice {
         $why = 'did not finish'
         if ($run.Outcome -eq 'Failed') { $why = 'stopped with an error' }
         elseif ($run.Outcome -eq 'TimedOut') { $why = 'ran out of time' }
-        elseif ($run.Outcome -eq 'Skipped') { $why = 'was not started, the time budget was used up' }
+        # Only the budget skip blames the budget (#206); any other skip says why.
+        elseif ($run.Outcome -eq 'Skipped' -and $msg -eq 'Time budget used up') { $why = 'was not started, the time budget was used up' }
+        elseif ($run.Outcome -eq 'Skipped') { $why = $(if ($msg) { 'was skipped (' + $msg + ')' } else { 'was skipped' }) }
         $problems += ($run.Name + ' ' + $why)
     }
     return [pscustomobject]@{ Problems = $problems; ByChoice = $byChoice }

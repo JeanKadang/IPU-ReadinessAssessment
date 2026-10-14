@@ -1621,6 +1621,10 @@ Describe 'Report header: linked counters and plain coverage notes (#77)' {
         $n = Get-CoverageNotice @((New-Run 'dism' 'DISM component store scan' 'Skipped' 'Not configured: switched off with -RunDISMScanHealth $false'))
         $n.ByChoice[0] | Should -Be 'DISM component store scan was switched off for this run (switched off with -RunDISMScanHealth $false). Run it before the final go/no-go.'
     }
+    It 'a print backup on a server that is not a print server is not mentioned (#206)' {
+        $n = Get-CoverageNotice @((New-Run 'printbackup' 'Print server backup (PrintBrm)' 'Skipped' 'Not applicable: not a print server'))
+        @($n.Problems).Count + @($n.ByChoice).Count | Should -Be 0
+    }
     It 'a check that does not apply (Post mode) is not mentioned' {
         $n = Get-CoverageNotice @((New-Run 'compatscan' 'Setup compatibility scan' 'Skipped' 'Not applicable after the upgrade'))
         @($n.Problems).Count + @($n.ByChoice).Count | Should -Be 0
@@ -1629,6 +1633,7 @@ Describe 'Report header: linked counters and plain coverage notes (#77)' {
         @{ Outcome = 'Failed';   Message = 'IOException: x';      Text = 'Storage stopped with an error' }
         @{ Outcome = 'TimedOut'; Message = '';                    Text = 'Storage ran out of time' }
         @{ Outcome = 'Skipped';  Message = 'Time budget used up'; Text = 'Storage was not started, the time budget was used up' }
+        @{ Outcome = 'Skipped';  Message = 'Something else';      Text = 'Storage was skipped (Something else)' }
     ) {
         $n = Get-CoverageNotice @((New-Run 'storage' 'Storage' $Outcome $Message))
         $n.Problems | Should -Be @($Text)

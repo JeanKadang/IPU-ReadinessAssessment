@@ -1382,8 +1382,8 @@ Register-Check -Id 'printbackup' -Name 'Print server backup (PrintBrm)' -Phase '
     # #148: PrintBrm -B exports printers, ports, drivers and queues into one
     # file. It only reads the spooler configuration. The file is not redacted
     # and is never part of the report.
-    if ($AssessmentMode -eq 'Post') { $script:CurrentCheckMessage = 'Not needed after the upgrade'; $script:CurrentCheckOutcome = 'Skipped'; return }
-    if (-not $script:Data.PrintServer) { $script:CurrentCheckMessage = 'Not a print server'; $script:CurrentCheckOutcome = 'Skipped'; return }
+    if ($AssessmentMode -eq 'Post') { $script:CurrentCheckMessage = 'Not applicable: not needed after the upgrade'; $script:CurrentCheckOutcome = 'Skipped'; return }
+    if (-not $script:Data.PrintServer) { $script:CurrentCheckMessage = 'Not applicable: not a print server'; $script:CurrentCheckOutcome = 'Skipped'; return }
     $cmd = Get-PrintBackupCommand
     if (-not $EnablePrintBackup) {
         Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' 'Not taken (EnablePrintBackup is off)' -Recommendation 'Export the print configuration before the change, to a drive with enough free space, and keep the file off the server.' -Kind 'Finding' -Source 'SETTINGS' -Command $cmd -CommandKind 'Check'
