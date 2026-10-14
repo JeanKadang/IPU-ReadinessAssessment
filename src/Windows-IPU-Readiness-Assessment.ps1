@@ -1746,6 +1746,15 @@ function ConvertTo-ServiceBaseName {
     return ($Name -replace '_[0-9a-fA-F]{4,}$', '')
 }
 
+function ConvertTo-TaskBaseName {
+    # Pure (#196): some updaters put their version and a GUID in the task
+    # name and rename the task when they update
+    # (\Vendor\UpdaterTaskSystem1.2.3.4{GUID}). Compare tasks without them.
+    param([string]$Name)
+    $n = $Name -replace '\{[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}$', ''
+    return ($n -replace '\d+(\.\d+){1,3}$', '')
+}
+
 function Get-NetBiosSettingText {
     # Pure (#149): Win32_NetworkAdapterConfiguration.TcpipNetbiosOptions in words.
     param($Option)
@@ -2055,7 +2064,13 @@ function Compare-IPUSnapshot {
         $b = @($Before.($l.Prop) | Where-Object { $_ })
         $a = @($After.($l.Prop) | Where-Object { $_ })
         if ($l.Prop -eq 'Apps') { $b = @($b | ForEach-Object { [string]$_.Name }); $a = @($a | ForEach-Object { [string]$_.Name }) }
-        $lost = @($b | Where-Object { $a -notcontains $_ } | Sort-Object -Unique)
+        if ($l.Prop -eq 'Tasks') {
+            # A task renamed only by its version or GUID still exists (#196).
+            $aBase = @($a | ForEach-Object { ConvertTo-TaskBaseName ([string]$_) })
+            $lost = @($b | Where-Object { $a -notcontains $_ -and $aBase -notcontains (ConvertTo-TaskBaseName ([string]$_)) } | Sort-Object -Unique)
+        } else {
+            $lost = @($b | Where-Object { $a -notcontains $_ } | Sort-Object -Unique)
+        }
         if ($l.Prop -eq 'Features') {
             # Removed or renamed by Microsoft: expected (#158). .NET 3.5 is
             # removed by the upgrade and often needed by applications.
