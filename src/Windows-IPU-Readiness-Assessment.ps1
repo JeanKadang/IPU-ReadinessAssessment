@@ -500,7 +500,9 @@ function Find-DetectionMatch {
 function Get-DetectionEvidence {
     param($Match)
     $parts = @()
-    foreach ($a in $Match.Apps) { $parts += ($a.Name + ' ' + $a.Version).Trim() }
+    # "version" before the number, so redaction does not take it for an
+    # IPv4 address (#194).
+    foreach ($a in $Match.Apps) { $parts += $(if ($a.Version) { $a.Name + ' version ' + $a.Version } else { [string]$a.Name }) }
     foreach ($s in $Match.Services) { $parts += ('Service ' + $s.Name + ' (' + $s.State + ')') }
     if (@($Match.Drivers).Count -gt 0) { $parts += ('Drivers ' + (@($Match.Drivers) -join ',')) }
     return ,$parts
@@ -2848,9 +2850,16 @@ function Protect-ReportText {
         })
         return $m.Groups[1].Value + '/' + ($parts -join '/')
     })
-    # IPv4 (not version numbers, masks, loopback or the any-address)
-    $t = [regex]::Replace($t, '(?<![\w.])(?<!Version[=: ])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![\w.])', {
+    # IPv4 (not version numbers, masks, loopback or the any-address). A
+    # number after "version" (any case) or alone as a folder in a path
+    # (\4.0.2.39\, but not the UNC host \\10.1.2.3\) is a version (#194).
+    $text = $t
+    $t = [regex]::Replace($t, '(?<![\w.])(?<![Vv]ersion[=: ])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![\w.])', {
         param($m)
+        $before = $(if ($m.Index -ge 1) { $text[$m.Index - 1] } else { [char]0 })
+        $before2 = $(if ($m.Index -ge 2) { $text[$m.Index - 2] } else { [char]0 })
+        $after = $(if ($m.Index + $m.Length -lt $text.Length) { $text[$m.Index + $m.Length] } else { [char]0 })
+        if ($before -eq [char]'\' -and $before2 -ne [char]'\' -and $after -eq [char]'\') { return $m.Value }
         $o = @(1..4 | ForEach-Object { [int]$m.Groups[$_].Value })
         if (@($o | Where-Object { $_ -gt 255 }).Count -gt 0) { return $m.Value }
         if ($o[0] -eq 255 -or $m.Value -eq '0.0.0.0' -or $o[0] -eq 127) { return $m.Value }
@@ -2875,7 +2884,10 @@ function Protect-ReportObject {
     if ($Value -is [string]) { return (Protect-ReportText $Value $Context) }
     if ($Value -is [System.Collections.IDictionary]) {
         $copy = [ordered]@{}
-        foreach ($k in @($Value.Keys)) { $copy[$k] = Protect-ReportObject $Value[$k] $Context }
+        foreach ($k in @($Value.Keys)) {
+            if ([string]$k -match '^(Version|FileVersion|DriverVersion|DisplayVersion|ProductVersion)$' -and [string]$Value[$k] -match '^\d+(\.\d+){1,3}$') { $copy[$k] = $Value[$k]; continue }
+            $copy[$k] = Protect-ReportObject $Value[$k] $Context
+        }
         return $copy
     }
     if ($Value -is [System.Collections.IEnumerable]) {
@@ -2884,7 +2896,12 @@ function Protect-ReportObject {
     }
     if ($Value -is [System.Management.Automation.PSCustomObject]) {
         $copy = [ordered]@{}
-        foreach ($p in $Value.PSObject.Properties) { $copy[$p.Name] = Protect-ReportObject $p.Value $Context }
+        foreach ($p in $Value.PSObject.Properties) {
+            # A version field that holds only a version number is not an
+            # address (#194).
+            if ($p.Name -match '^(Version|FileVersion|DriverVersion|DisplayVersion|ProductVersion)$' -and [string]$p.Value -match '^\d+(\.\d+){1,3}$') { $copy[$p.Name] = $p.Value; continue }
+            $copy[$p.Name] = Protect-ReportObject $p.Value $Context
+        }
         return [pscustomobject]$copy
     }
     return $Value

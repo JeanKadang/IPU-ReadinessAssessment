@@ -171,7 +171,9 @@ function Find-DetectionMatch {
 function Get-DetectionEvidence {
     param($Match)
     $parts = @()
-    foreach ($a in $Match.Apps) { $parts += ($a.Name + ' ' + $a.Version).Trim() }
+    # "version" before the number, so redaction does not take it for an
+    # IPv4 address (#194).
+    foreach ($a in $Match.Apps) { $parts += $(if ($a.Version) { $a.Name + ' version ' + $a.Version } else { [string]$a.Name }) }
     foreach ($s in $Match.Services) { $parts += ('Service ' + $s.Name + ' (' + $s.State + ')') }
     if (@($Match.Drivers).Count -gt 0) { $parts += ('Drivers ' + (@($Match.Drivers) -join ',')) }
     return ,$parts
