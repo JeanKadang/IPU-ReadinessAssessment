@@ -3104,3 +3104,37 @@ Describe 'Redaction covers every collected kind (#124)' {
         Get-Survivor ('text with ' + $script:RedValues.Share + ' inside') | Should -Be @('Share=' + $script:RedValues.Share)
     }
 }
+
+Describe 'Evidence folders named after their contents (#198)' {
+    It 'each topic has its own folder under EvidenceRoot' -TestCases @(
+        @{ Topic = 'Policy' }, @{ Topic = 'IIS' }, @{ Topic = 'Network' }, @{ Topic = 'Printers' }
+    ) {
+        Get-EvidenceFolderPath 'C:\Temp\IPU-Evidence' $Topic '' | Should -Be (Join-Path 'C:\Temp\IPU-Evidence' $Topic)
+    }
+    It 'PolicyEvidenceRoot, when set, keeps only the policy evidence where it was' {
+        Get-EvidenceFolderPath 'C:\Temp\IPU-Evidence' 'Policy' 'C:\Temp\Tools\PolBackup' | Should -Be 'C:\Temp\Tools\PolBackup'
+        Get-EvidenceFolderPath 'C:\Temp\IPU-Evidence' 'Network' 'C:\Temp\Tools\PolBackup' | Should -Be (Join-Path 'C:\Temp\IPU-Evidence' 'Network')
+    }
+    It 'the README says what is there, that it is unredacted and to copy it off' {
+        $t = Get-EvidenceReadmeText
+        foreach ($w in 'Policy\', 'IIS\', 'Network\', 'Printers\', 'NOT redacted', 'Copy them off the server') { $t | Should -Match ([regex]::Escape($w)) }
+        $t | Should -Match "`r`n$"
+        @([char[]]$t | Where-Object { [int]$_ -gt 127 }).Count | Should -Be 0
+    }
+    It 'creates the root with its README and the topic folder (Windows)' -Skip:($env:OS -ne 'Windows_NT') {
+        $EvidenceRoot = Join-Path $TestDrive 'ipu-evidence'
+        $PolicyEvidenceRoot = ''
+        $f = Initialize-EvidenceFolder 'Network'
+        $f | Should -Be (Join-Path $EvidenceRoot 'Network')
+        Test-Path -LiteralPath $f -PathType Container | Should -BeTrue
+        [IO.File]::ReadAllText((Join-Path $EvidenceRoot 'README.txt')) | Should -Be (Get-EvidenceReadmeText)
+        @(Get-BroadFolderReader $EvidenceRoot).Count | Should -Be 0
+    }
+    It 'with PolicyEvidenceRoot set, the policy folder is created there and no README is written (Windows)' -Skip:($env:OS -ne 'Windows_NT') {
+        $EvidenceRoot = Join-Path $TestDrive 'unused-root'
+        $PolicyEvidenceRoot = Join-Path $TestDrive 'old-polbackup'
+        Initialize-EvidenceFolder 'Policy' | Should -Be $PolicyEvidenceRoot
+        Test-Path -LiteralPath $PolicyEvidenceRoot | Should -BeTrue
+        Test-Path -LiteralPath $EvidenceRoot | Should -BeFalse
+    }
+}

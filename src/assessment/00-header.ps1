@@ -28,9 +28,10 @@
         <ComputerName>-IPU-PostUpgrade.html / .json / .log
     and compares against the pre-upgrade .json in the same folder.
 
-    RDP policy evidence (optional) goes to a timestamped folder and ZIP under
-    C:\Temp\Tools\PolBackup. The optional Setup compatibility scan keeps
-    Setup's CompatData XML next to the report.
+    Evidence copies (unredacted) go to timestamped folders and ZIPs under
+    C:\Temp\IPU-Evidence, one subfolder per topic: Policy (RDP and Group
+    Policy), IIS, Network, Printers. The optional Setup compatibility scan
+    keeps Setup's CompatData XML next to the report.
 
     The report is written TWICE: a PARTIAL checkpoint after the fast checks,
     and the final report after the slow checks (DISM, SFC, optional Setup

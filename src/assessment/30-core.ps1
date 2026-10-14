@@ -10,7 +10,7 @@ $script:ProfileSettingNames = @(
     'MinimumCFreeGB','ExtendBlockGB','MinimumMemoryGB','MaxPatchAgeDays','UptimeWarningDays','GroupPolicyMaxAgeDays','AVMaxAgeDays',
     'CertificateWarningDays','SystemPartitionMinFreeMB','RecoveryPartitionMinFreeMB',
     'RunDISMScanHealth','RunSFCVerifyOnly','DISMTimeoutMinutes','SFCTimeoutMinutes','SlowCheckBudgetMinutes','CompatScanTimeoutMinutes',
-    'EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip','EnableIISConfigEvidence','EnableNetworkEvidence','EnablePrintBackup','PrintBackupTimeoutMinutes',
+    'EvidenceRoot','EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip','EnableIISConfigEvidence','EnableNetworkEvidence','EnablePrintBackup','PrintBackupTimeoutMinutes',
     'WriteJson','RestrictOutputAcl','NumberCultureName'
 )
 $script:PatternFields = @('Label','App','Service','Display','Driver','Disabled','Link','LinkTitle')
@@ -323,6 +323,23 @@ function Initialize-OutputFolder {
         Write-AssessmentLog 'WARNING' 'ACL' ('Could not restrict ' + $Path + ': ' + $_.Exception.Message)
         return 'CreatedUnrestricted'
     }
+}
+
+function Initialize-EvidenceFolder {
+    # The topic folder for an evidence copy (#198), created with the same
+    # restricted access as the report folder. The evidence root gets a
+    # README that says what is there and that it is unredacted (best effort).
+    param([Parameter(Mandatory=$true)][ValidateSet('Policy','IIS','Network','Printers')][string]$Topic)
+    $folder = Get-EvidenceFolderPath $EvidenceRoot $Topic $PolicyEvidenceRoot
+    if ($Topic -ne 'Policy' -or -not $PolicyEvidenceRoot) {
+        $null = Initialize-OutputFolder $EvidenceRoot
+        $readme = Join-Path $EvidenceRoot 'README.txt'
+        if (-not (Test-Path -LiteralPath $readme)) {
+            try { [IO.File]::WriteAllText($readme, (Get-EvidenceReadmeText)) } catch { Write-Swallowed $_ }
+        }
+    }
+    $null = Initialize-OutputFolder $folder
+    return $folder
 }
 
 function Get-GpResultXml {

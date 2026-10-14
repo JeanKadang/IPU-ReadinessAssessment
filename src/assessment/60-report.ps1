@@ -143,6 +143,7 @@ function New-IPUReportHtml {
         @('RDP drive redirection', $script:Data.DriveRedirection),
         @('C: drive', $script:Data.CSummary),
         @('Memory GB / logical CPUs', ((Get-ResultText $Results 'PERFORMANCE' 'MemoryGB') + ' / ' + (Get-ResultText $Results 'PERFORMANCE' 'LogicalProcessors'))),
+        @('Evidence copies (unredacted)', $EvidenceRoot),
         @('Policy evidence', $script:Data.PolicyEvidence),
         @('Network evidence', $script:Data.NetworkEvidence),
         @('Machine-readable result', $(if ($WriteJson) { $script:JsonPath } else { 'Disabled' }))

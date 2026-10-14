@@ -28,9 +28,10 @@
         <ComputerName>-IPU-PostUpgrade.html / .json / .log
     and compares against the pre-upgrade .json in the same folder.
 
-    RDP policy evidence (optional) goes to a timestamped folder and ZIP under
-    C:\Temp\Tools\PolBackup. The optional Setup compatibility scan keeps
-    Setup's CompatData XML next to the report.
+    Evidence copies (unredacted) go to timestamped folders and ZIPs under
+    C:\Temp\IPU-Evidence, one subfolder per topic: Policy (RDP and Group
+    Policy), IIS, Network, Printers. The optional Setup compatibility scan
+    keeps Setup's CompatData XML next to the report.
 
     The report is written TWICE: a PARTIAL checkpoint after the fast checks,
     and the final report after the slow checks (DISM, SFC, optional Setup
@@ -199,22 +200,28 @@ param(
     [ValidateRange(1, 600)][int]$SlowCheckBudgetMinutes = 50,
     [ValidateRange(1, 240)][int]$CompatScanTimeoutMinutes = 45,
 
+    # Evidence copies (#198): one restricted folder with a subfolder per
+    # topic - Policy, IIS, Network, Printers - and a README. Unredacted:
+    # never part of the report; copy it off the server before the change.
+    [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$EvidenceRoot = 'C:\Temp\IPU-Evidence',
     # RDP access/policy evidence. LGPO.exe is optional (backup only).
     [bool]$EnableRDPPolicyEvidence = $true,
     [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$LgpoExe = 'C:\Temp\Tools\LGPO.exe',
-    [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$PolicyEvidenceRoot = 'C:\Temp\Tools\PolBackup',
+    # Blank = EvidenceRoot\Policy. Set it to keep the policy evidence in an
+    # older location (before 4.5.1: C:\Temp\Tools\PolBackup).
+    [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$PolicyEvidenceRoot = '',
     [bool]$CreatePolicyEvidenceZip = $true,
     # When IIS is installed, copy its configuration files (the same files
     # "appcmd add backup" saves) into a restricted evidence folder and ZIP
-    # under PolicyEvidenceRoot. A read-only copy; IIS itself is not touched.
+    # under EvidenceRoot\IIS. A read-only copy; IIS itself is not touched.
     [bool]$EnableIISConfigEvidence = $true,
     # Save ipconfig /all, route print and the netsh interface configuration
     # (a script that can re-apply it) into a restricted evidence folder and
-    # ZIP under PolicyEvidenceRoot (#149). Never redacted: copy it off the
+    # ZIP under EvidenceRoot\Network (#149). Never redacted: copy it off the
     # server before the change, and do not share it.
     [bool]$EnableNetworkEvidence = $true,
     # On a print server, export printers, ports and drivers with PrintBrm -B
-    # into a restricted evidence folder under PolicyEvidenceRoot (#148). Skipped
+    # into a restricted evidence folder under EvidenceRoot\Printers (#148). Skipped
     # (MANUAL, with the command) when the drive lacks 1.5 x the size of
     # spool\drivers + 1 GB. A slow check: counts against the time budget.
     [bool]$EnablePrintBackup = $true,
@@ -339,7 +346,7 @@ $script:ProfileSettingNames = @(
     'MinimumCFreeGB','ExtendBlockGB','MinimumMemoryGB','MaxPatchAgeDays','UptimeWarningDays','GroupPolicyMaxAgeDays','AVMaxAgeDays',
     'CertificateWarningDays','SystemPartitionMinFreeMB','RecoveryPartitionMinFreeMB',
     'RunDISMScanHealth','RunSFCVerifyOnly','DISMTimeoutMinutes','SFCTimeoutMinutes','SlowCheckBudgetMinutes','CompatScanTimeoutMinutes',
-    'EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip','EnableIISConfigEvidence','EnableNetworkEvidence','EnablePrintBackup','PrintBackupTimeoutMinutes',
+    'EvidenceRoot','EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip','EnableIISConfigEvidence','EnableNetworkEvidence','EnablePrintBackup','PrintBackupTimeoutMinutes',
     'WriteJson','RestrictOutputAcl','NumberCultureName'
 )
 $script:PatternFields = @('Label','App','Service','Display','Driver','Disabled','Link','LinkTitle')
@@ -652,6 +659,23 @@ function Initialize-OutputFolder {
         Write-AssessmentLog 'WARNING' 'ACL' ('Could not restrict ' + $Path + ': ' + $_.Exception.Message)
         return 'CreatedUnrestricted'
     }
+}
+
+function Initialize-EvidenceFolder {
+    # The topic folder for an evidence copy (#198), created with the same
+    # restricted access as the report folder. The evidence root gets a
+    # README that says what is there and that it is unredacted (best effort).
+    param([Parameter(Mandatory=$true)][ValidateSet('Policy','IIS','Network','Printers')][string]$Topic)
+    $folder = Get-EvidenceFolderPath $EvidenceRoot $Topic $PolicyEvidenceRoot
+    if ($Topic -ne 'Policy' -or -not $PolicyEvidenceRoot) {
+        $null = Initialize-OutputFolder $EvidenceRoot
+        $readme = Join-Path $EvidenceRoot 'README.txt'
+        if (-not (Test-Path -LiteralPath $readme)) {
+            try { [IO.File]::WriteAllText($readme, (Get-EvidenceReadmeText)) } catch { Write-Swallowed $_ }
+        }
+    }
+    $null = Initialize-OutputFolder $folder
+    return $folder
 }
 
 function Get-GpResultXml {
@@ -1889,6 +1913,34 @@ function Compare-NetworkAdapter {
 $script:VirtualPrinterDrivers = '^(Microsoft Print To PDF|Microsoft XPS Document Writer( v4)?|Microsoft Shared Fax Driver|Send to Microsoft OneNote.*|Microsoft Software Printer Driver|Remote Desktop Easy Print)$'
 $script:PrinterDriverDocUrl = 'https://learn.microsoft.com/en-us/windows-hardware/drivers/print/end-of-servicing-plan-for-third-party-printer-drivers-on-windows'
 
+function Get-EvidenceFolderPath {
+    # Pure (#198): the folder for one evidence topic. PolicyEvidenceRoot,
+    # when set, keeps the policy evidence where a site already has it.
+    param([string]$Root, [string]$Topic, [string]$PolicyOverride = '')
+    if ($Topic -eq 'Policy' -and $PolicyOverride) { return $PolicyOverride }
+    return (Join-Path $Root $Topic)
+}
+
+function Get-EvidenceReadmeText {
+    # Pure (#198): the README written into the evidence root.
+    $lines = @(
+        'IPU readiness assessment - evidence copies',
+        '',
+        'Written by Windows-IPU-Readiness-Assessment.ps1. Read-only copies; nothing on this server was changed.',
+        '',
+        '  Policy\    RDP and Group Policy evidence, LGPO backup of the local policy',
+        '  IIS\       IIS configuration files (appcmd backup format)',
+        '  Network\   ipconfig /all, route print, netsh interface configuration',
+        '  Printers\  PrintBrm export of printers, ports and drivers',
+        '',
+        'These files are NOT redacted: they hold names, addresses and configuration of this server.',
+        'Do not share them outside the team. Copy them off the server before the upgrade:',
+        'a copy on C: does not survive a failed upgrade that needs a rebuild.',
+        'See the user guide of the assessment for how to restore from each copy.'
+    )
+    return (($lines -join "`r`n") + "`r`n")
+}
+
 function Get-PrinterPortKind {
     # Pure (#148): the kind of a printer port, from its description, its
     # port monitor and (for Standard TCP/IP ports) the protocol.
@@ -3023,7 +3075,7 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
     if ($script:Is32BitHost) {
         Add-Result 'COLLECTOR' '32-bit PowerShell host' 'ACTION' 'Running in 32-bit PowerShell on 64-bit Windows and could not relaunch as 64-bit' -Recommendation 'Registry and System32 reads are redirected, so application, SQL and tool results are unreliable. Run the script as a file under 64-bit PowerShell and re-assess.' -Source 'Environment.Is64BitProcess'
     }
-    Add-Result 'ASSESSMENT' 'ReportDestination' 'INFO' $ReportDirectory ('Policy evidence: ' + $(if ($EnableRDPPolicyEvidence) { $PolicyEvidenceRoot } else { 'disabled' })) -Source 'SETTINGS'
+    Add-Result 'ASSESSMENT' 'ReportDestination' 'INFO' $ReportDirectory @(('Evidence copies (unredacted): ' + $EvidenceRoot), ('Policy evidence: ' + $(if ($EnableRDPPolicyEvidence) { Get-EvidenceFolderPath $EvidenceRoot 'Policy' $PolicyEvidenceRoot } else { 'disabled' }))) -Source 'SETTINGS'
     $folderState = $script:OutputFolderState
     if (-not $folderState) { $folderState = 'Existing' }
     $readers = @()
@@ -3628,7 +3680,7 @@ Register-Check -Id 'network' -Name 'Network, teaming, hosts and routes' -Script 
     # team if the upgrade resets an adapter. Read-only commands.
     if ($EnableNetworkEvidence) {
         try {
-            $dest = Join-Path $PolicyEvidenceRoot ($script:SafeComputerName + '-IPU-Network-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+            $dest = Join-Path (Initialize-EvidenceFolder 'Network') ($script:SafeComputerName + '-IPU-Network-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
             $copy = Save-NetworkEvidence -Destination $dest -Zip $CreatePolicyEvidenceZip
             $script:Data.NetworkEvidence = $copy.Location
             $keep = 'Copy it off the server before the change: it holds the full IP configuration, is not redacted and must not be shared outside the team. netsh-interface-dump.txt is a netsh script that can put the configuration back (read it first; see the user guide).'
@@ -3924,8 +3976,7 @@ Register-Check -Id 'iis' -Name 'IIS' -Script {
     Add-Result 'IIS' 'Web-Server' 'WARNING' 'Installed' -Recommendation 'Immediately before the IPU, run the appcmd.exe add backup command shown (the copy in this report is from assessment time), and keep site, binding and certificate documentation.' -Source 'Get-WindowsFeature' -Command (Get-RecommendationCommand 'IisBackup').Command -CommandKind 'Change' -Link $script:DocLinks.AppCmd.Url -LinkTitle $script:DocLinks.AppCmd.Title
     if ($EnableIISConfigEvidence) {
         try {
-            $dest = Join-Path $PolicyEvidenceRoot ($script:SafeComputerName + '-IPU-IIS-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
-            $null = Initialize-OutputFolder $PolicyEvidenceRoot
+            $dest = Join-Path (Initialize-EvidenceFolder 'IIS') ($script:SafeComputerName + '-IPU-IIS-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
             $copy = Save-IISConfigEvidence -Destination $dest -Zip $CreatePolicyEvidenceZip
             $script:Data.IISConfigEvidence = $copy.Location
             Add-Result 'IIS' 'ConfigurationCopy' 'OK' $copy.Location @(('Files=' + ($copy.Files -join ', ')), ('applicationHost.config SHA256=' + $copy.ApplicationHostSha256)) -Recommendation 'Restore: copy the files back to %windir%\System32\inetsrv\config, or put them in a folder under inetsrv\backup and run "appcmd restore backup <folder>". See the user guide.' -Source 'inetsrv\config (copied, not changed)'
@@ -4372,7 +4423,7 @@ Register-Check -Id 'printbackup' -Name 'Print server backup (PrintBrm)' -Phase '
         Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' 'PrintBrm.exe not found' $brm -Recommendation 'Export the printers with Print Management (Export printers to a file) before the change, and keep the file off the server.' -Kind 'Finding' -Source 'PrintBrm.exe'
         return
     }
-    $root = [IO.Path]::GetPathRoot($PolicyEvidenceRoot).TrimEnd('\')
+    $root = [IO.Path]::GetPathRoot($EvidenceRoot).TrimEnd('\')
     $disk = @(Get-CimRequired 'Win32_LogicalDisk' ("DeviceID='" + $root + "'")) | Select-Object -First 1
     if (-not $disk -or $null -eq $disk.FreeSpace) { throw ('Could not read the free space of ' + $root) }
     $space = Get-PrintBackupSpaceDecision (Get-PrintDriverStoreSize) ([long]$disk.FreeSpace)
@@ -4381,8 +4432,7 @@ Register-Check -Id 'printbackup' -Name 'Print server backup (PrintBrm)' -Phase '
         return
     }
     $timeout = [math]::Min($PrintBackupTimeoutMinutes * 60, $script:SlowSecondsLeft)
-    $dest = Join-Path $PolicyEvidenceRoot ($script:SafeComputerName + '-IPU-Print-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
-    $null = Initialize-OutputFolder $PolicyEvidenceRoot
+    $dest = Join-Path (Initialize-EvidenceFolder 'Printers') ($script:SafeComputerName + '-IPU-Print-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
     $null = Initialize-OutputFolder $dest
     $file = Join-Path $dest ($script:SafeComputerName + '-printers.printerExport')
     $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -4557,13 +4607,13 @@ function Invoke-RdpPolicyAssessment {
     $driveBlock = New-Object System.Collections.Generic.List[string]
 
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $root = Join-Path $PolicyEvidenceRoot ($script:SafeComputerName + '-IPU-Policy-' + $stamp)
+    $root = Join-Path (Get-EvidenceFolderPath $EvidenceRoot 'Policy' $PolicyEvidenceRoot) ($script:SafeComputerName + '-IPU-Policy-' + $stamp)
     $lgpoRoot = Join-Path $root 'LGPO-Backup'
     $zip = $root + '.zip'
     $script:Data.PolicyEvidence = $root
     $folderOk = $true
     try {
-        $null = Initialize-OutputFolder $PolicyEvidenceRoot
+        $null = Initialize-EvidenceFolder 'Policy'
         $null = Initialize-OutputFolder $root
         New-Item -ItemType Directory -Path $lgpoRoot -Force | Out-Null
     }
@@ -4864,6 +4914,7 @@ function New-IPUReportHtml {
         @('RDP drive redirection', $script:Data.DriveRedirection),
         @('C: drive', $script:Data.CSummary),
         @('Memory GB / logical CPUs', ((Get-ResultText $Results 'PERFORMANCE' 'MemoryGB') + ' / ' + (Get-ResultText $Results 'PERFORMANCE' 'LogicalProcessors'))),
+        @('Evidence copies (unredacted)', $EvidenceRoot),
         @('Policy evidence', $script:Data.PolicyEvidence),
         @('Network evidence', $script:Data.NetworkEvidence),
         @('Machine-readable result', $(if ($WriteJson) { $script:JsonPath } else { 'Disabled' }))

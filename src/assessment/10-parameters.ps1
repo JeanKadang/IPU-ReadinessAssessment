@@ -44,22 +44,28 @@ param(
     [ValidateRange(1, 600)][int]$SlowCheckBudgetMinutes = 50,
     [ValidateRange(1, 240)][int]$CompatScanTimeoutMinutes = 45,
 
+    # Evidence copies (#198): one restricted folder with a subfolder per
+    # topic - Policy, IIS, Network, Printers - and a README. Unredacted:
+    # never part of the report; copy it off the server before the change.
+    [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$EvidenceRoot = 'C:\Temp\IPU-Evidence',
     # RDP access/policy evidence. LGPO.exe is optional (backup only).
     [bool]$EnableRDPPolicyEvidence = $true,
     [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$LgpoExe = 'C:\Temp\Tools\LGPO.exe',
-    [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$PolicyEvidenceRoot = 'C:\Temp\Tools\PolBackup',
+    # Blank = EvidenceRoot\Policy. Set it to keep the policy evidence in an
+    # older location (before 4.5.1: C:\Temp\Tools\PolBackup).
+    [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$PolicyEvidenceRoot = '',
     [bool]$CreatePolicyEvidenceZip = $true,
     # When IIS is installed, copy its configuration files (the same files
     # "appcmd add backup" saves) into a restricted evidence folder and ZIP
-    # under PolicyEvidenceRoot. A read-only copy; IIS itself is not touched.
+    # under EvidenceRoot\IIS. A read-only copy; IIS itself is not touched.
     [bool]$EnableIISConfigEvidence = $true,
     # Save ipconfig /all, route print and the netsh interface configuration
     # (a script that can re-apply it) into a restricted evidence folder and
-    # ZIP under PolicyEvidenceRoot (#149). Never redacted: copy it off the
+    # ZIP under EvidenceRoot\Network (#149). Never redacted: copy it off the
     # server before the change, and do not share it.
     [bool]$EnableNetworkEvidence = $true,
     # On a print server, export printers, ports and drivers with PrintBrm -B
-    # into a restricted evidence folder under PolicyEvidenceRoot (#148). Skipped
+    # into a restricted evidence folder under EvidenceRoot\Printers (#148). Skipped
     # (MANUAL, with the command) when the drive lacks 1.5 x the size of
     # spool\drivers + 1 GB. A slow check: counts against the time budget.
     [bool]$EnablePrintBackup = $true,

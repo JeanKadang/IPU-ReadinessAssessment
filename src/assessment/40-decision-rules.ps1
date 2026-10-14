@@ -560,6 +560,34 @@ function Compare-NetworkAdapter {
 $script:VirtualPrinterDrivers = '^(Microsoft Print To PDF|Microsoft XPS Document Writer( v4)?|Microsoft Shared Fax Driver|Send to Microsoft OneNote.*|Microsoft Software Printer Driver|Remote Desktop Easy Print)$'
 $script:PrinterDriverDocUrl = 'https://learn.microsoft.com/en-us/windows-hardware/drivers/print/end-of-servicing-plan-for-third-party-printer-drivers-on-windows'
 
+function Get-EvidenceFolderPath {
+    # Pure (#198): the folder for one evidence topic. PolicyEvidenceRoot,
+    # when set, keeps the policy evidence where a site already has it.
+    param([string]$Root, [string]$Topic, [string]$PolicyOverride = '')
+    if ($Topic -eq 'Policy' -and $PolicyOverride) { return $PolicyOverride }
+    return (Join-Path $Root $Topic)
+}
+
+function Get-EvidenceReadmeText {
+    # Pure (#198): the README written into the evidence root.
+    $lines = @(
+        'IPU readiness assessment - evidence copies',
+        '',
+        'Written by Windows-IPU-Readiness-Assessment.ps1. Read-only copies; nothing on this server was changed.',
+        '',
+        '  Policy\    RDP and Group Policy evidence, LGPO backup of the local policy',
+        '  IIS\       IIS configuration files (appcmd backup format)',
+        '  Network\   ipconfig /all, route print, netsh interface configuration',
+        '  Printers\  PrintBrm export of printers, ports and drivers',
+        '',
+        'These files are NOT redacted: they hold names, addresses and configuration of this server.',
+        'Do not share them outside the team. Copy them off the server before the upgrade:',
+        'a copy on C: does not survive a failed upgrade that needs a rebuild.',
+        'See the user guide of the assessment for how to restore from each copy.'
+    )
+    return (($lines -join "`r`n") + "`r`n")
+}
+
 function Get-PrinterPortKind {
     # Pure (#148): the kind of a printer port, from its description, its
     # port monitor and (for Standard TCP/IP ports) the protocol.

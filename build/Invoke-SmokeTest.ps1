@@ -35,7 +35,7 @@ $computer = ($env:COMPUTERNAME -replace '[^A-Za-z0-9_.-]', '_')
 
 function Invoke-Assessment([string]$Mode, [string]$Folder = $reports, [string]$Extra = '') {
     # -Command (not -File) so that [bool] parameters receive real booleans.
-    $command = "& '" + $scriptPath + "' -AssessmentMode " + $Mode + " -ReportDirectory '" + $Folder + "' -PolicyEvidenceRoot '" + $evidence + "' -RunDISMScanHealth `$false -RunSFCVerifyOnly `$false " + $Extra + "; exit `$LASTEXITCODE"
+    $command = "& '" + $scriptPath + "' -AssessmentMode " + $Mode + " -ReportDirectory '" + $Folder + "' -EvidenceRoot '" + $evidence + "' -RunDISMScanHealth `$false -RunSFCVerifyOnly `$false " + $Extra + "; exit `$LASTEXITCODE"
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $output = @(& $engine -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded 2>&1 | ForEach-Object { [string]$_ })

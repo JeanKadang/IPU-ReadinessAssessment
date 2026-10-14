@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Evidence copies have a folder of their own, named after their contents (#198): `C:\Temp\IPU-Evidence` (new parameter `-EvidenceRoot`) with `Policy`, `IIS`, `Network` and `Printers` subfolders and a README that says the copies are unredacted. Before, all of them went to `C:\Temp\Tools\PolBackup`; the IIS, network and printer copies move. `-PolicyEvidenceRoot` now defaults to blank (= `EvidenceRoot\Policy`); a site that sets it keeps its policy evidence there. `LGPO.exe` stays in `C:\Temp\Tools`.
+
 ## [4.5.0] - 2026-10-14
 
 Cluster nodes and domain controllers become SPECIAL, network and print servers get the evidence needed to put them back by hand, and the review items are closed. The source is now built from parts; operators still run one file. `Merge-IPUAssessments.ps1` 1.1.0 ships with it.
