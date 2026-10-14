@@ -4,6 +4,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [4.5.2] - 2026-10-14
+
 ### Fixed
 - A server that is not a print server no longer gets "Not fully assessed: Print server backup (PrintBrm) was not started, the time budget was used up" at the top of the report; the backup simply does not apply there. The time-budget wording is now used only when the budget really ran out (#206).
 
@@ -189,7 +191,8 @@ Restructure of the 3.x script (released as a script file only).
 
 Local Group Policy backup and RDP readiness. Superseded by 4.0.0.
 
-[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.5.1...HEAD
+[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.5.2...HEAD
+[4.5.2]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.5.2
 [4.5.1]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.5.1
 [4.5.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.5.0
 [4.4.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.4.0

@@ -1,7 +1,7 @@
 <#
 ===============================================================================
  SCRIPT NAME : Windows-IPU-Readiness-Assessment.ps1
- VERSION     : 4.5.1
+ VERSION     : 4.5.2
  RELEASE DATE: 2026-10-14
  PURPOSE     : Windows Server in-place upgrade (IPU) readiness assessment and
                post-upgrade verification, with a self-contained HTML report
@@ -85,6 +85,8 @@
     load, nothing is collected. The Pester tests use this.
 
 .VERSION HISTORY
+    4.5.2 - A server that is not a print server no longer reports the
+            print server backup as "not started, time budget used up".
     4.5.1 - Fixes from real redacted reports: evidence copies in
             C:\Temp\IPU-Evidence with a folder per topic and a README;
             named SQL Server instances redacted; version numbers no
