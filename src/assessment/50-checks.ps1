@@ -44,7 +44,7 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
     if ($script:Is32BitHost) {
         Add-Result 'COLLECTOR' '32-bit PowerShell host' 'ACTION' 'Running in 32-bit PowerShell on 64-bit Windows and could not relaunch as 64-bit' -Recommendation 'Registry and System32 reads are redirected, so application, SQL and tool results are unreliable. Run the script as a file under 64-bit PowerShell and re-assess.' -Source 'Environment.Is64BitProcess'
     }
-    Add-Result 'ASSESSMENT' 'ReportDestination' 'INFO' $ReportDirectory ('Policy evidence: ' + $(if ($EnableRDPPolicyEvidence) { $PolicyEvidenceRoot } else { 'disabled' })) -Source 'SETTINGS'
+    Add-Result 'ASSESSMENT' 'ReportDestination' 'INFO' $ReportDirectory @(('Evidence copies (unredacted): ' + $EvidenceRoot), ('Policy evidence: ' + $(if ($EnableRDPPolicyEvidence) { Get-EvidenceFolderPath $EvidenceRoot 'Policy' $PolicyEvidenceRoot } else { 'disabled' }))) -Source 'SETTINGS'
     $folderState = $script:OutputFolderState
     if (-not $folderState) { $folderState = 'Existing' }
     $readers = @()
@@ -649,7 +649,7 @@ Register-Check -Id 'network' -Name 'Network, teaming, hosts and routes' -Script 
     # team if the upgrade resets an adapter. Read-only commands.
     if ($EnableNetworkEvidence) {
         try {
-            $dest = Join-Path $PolicyEvidenceRoot ($script:SafeComputerName + '-IPU-Network-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+            $dest = Join-Path (Initialize-EvidenceFolder 'Network') ($script:SafeComputerName + '-IPU-Network-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
             $copy = Save-NetworkEvidence -Destination $dest -Zip $CreatePolicyEvidenceZip
             $script:Data.NetworkEvidence = $copy.Location
             $keep = 'Copy it off the server before the change: it holds the full IP configuration, is not redacted and must not be shared outside the team. netsh-interface-dump.txt is a netsh script that can put the configuration back (read it first; see the user guide).'
@@ -945,8 +945,7 @@ Register-Check -Id 'iis' -Name 'IIS' -Script {
     Add-Result 'IIS' 'Web-Server' 'WARNING' 'Installed' -Recommendation 'Immediately before the IPU, run the appcmd.exe add backup command shown (the copy in this report is from assessment time), and keep site, binding and certificate documentation.' -Source 'Get-WindowsFeature' -Command (Get-RecommendationCommand 'IisBackup').Command -CommandKind 'Change' -Link $script:DocLinks.AppCmd.Url -LinkTitle $script:DocLinks.AppCmd.Title
     if ($EnableIISConfigEvidence) {
         try {
-            $dest = Join-Path $PolicyEvidenceRoot ($script:SafeComputerName + '-IPU-IIS-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
-            $null = Initialize-OutputFolder $PolicyEvidenceRoot
+            $dest = Join-Path (Initialize-EvidenceFolder 'IIS') ($script:SafeComputerName + '-IPU-IIS-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
             $copy = Save-IISConfigEvidence -Destination $dest -Zip $CreatePolicyEvidenceZip
             $script:Data.IISConfigEvidence = $copy.Location
             Add-Result 'IIS' 'ConfigurationCopy' 'OK' $copy.Location @(('Files=' + ($copy.Files -join ', ')), ('applicationHost.config SHA256=' + $copy.ApplicationHostSha256)) -Recommendation 'Restore: copy the files back to %windir%\System32\inetsrv\config, or put them in a folder under inetsrv\backup and run "appcmd restore backup <folder>". See the user guide.' -Source 'inetsrv\config (copied, not changed)'
@@ -1393,7 +1392,7 @@ Register-Check -Id 'printbackup' -Name 'Print server backup (PrintBrm)' -Phase '
         Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' 'PrintBrm.exe not found' $brm -Recommendation 'Export the printers with Print Management (Export printers to a file) before the change, and keep the file off the server.' -Kind 'Finding' -Source 'PrintBrm.exe'
         return
     }
-    $root = [IO.Path]::GetPathRoot($PolicyEvidenceRoot).TrimEnd('\')
+    $root = [IO.Path]::GetPathRoot($EvidenceRoot).TrimEnd('\')
     $disk = @(Get-CimRequired 'Win32_LogicalDisk' ("DeviceID='" + $root + "'")) | Select-Object -First 1
     if (-not $disk -or $null -eq $disk.FreeSpace) { throw ('Could not read the free space of ' + $root) }
     $space = Get-PrintBackupSpaceDecision (Get-PrintDriverStoreSize) ([long]$disk.FreeSpace)
@@ -1402,8 +1401,7 @@ Register-Check -Id 'printbackup' -Name 'Print server backup (PrintBrm)' -Phase '
         return
     }
     $timeout = [math]::Min($PrintBackupTimeoutMinutes * 60, $script:SlowSecondsLeft)
-    $dest = Join-Path $PolicyEvidenceRoot ($script:SafeComputerName + '-IPU-Print-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
-    $null = Initialize-OutputFolder $PolicyEvidenceRoot
+    $dest = Join-Path (Initialize-EvidenceFolder 'Printers') ($script:SafeComputerName + '-IPU-Print-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
     $null = Initialize-OutputFolder $dest
     $file = Join-Path $dest ($script:SafeComputerName + '-printers.printerExport')
     $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -1578,13 +1576,13 @@ function Invoke-RdpPolicyAssessment {
     $driveBlock = New-Object System.Collections.Generic.List[string]
 
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $root = Join-Path $PolicyEvidenceRoot ($script:SafeComputerName + '-IPU-Policy-' + $stamp)
+    $root = Join-Path (Get-EvidenceFolderPath $EvidenceRoot 'Policy' $PolicyEvidenceRoot) ($script:SafeComputerName + '-IPU-Policy-' + $stamp)
     $lgpoRoot = Join-Path $root 'LGPO-Backup'
     $zip = $root + '.zip'
     $script:Data.PolicyEvidence = $root
     $folderOk = $true
     try {
-        $null = Initialize-OutputFolder $PolicyEvidenceRoot
+        $null = Initialize-EvidenceFolder 'Policy'
         $null = Initialize-OutputFolder $root
         New-Item -ItemType Directory -Path $lgpoRoot -Force | Out-Null
     }

@@ -141,6 +141,13 @@ BeforeAll {
         if ($script:Fake.NetEvidenceError) { throw $script:Fake.NetEvidenceError }
         return [pscustomobject]@{ Location = ($Destination + '.zip'); Folder = $Destination; Files = @('ipconfig-all.txt', 'route-print.txt', 'netsh-ipv4-show-config.txt', 'netsh-interface-dump.txt'); Failed = @($script:Fake.NetEvidenceFailed | Where-Object { $_ }) }
     }
+    function Initialize-EvidenceFolder {
+        # Real folders only under the test drive; the default root stays fake.
+        param([string]$Topic)
+        $p = Get-EvidenceFolderPath $EvidenceRoot $Topic $PolicyEvidenceRoot
+        if (Test-RealPath $p) { $null = Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $p -Force }
+        return $p
+    }
     function Get-PrinterInventory {
         if ($script:Fake.PrintInvError) { throw $script:Fake.PrintInvError }
         if ($script:Fake.PrintInv) { return $script:Fake.PrintInv }
@@ -876,9 +883,9 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
     }
 
     Context 'rdp' {
-        BeforeEach { $script:EvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N')) }
+        BeforeEach { $script:RdpEvidence = Join-Path $TestDrive ([guid]::NewGuid().ToString('N')) }
         It 'a reachable server is GO and evidence is written' {
-            $PolicyEvidenceRoot = $script:EvidenceRoot
+            $PolicyEvidenceRoot = $script:RdpEvidence
             (Invoke-TestCheck 'rdp').Outcome | Should -Be 'Completed'
             (Get-Row 'RDP' 'RDPAccessReadiness')[0].Value | Should -Be 'GO'
             (Get-Row 'RDP' 'DriveRedirection')[0].Status | Should -Be 'OK'
@@ -887,14 +894,14 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $script:Data.PolicyEvidence | Should -Exist
         }
         It 'an empty -LgpoExe skips LGPO and the rest of the evidence completes (#150)' {
-            $PolicyEvidenceRoot = $script:EvidenceRoot
+            $PolicyEvidenceRoot = $script:RdpEvidence
             $LgpoExe = ''
             (Invoke-TestCheck 'rdp').Outcome | Should -Be 'Completed'
             (Get-Row 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup')[0].Value | Should -Match 'LGPO disabled'
             (Get-Row 'RDP' 'RDPAccessReadiness')[0].Value | Should -Be 'GO'
         }
         It 'RDP disabled is NO-GO' {
-            $PolicyEvidenceRoot = $script:EvidenceRoot
+            $PolicyEvidenceRoot = $script:RdpEvidence
             $script:Fake.Registry['HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server|fDenyTSConnections'] = 1
             $null = Invoke-TestCheck 'rdp'
             $r = (Get-Row 'RDP' 'RDPAccessReadiness')[0]
@@ -902,19 +909,25 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $r.Value | Should -Be 'NO-GO'
         }
         It 'NLA off and blocked drive redirection are reported' {
-            $PolicyEvidenceRoot = $script:EvidenceRoot
+            $PolicyEvidenceRoot = $script:RdpEvidence
             $script:Fake.Registry['HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp|UserAuthentication'] = 0
             $script:Fake.Registry['HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services|fDisableCdm'] = 1
             $null = Invoke-TestCheck 'rdp'
             (Get-Row 'RDP' 'NetworkLevelAuthentication')[0].Kind | Should -Be 'Observation'
             (Get-Row 'RDP' 'DriveRedirection')[0].Status | Should -Be 'WARNING'
         }
+        It 'policy evidence goes to EvidenceRoot\Policy unless PolicyEvidenceRoot is set (#198)' {
+            $PolicyEvidenceRoot = ''
+            $EvidenceRoot = $script:RdpEvidence
+            (Invoke-TestCheck 'rdp').Outcome | Should -Be 'Completed'
+            $script:Data.PolicyEvidence | Should -BeLike (Join-Path $script:RdpEvidence 'Policy\*-IPU-Policy-*.zip')
+        }
         It 'evidence disabled gives REVIEW without writing files' {
             $EnableRDPPolicyEvidence = $false
-            $PolicyEvidenceRoot = $script:EvidenceRoot
+            $PolicyEvidenceRoot = $script:RdpEvidence
             $null = Invoke-TestCheck 'rdp'
             (Get-Row 'RDP' 'RDPAccessReadiness')[0].Status | Should -Be 'MANUAL'
-            $script:EvidenceRoot | Should -Not -Exist
+            $script:RdpEvidence | Should -Not -Exist
         }
     }
 
@@ -1080,11 +1093,11 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $script:Data.Snapshot.IPv4 | Should -Contain '10.20.30.40'
         }
         It 'saves the network evidence file in the evidence folder (#149)' {
-            $PolicyEvidenceRoot = Join-Path $TestDrive 'evidence'
+            $EvidenceRoot = Join-Path $TestDrive 'evidence'
             $null = Invoke-TestCheck 'network'
             $row = (Get-Row 'NETWORK' 'NetworkEvidence')[0]
             $row.Status | Should -Be 'OK'
-            $row.Value | Should -BeLike (Join-Path $PolicyEvidenceRoot '*-IPU-Network-*.zip')
+            $row.Value | Should -BeLike (Join-Path $EvidenceRoot 'Network\*-IPU-Network-*.zip')
             $row.Recommendation | Should -Match 'off the server'
             $row.Recommendation | Should -Match 'not redacted'
             $script:Data.NetworkEvidence | Should -Be $row.Value
@@ -1204,7 +1217,7 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $script:Fake.Cim["Win32_LogicalDisk|DeviceID='C:'"].FreeSpace = [double]50GB
         }
         It 'exports with PrintBrm -B into the evidence folder' {
-            $PolicyEvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $EvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
             $script:Fake.Native['printbrm.exe'] = { param($a) [IO.File]::WriteAllText($a[2], 'export'); @{ Output = 'Successfully finished operation.' } }
             (Invoke-TestCheck 'printbackup').Outcome | Should -Be 'Completed'
             $call = @($script:Fake.NativeCalls | Where-Object { $_.Exe -eq 'printbrm.exe' })[0]
@@ -1212,7 +1225,7 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $call.Args[1] | Should -Be '-F'
             $row = (Get-Row 'PRINTING' 'PrintBackup')[0]
             $row.Status | Should -Be 'OK'
-            $row.Value | Should -BeLike (Join-Path $PolicyEvidenceRoot '*-IPU-Print-*\*-printers.printerExport')
+            $row.Value | Should -BeLike (Join-Path $EvidenceRoot 'Printers\*-IPU-Print-*\*-printers.printerExport')
             $row.Recommendation | Should -Match 'off the server'
             $row.Recommendation | Should -Match 'PrintBrm -R -F'
         }
@@ -1220,7 +1233,7 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $script:Fake.DriverStoreBytes = [long]4GB
             $script:Fake.Cim['Win32_LogicalDisk'].FreeSpace = [double]6GB
             $script:Fake.Cim["Win32_LogicalDisk|DeviceID='C:'"].FreeSpace = [double]6GB
-            $PolicyEvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $EvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
             $null = Invoke-TestCheck 'printbackup'
             $row = (Get-Row 'PRINTING' 'PrintBackup')[0]
             $row.Status | Should -Be 'MANUAL'
@@ -1229,14 +1242,14 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             @($script:Fake.NativeCalls | Where-Object { $_.Exe -eq 'printbrm.exe' }).Count | Should -Be 0
         }
         It 'a timeout is MANUAL, never OK' {
-            $PolicyEvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $EvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
             $script:Fake.Native['printbrm.exe'] = @{ TimedOut = $true; ExitCode = $null }
             $run = Invoke-TestCheck 'printbackup'
             $run.Outcome | Should -Be 'TimedOut'
             (Get-Row 'PRINTING' 'PrintBackup')[0].Status | Should -Be 'MANUAL'
         }
         It 'a failed export is MANUAL' {
-            $PolicyEvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $EvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
             $script:Fake.Native['printbrm.exe'] = @{ ExitCode = 1; Output = 'Operation failed.' }
             $null = Invoke-TestCheck 'printbackup'
             (Get-Row 'PRINTING' 'PrintBackup')[0].Value | Should -Be 'PrintBrm failed (exit code 1)'
@@ -1381,7 +1394,7 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             (Get-Row 'IIS' 'Site: Default Web Site')[0].Details | Should -Match 'https:\*:443:'
         }
         It 'IIS installed: the configuration is copied into the evidence folder (#76)' {
-            $PolicyEvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $EvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
             $script:Fake.Features['Web-Server'] = $true
             Reset-FakeServerKeep
             $null = Invoke-TestCheck 'iis'
@@ -1393,7 +1406,7 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             (Get-Row 'IIS' 'Web-Server')[0].Recommendation | Should -Match 'appcmd.exe add backup'
         }
         It 'IIS with shared configuration is a WARNING observation (#76)' {
-            $PolicyEvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $EvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
             $script:Fake.Features['Web-Server'] = $true
             $script:Fake.IISShared = '\\files.example.test\iisconfig'
             Reset-FakeServerKeep
@@ -1403,7 +1416,7 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $row.Kind | Should -Be 'Observation'
         }
         It 'a failed copy is MANUAL, not silence (#76)' {
-            $PolicyEvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $EvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
             $script:Fake.Features['Web-Server'] = $true
             $script:Fake.IISCopyError = 'Access is denied'
             Reset-FakeServerKeep

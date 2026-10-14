@@ -181,18 +181,35 @@ These are project values, not Microsoft minimums (unless noted).
 
 When the budget runs out, remaining slow checks are reported as `MANUAL` (skipped), not silently dropped.
 
-### RDP policy evidence
+### Evidence copies
+
+The evidence copies go into one folder, with a subfolder per topic (#198):
+
+```
+C:\Temp\IPU-Evidence\        -EvidenceRoot
+  README.txt                 what is here; unredacted, do not share; copy off before the change
+  Policy\                    RDP and Group Policy evidence, LGPO backup
+  IIS\                       IIS configuration copy
+  Network\                   network configuration copy
+  Printers\                  PrintBrm backup
+```
+
+Each run writes `<Computer>-IPU-<topic>-<time>` folders and ZIPs inside its topic folder. Folders the script creates
+get access for SYSTEM and Administrators only. The copies are **not redacted** and never part of the report or of
+`-RedactExisting`: copy the folder off the server before the change, and do not share it outside the team. It is
+deliberately not inside the report folder, which is retrieved and shared.
 
 | Parameter | Default | Meaning |
 |---|---|---|
+| `EvidenceRoot` | `C:\Temp\IPU-Evidence` | Root of the evidence copies (layout above) |
 | `EnableRDPPolicyEvidence` | `$true` | Collect RDP access and policy evidence |
 | `LgpoExe` | `C:\Temp\Tools\LGPO.exe` | Optional. Used only for backup (`/b`) and `/parse`. A missing file skips LGPO; an empty value (`-LgpoExe ''`) switches it off on purpose |
-| `PolicyEvidenceRoot` | `C:\Temp\Tools\PolBackup` | Timestamped evidence folder and ZIP go here |
-| `CreatePolicyEvidenceZip` | `$true` | Zip the evidence |
-| `EnableIISConfigEvidence` | `$true` | When IIS is installed, copy its configuration files into a restricted evidence folder and ZIP under `PolicyEvidenceRoot` (see [IIS configuration copy](#iis-configuration-copy)) |
-| `EnablePrintBackup` | `$true` | On a print server, export printers, ports and drivers with `PrintBrm -B` into a restricted evidence folder under `PolicyEvidenceRoot`; skipped (MANUAL, with the command) when the drive lacks 1.5 x the size of `spool\drivers` + 1 GB (see [Print server backup](#print-server-backup)) |
+| `PolicyEvidenceRoot` | blank | Blank: the policy evidence goes to `EvidenceRoot\Policy`. Set it to keep the policy evidence in another folder, for example the location used before 4.5.1, `C:\Temp\Tools\PolBackup`. The other copies are not affected |
+| `CreatePolicyEvidenceZip` | `$true` | Zip each evidence copy |
+| `EnableIISConfigEvidence` | `$true` | When IIS is installed, copy its configuration files into a restricted evidence folder and ZIP under `EvidenceRoot\IIS` (see [IIS configuration copy](#iis-configuration-copy)) |
+| `EnablePrintBackup` | `$true` | On a print server, export printers, ports and drivers with `PrintBrm -B` into a restricted evidence folder under `EvidenceRoot\Printers`; skipped (MANUAL, with the command) when the drive lacks 1.5 x the size of `spool\drivers` + 1 GB (see [Print server backup](#print-server-backup)) |
 | `PrintBackupTimeoutMinutes` | `30` | Time limit for the export; counted against the slow-check budget. A timeout is MANUAL |
-| `EnableNetworkEvidence` | `$true` | Save `ipconfig /all`, `route print` and the netsh interface configuration into a restricted evidence folder and ZIP under `PolicyEvidenceRoot` (see [Network configuration copy](#network-configuration-copy)) |
+| `EnableNetworkEvidence` | `$true` | Save `ipconfig /all`, `route print` and the netsh interface configuration into a restricted evidence folder and ZIP under `EvidenceRoot\Network` (see [Network configuration copy](#network-configuration-copy)) |
 
 ### Output
 
@@ -200,7 +217,7 @@ When the budget runs out, remaining slow checks are reported as `MANUAL` (skippe
 |---|---|---|
 | `ReportDirectory` | `C:\Temp\IPU-Assessment` | Where HTML, JSON and log are written |
 | `WriteJson` | `$true` | Write the JSON result (also the post-upgrade baseline) |
-| `RestrictOutputAcl` | `$true` | Folders the script creates (report folder, policy evidence) get access for SYSTEM and Administrators only. Existing folders are never changed; the report warns, with the `icacls` command to fix it, if an existing folder is readable by Everyone, Authenticated Users or Users. `$false` keeps inherited permissions |
+| `RestrictOutputAcl` | `$true` | Folders the script creates (report folder, evidence folders) get access for SYSTEM and Administrators only. Existing folders are never changed; the report warns, with the `icacls` command to fix it, if an existing folder is readable by Everyone, Authenticated Users or Users. `$false` keeps inherited permissions |
 | `NumberCultureName` | `da-DK` | Culture used to format numbers in the SA result line. Invalid values fall back to invariant. The default is kept for existing SA jobs; set your own in a [profile file](#site-data-files-patterns-and-profile) |
 | `RedactExisting` | blank | A folder or report file: write redacted copies of existing reports and stop (see [Sharing a report: redaction](#sharing-a-report-redaction)) |
 | `RedactReport` | `$false` | Replace names, addresses, accounts, SIDs and certificate details with placeholders in the HTML and JSON, for sharing outside the team. See [Sharing a report: redaction](#sharing-a-report-redaction) |
@@ -499,7 +516,7 @@ so when a vendor renames a product you edit the table, not the logic.
 ### IIS configuration copy
 
 When IIS is installed, the assessment copies the files in `%windir%\System32\inetsrv\config` (`applicationHost.config`,
-`administration.config`, `redirection.config`, ...) into `<PolicyEvidenceRoot>\<Computer>-IPU-IIS-<time>` and zips it.
+`administration.config`, `redirection.config`, ...) into `<EvidenceRoot>\IIS\<Computer>-IPU-IIS-<time>` and zips it.
 These are the files `appcmd add backup` saves. IIS itself is not touched. The folder gets SYSTEM and Administrators access
 only, because `applicationHost.config` can contain encrypted passwords. The report shows where the copy is and the
 SHA-256 of `applicationHost.config`.
@@ -517,7 +534,7 @@ share), the report says so: back up the files on that share as well.
 
 ### Network configuration copy
 
-The `network` check saves the output of read-only commands into `<PolicyEvidenceRoot>\<Computer>-IPU-Network-<time>`
+The `network` check saves the output of read-only commands into `<EvidenceRoot>\Network\<Computer>-IPU-Network-<time>`
 and zips it (#149):
 
 | File | Command |
@@ -555,7 +572,7 @@ Third-party port monitors and print processors load into the spooler and are a c
 the vendor's version for the target first. LPR ports and the LPD Service are deprecated by Microsoft.
 
 The `printbackup` check then exports the whole print configuration (printers, ports, drivers, queues) with
-`PrintBrm.exe -B` into `<PolicyEvidenceRoot>\<Computer>-IPU-Print-<time>\<Computer>-printers.printerExport`. PrintBrm
+`PrintBrm.exe -B` into `<EvidenceRoot>\Printers\<Computer>-IPU-Print-<time>\<Computer>-printers.printerExport`. PrintBrm
 only reads the spooler configuration. The export holds every driver package and can be a few MB or several GB, so it
 runs only when the drive has 1.5 times the size of `%windir%\System32\spool\drivers` plus 1 GB free; otherwise the row
 is MANUAL with the command to run to another drive. It is a slow check with a timeout (*PrintBackupTimeoutMinutes*,
