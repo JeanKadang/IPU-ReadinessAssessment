@@ -408,6 +408,11 @@ function Get-RedactionLiteralFromResult {
         # description.
         if ($r.Area -eq 'FILE_SHARES' -and [string]$r.Item -match '^Share: (.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'NAME' } }
         if ($r.Area -eq 'FILE_SHARES' -and (@($r.Details) -join ' | ') -match '(?:^|\|\s*)Description=([^|]+)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'NAME' } }
+        # Named SQL Server instances and their instance ids (#195).
+        if ($r.Area -eq 'SQL' -and [string]$r.Item -match '^(?:Database Engine|Reporting Services|Analysis Services): (.+)$' -and $script:SqlDefaultInstanceNames -notcontains $Matches[1]) {
+            $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'NAME' }
+            if ((@($r.Details) -join ' | ') -match '(?:^|\|\s*)InstanceId=([^|\s]+)') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'NAME' } }
+        }
         # Print servers (#148): printer, share and port names, port host names.
         if ($r.Area -eq 'PRINTING' -and [string]$r.Item -match '^(?:Printer|Port): (.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'NAME' } }
         if ($r.Area -eq 'PRINTING' -and (@($r.Details) -join ' | ') -match '(?:^|\|\s*)Share=([^|]+)' -and $Matches[1].Trim() -ne '(not shared)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'NAME' } }

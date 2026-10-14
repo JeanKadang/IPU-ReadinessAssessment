@@ -47,6 +47,8 @@ $script:SupportedUpgradePaths = @{
 # Server in Windows" compatibility matrix).
 # Verified: see $script:FactSources.SqlSupportedOnTarget.
 $script:SqlReleaseNames = @{ 9='2005'; 10='2008 / 2008 R2'; 11='2012'; 12='2014'; 13='2016'; 14='2017'; 15='2019'; 16='2022'; 17='2025' }
+# Default instance names: product names, kept readable in redacted reports (#195).
+$script:SqlDefaultInstanceNames = @('MSSQLSERVER','SQLEXPRESS','SSRS','PBIRS')
 $script:SqlSupportedOnTarget = @{
     '2022' = @(14,15,16,17)
     '2025' = @(15,16,17)
