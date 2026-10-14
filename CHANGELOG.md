@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- A server that is not a print server no longer gets "Not fully assessed: Print server backup (PrintBrm) was not started, the time budget was used up" at the top of the report; the backup simply does not apply there. The time-budget wording is now used only when the budget really ran out (#206).
+
 ## [4.5.1] - 2026-10-14
 
 Fixes from a review of real redacted reports (4.3.0 pre-upgrade, 4.4.0 post-upgrade, redacted with 4.5.0), and evidence folders named after their contents.

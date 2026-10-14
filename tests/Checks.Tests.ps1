@@ -1166,7 +1166,8 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $script:Data.PrintServer | Should -BeFalse
             $run = Invoke-TestCheck 'printbackup'
             $run.Outcome | Should -Be 'Skipped'
-            $run.Message | Should -Be 'Not a print server'
+            $run.Message | Should -Be 'Not applicable: not a print server'
+            @((Get-CoverageNotice @($run)).Problems).Count | Should -Be 0
         }
         It 'a print server: printers, ports, drivers and components, virtual printers left out' {
             New-FakePrintServer
@@ -1263,7 +1264,7 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
         }
         It 'not run after the upgrade' {
             $AssessmentMode = 'Post'
-            (Invoke-TestCheck 'printbackup').Message | Should -Be 'Not needed after the upgrade'
+            (Invoke-TestCheck 'printbackup').Message | Should -Be 'Not applicable: not needed after the upgrade'
         }
     }
 
