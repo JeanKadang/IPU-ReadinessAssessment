@@ -2089,6 +2089,40 @@ Describe 'Redaction gaps from a live run (#100)' {
     }
 }
 
+Describe 'Redaction keeps version numbers (#194)' {
+    BeforeEach { $script:VerCtx = New-RedactionContext 'SRV01' 'corp.example.test' }
+    It 'keeps <What>' -TestCases @(
+        @{ What = 'a version after "version"'; In = 'Example Agent version 5.8.3.123' }
+        @{ What = 'a version after "Version="'; In = 'Version=5.8.3.123' }
+        @{ What = 'a version folder in a path'; In = 'C:\Program Files\Example\datrep\4.0.2.39\scan.exe' }
+    ) {
+        Protect-ReportText $In $script:VerCtx | Should -Be $In
+    }
+    It 'still replaces <What>' -TestCases @(
+        @{ What = 'a UNC host'; In = '\\10.1.2.3\share'; Out = '\\IP-1\share' }
+        @{ What = 'an address after a product name'; In = 'Agent 10.1.2.3'; Out = 'Agent IP-1' }
+        @{ What = 'an address at the end of a path'; In = 'route\10.1.2.3'; Out = 'route\IP-1' }
+        @{ What = 'an address in a key=value pair'; In = 'Gateway=10.1.2.3'; Out = 'Gateway=IP-1' }
+    ) {
+        Protect-ReportText $In $script:VerCtx | Should -Be $Out
+    }
+    It 'keeps version fields in the JSON, and redacts addresses next to them' {
+        $o = Protect-ReportObject ([pscustomobject]@{ Name = 'Example Agent'; Version = '5.8.3.123'; Note = 'Server 10.9.8.7'; Driver = [ordered]@{ DriverVersion = '1.2.3.4'; Address = '10.1.1.1' } }) $script:VerCtx
+        $o.Version | Should -Be '5.8.3.123'
+        $o.Driver.DriverVersion | Should -Be '1.2.3.4'
+        $o.Note | Should -Be 'Server IP-1'
+        $o.Driver.Address | Should -Be 'IP-2'
+        # A field named Version that holds more than a version is still redacted.
+        (Protect-ReportObject ([pscustomobject]@{ Version = 'from 10.1.2.3' }) $script:VerCtx).Version | Should -Be 'from IP-3'
+    }
+    It 'detection evidence names the version, so it stays readable' {
+        $e = Get-DetectionEvidence ([pscustomobject]@{ Apps = @([pscustomobject]@{ Name = 'Example Agent'; Version = '5.8.3.123' }, [pscustomobject]@{ Name = 'No Version App'; Version = '' }); Services = @(); Drivers = @() })
+        $e[0] | Should -Be 'Example Agent version 5.8.3.123'
+        $e[1] | Should -Be 'No Version App'
+        Protect-ReportText $e[0] $script:VerCtx | Should -Be $e[0]
+    }
+}
+
 Describe 'Redact existing reports (#101)' {
     BeforeAll {
         $script:RexDir = Join-Path $TestDrive 'existing'
