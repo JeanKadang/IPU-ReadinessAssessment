@@ -4,8 +4,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [4.5.1] - 2026-10-14
+
+Fixes from a review of real redacted reports (4.3.0 pre-upgrade, 4.4.0 post-upgrade, redacted with 4.5.0), and evidence folders named after their contents.
+
 ### Changed
 - Evidence copies have a folder of their own, named after their contents (#198): `C:\Temp\IPU-Evidence` (new parameter `-EvidenceRoot`) with `Policy`, `IIS`, `Network` and `Printers` subfolders and a README that says the copies are unredacted. Before, all of them went to `C:\Temp\Tools\PolBackup`; the IIS, network and printer copies move. `-PolicyEvidenceRoot` now defaults to blank (= `EvidenceRoot\Policy`); a site that sets it keeps its policy evidence there. `LGPO.exe` stays in `C:\Temp\Tools`.
+
+### Fixed
+- Redacted reports no longer replace version numbers as if they were IPv4 addresses: version fields in the JSON, product versions in detection evidence (now written `<name> version <v>`) and version folders in paths stay readable; addresses, including UNC hosts, are still replaced (#194).
+- Post-upgrade comparison: a scheduled task renamed only by its version or GUID (as some updaters do) is no longer reported missing (#196).
+- Post-upgrade comparison: `AzureArcSetup` missing after an upgrade to Windows Server 2025 is INFO, not WARNING; Azure Arc Setup became a Feature on Demand in 2025 (#197).
+
+### Security
+- Named SQL Server instances and their instance ids are redacted in the Summary, SQL, service and port rows, live and with `-RedactExisting`; a real redacted report had shown one. Default instance names stay readable (#195).
 
 ## [4.5.0] - 2026-10-14
 
@@ -174,7 +186,8 @@ Restructure of the 3.x script (released as a script file only).
 
 Local Group Policy backup and RDP readiness. Superseded by 4.0.0.
 
-[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.5.0...HEAD
+[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.5.1...HEAD
+[4.5.1]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.5.1
 [4.5.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.5.0
 [4.4.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.4.0
 [4.3.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.3.0

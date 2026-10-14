@@ -35,7 +35,7 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
 </style></head><body><div class="wrap">
 <div class="hero"><h1>Windows Server IPU Readiness Assessment</h1>
 <p><strong>SRV-APP01</strong> &nbsp;&rarr;&nbsp; Windows Server 2025</p>
-<p>Started 2026-10-06 09:44 &nbsp;|&nbsp; Completed 2026-10-06 09:58 &nbsp;|&nbsp; Runtime 00:14:00 &nbsp;|&nbsp; Collector 4.5.0</p>
+<p>Started 2026-10-06 09:44 &nbsp;|&nbsp; Completed 2026-10-06 09:58 &nbsp;|&nbsp; Runtime 00:14:00 &nbsp;|&nbsp; Collector 4.5.1</p>
 <p class="verdict">Overall IPU assessment: <span class="badge s-blocker">BLOCKER</span></p></div>
 <div class="cards">
 <a class="card" href="#decision" aria-label="1 BLOCKER findings - go to the list"><small>BLOCKER</small><b>1</b></a>
@@ -62,8 +62,9 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
 <div class="fact"><b>RDP drive redirection</b>Allowed locally</div>
 <div class="fact"><b>C: drive</b>Size 100,00 GB, free 22,00 GB</div>
 <div class="fact"><b>Memory GB / logical CPUs</b>16,00 / 2</div>
-<div class="fact"><b>Policy evidence</b>C:\Temp\Tools\PolBackup\SRV-APP01-IPU-Policy-20261006-094454.zip</div>
-<div class="fact"><b>Network evidence</b>C:\Temp\Tools\PolBackup\SRV-APP01-IPU-Network-20261006-094431.zip</div>
+<div class="fact"><b>Evidence copies (unredacted)</b>C:\Temp\IPU-Evidence</div>
+<div class="fact"><b>Policy evidence</b>C:\Temp\IPU-Evidence\Policy\SRV-APP01-IPU-Policy-20261006-094454.zip</div>
+<div class="fact"><b>Network evidence</b>C:\Temp\IPU-Evidence\Network\SRV-APP01-IPU-Network-20261006-094431.zip</div>
 <div class="fact"><b>Machine-readable result</b>C:\Temp\IPU-Assessment\SRV-APP01-IPU-Assessment.json</div>
 </div></section>
 <section class="legend"><h2>Status meaning</h2>
@@ -123,7 +124,7 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
 <details open><summary>Network (4)</summary><div>
 <div class="scroll"><table><caption class="sr">Network: all records</caption><thead><tr><th scope="col">Status</th><th scope="col">Area</th><th scope="col">Item</th><th scope="col">Value</th><th scope="col">Details</th><th scope="col">Recommendation</th><th scope="col">Source</th></tr></thead><tbody>
 <tr><td class="nw"><span class="badge s-manual">MANUAL</span></td><td class="nw">Hosts file and static routes</td><td class="item">HostsFile</td><td class="txt">ActiveEntries=1</td><td class="txt">C:\Windows\System32\drivers\etc\hosts</td><td class="txt">Confirm owner and purpose of each hosts entry and test the affected name resolution after IPU.</td><td class="txt muted"></td></tr>
-<tr><td class="nw"><span class="badge s-ok">OK</span></td><td class="nw">Network adapters and teaming</td><td class="item">NetworkEvidence</td><td class="txt">C:\Temp\Tools\PolBackup\SRV-APP01-IPU-Network-20261006-094431.zip</td><td class="txt">Files=ipconfig-all.txt, route-print.txt, netsh-ipv4-show-config.txt, netsh-interface-dump.txt, adapter-advanced-properties.txt</td><td class="txt">Copy it off the server before the change: it holds the full IP configuration, is not redacted and must not be shared outside the team. netsh-interface-dump.txt is a netsh script that can put the configuration back (read it first; see the user guide).</td><td class="txt muted"></td></tr>
+<tr><td class="nw"><span class="badge s-ok">OK</span></td><td class="nw">Network adapters and teaming</td><td class="item">NetworkEvidence</td><td class="txt">C:\Temp\IPU-Evidence\Network\SRV-APP01-IPU-Network-20261006-094431.zip</td><td class="txt">Files=ipconfig-all.txt, route-print.txt, netsh-ipv4-show-config.txt, netsh-interface-dump.txt, adapter-advanced-properties.txt</td><td class="txt">Copy it off the server before the change: it holds the full IP configuration, is not redacted and must not be shared outside the team. netsh-interface-dump.txt is a netsh script that can put the configuration back (read it first; see the user guide).</td><td class="txt muted"></td></tr>
 <tr><td class="nw"><span class="badge s-ok">OK</span></td><td class="nw">Network adapters and teaming</td><td class="item">NICTeaming</td><td class="txt">No LBFO team detected</td><td class="txt"></td><td class="txt"></td><td class="txt muted"></td></tr>
 <tr><td class="nw"><span class="badge s-info">INFO</span></td><td class="nw">Network adapters and teaming</td><td class="item">Ethernet0</td><td class="txt">IPv4=10.20.30.40 / 255.255.255.0</td><td class="txt">Gateway=10.20.30.1 | DNS=10.20.1.10,10.20.1.11 | DHCP=False | MAC=00:50:56:00:00:01 | DNS suffix=corp.example.test | Register in DNS=Yes, with suffix=No | WINS=(none) | NetBIOS over TCP/IP=Default (set by DHCP) | Metric=15</td><td class="txt"></td><td class="txt muted"></td></tr>
 </tbody></table></div>
@@ -168,6 +169,6 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
 <tr><td>Setup compatibility scan</td><td>Slow</td><td class="nw"><span class="badge s-ok">OK</span> Completed</td><td class="nw">00:11:05</td><td class="txt"></td></tr>
 </tbody></table></div><h2 style="margin-top:16px">Records</h2>
 </div></details>
-<footer>Collector 4.5.0 | 36 records | Read-only local assessment. It does not prove backups, credentials, licensing or application/vendor support. Commands are shown, never run, by this script.</footer></div>
+<footer>Collector 4.5.1 | 36 records | Read-only local assessment. It does not prove backups, credentials, licensing or application/vendor support. Commands are shown, never run, by this script.</footer></div>
 <script type="text/javascript">document.documentElement.className+=" js";document.addEventListener("click",function(e){var b=e.target;if(!b||!b.classList||!b.classList.contains("copy"))return;var t=b.getAttribute("data-cmd");var done=function(){b.textContent="Copied";setTimeout(function(){b.textContent="Copy"},1500)};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,function(){})}else{var a=document.createElement("textarea");a.value=t;document.body.appendChild(a);a.select();try{document.execCommand("copy");done()}catch(x){}document.body.removeChild(a)}});document.addEventListener("click",function(e){var b=e.target;if(!b||!b.classList||!b.classList.contains("tgl"))return;var o=b.getAttribute("data-open")==="1";var d=document.querySelectorAll("details");for(var i=0;i<d.length;i++){d[i].open=o}});var closedForPrint=[];window.addEventListener("beforeprint",function(){closedForPrint=[];var d=document.querySelectorAll("details:not([open])");for(var i=0;i<d.length;i++){d[i].open=true;closedForPrint.push(d[i])}});window.addEventListener("afterprint",function(){for(var i=0;i<closedForPrint.length;i++){closedForPrint[i].open=false}closedForPrint=[]});</script>
 </body></html>

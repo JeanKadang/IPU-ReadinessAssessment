@@ -1,6 +1,6 @@
 {
   "Schema": "IPU-Assessment/1",
-  "CollectorVersion": "4.5.0",
+  "CollectorVersion": "4.5.1",
   "ComputerName": "SRV-APP01",
   "Mode": "Pre",
   "TargetServerVersion": "2025",
@@ -338,7 +338,7 @@
       "Item": "NetworkEvidence",
       "Status": "OK",
       "Kind": "Evidence",
-      "Value": "C:\\Temp\\Tools\\PolBackup\\SRV-APP01-IPU-Network-20261006-094431.zip",
+      "Value": "C:\\Temp\\IPU-Evidence\\Network\\SRV-APP01-IPU-Network-20261006-094431.zip",
       "Details": "Files=ipconfig-all.txt, route-print.txt, netsh-ipv4-show-config.txt, netsh-interface-dump.txt, adapter-advanced-properties.txt",
       "Recommendation": "Copy it off the server before the change: it holds the full IP configuration, is not redacted and must not be shared outside the team. netsh-interface-dump.txt is a netsh script that can put the configuration back (read it first; see the user guide).",
       "Source": "",
