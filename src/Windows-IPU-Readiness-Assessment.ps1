@@ -713,7 +713,9 @@ function Get-GpoListRegistryEntry {
     # says the computer "does not have RSoP data". Read-only.
     $root = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine\GPO-List'
     $list = @()
-    foreach ($k in @(Get-ChildItem -LiteralPath $root -ErrorAction Stop | Sort-Object { [int]$_.PSChildName })) {
+    # The subkeys are numbered in hexadecimal (0..9, a, b, ...); [int]'a'
+    # failed and, inside a check, stopped the whole read (#223).
+    foreach ($k in @(Get-ChildItem -LiteralPath $root -ErrorAction Stop | Sort-Object { ConvertFrom-GpoListKeyName ([string]$_.PSChildName) })) {
         $p = Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction SilentlyContinue
         if ($p) { $list += [pscustomobject]@{ DisplayName = [string]$p.DisplayName; GPOName = [string]$p.GPOName; Link = [string]$p.Link } }
     }
@@ -1948,6 +1950,15 @@ function Compare-NetworkAdapter {
 # are not print-server work and are left out of the inventory.
 $script:VirtualPrinterDrivers = '^(Microsoft Print To PDF|Microsoft XPS Document Writer( v4)?|Microsoft Shared Fax Driver|Send to Microsoft OneNote.*|Microsoft Software Printer Driver|Remote Desktop Easy Print)$'
 $script:PrinterDriverDocUrl = 'https://learn.microsoft.com/en-us/windows-hardware/drivers/print/end-of-servicing-plan-for-third-party-printer-drivers-on-windows'
+
+function ConvertFrom-GpoListKeyName {
+    # Pure (#223): the position of a GPO-List subkey. Names are hexadecimal
+    # numbers; anything else sorts last instead of failing.
+    param([string]$Name)
+    $n = 0
+    if ([int]::TryParse($Name, [Globalization.NumberStyles]::HexNumber, [Globalization.CultureInfo]::InvariantCulture, [ref]$n)) { return $n }
+    return [int]::MaxValue
+}
 
 function Get-GpoFallbackNote {
     # Pure (#215): what the registry fallback for the applied GPOs found,
