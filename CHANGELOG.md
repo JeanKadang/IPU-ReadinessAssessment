@@ -4,6 +4,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [4.5.3] - 2026-10-15
+
+A redaction key for the team, and fixes from a review of five real reports (Windows Server 2016, redacted with 4.5.2).
+
+### Added
+- Redaction key (#211): with `-RedactExisting` or `-RedactReport`, a `DO-NOT-SHARE-...-REDACTION-KEY.csv` next to the redacted copies says which placeholder stands for which original (`HOST-1;HOST;<name>`), so answers about a shared copy can be mapped back. `;` separated, UTF-8 with BOM, readable by SYSTEM, Administrators and the current user only. Share only the `REDACTED-*` files. `-WriteRedactionKey $false` switches it off.
+
+### Changed
+- "Tasks with named accounts" no longer lists Windows' per-user `User_Feed_Synchronization-{GUID}` tasks (61 on one file server); one INFO line counts them (#214).
+- When gpresult and the Group Policy registry fallback both give nothing, the MANUAL row says what the fallback found (key missing, empty, unreadable), so it can be followed up (#215).
+
+### Fixed
+- A version with a build suffix (`11.0.16.1+1`) is no longer redacted as an IPv4 address (#213).
+
+### Security
+- Certificate subjects: locality, state, street, postal code, e-mail and serial number are redacted too; a real redacted report showed the city. The country code stays (#212).
+
 ## [4.5.2] - 2026-10-14
 
 ### Fixed
@@ -191,7 +208,8 @@ Restructure of the 3.x script (released as a script file only).
 
 Local Group Policy backup and RDP readiness. Superseded by 4.0.0.
 
-[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.5.2...HEAD
+[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.5.3...HEAD
+[4.5.3]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.5.3
 [4.5.2]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.5.2
 [4.5.1]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.5.1
 [4.5.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.5.0

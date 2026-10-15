@@ -1,8 +1,8 @@
 <#
 ===============================================================================
  SCRIPT NAME : Windows-IPU-Readiness-Assessment.ps1
- VERSION     : 4.5.2
- RELEASE DATE: 2026-10-14
+ VERSION     : 4.5.3
+ RELEASE DATE: 2026-10-15
  PURPOSE     : Windows Server in-place upgrade (IPU) readiness assessment and
                post-upgrade verification, with a self-contained HTML report
                and a JSON result file written on the assessed server.
@@ -85,6 +85,11 @@
     load, nothing is collected. The Pester tests use this.
 
 .VERSION HISTORY
+    4.5.3 - Redaction key (DO-NOT-SHARE-...-REDACTION-KEY.csv) next to
+            redacted copies. Certificate locality and other subject
+            fields redacted; versions with a build suffix kept. Windows
+            per-user feed tasks summarised; the Group Policy registry
+            fallback says what it found.
     4.5.2 - A server that is not a print server no longer reports the
             print server backup as "not started, time budget used up".
     4.5.1 - Fixes from real redacted reports: evidence copies in
@@ -351,7 +356,7 @@ $script:FeatureLifecycle = @(
 # 3. CORE
 # =============================================================================
 $ProgressPreference = 'SilentlyContinue'
-$script:CollectorVersion  = '4.5.2'
+$script:CollectorVersion  = '4.5.3'
 # Settings a profile file (-ProfileFile) may set. Mode, target, media path,
 # report folder and redaction describe one run, so they stay arguments only.
 $script:ProfileSettingNames = @(
