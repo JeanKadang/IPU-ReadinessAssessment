@@ -1785,6 +1785,13 @@ function ConvertTo-ServiceBaseName {
     return ($Name -replace '_[0-9a-fA-F]{4,}$', '')
 }
 
+function Test-WindowsPerUserTask {
+    # Pure (#214): the RSS feed synchronisation task Windows creates at the
+    # root of the task library for each user who signs in.
+    param([string]$FullName)
+    return ($FullName -match '^\\User_Feed_Synchronization-\{[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}$')
+}
+
 function ConvertTo-TaskBaseName {
     # Pure (#196): some updaters put their version and a GUID in the task
     # name and rename the task when they update
@@ -4420,7 +4427,7 @@ Register-Check -Id 'tasks' -Name 'Scheduled tasks' -Script {
         return
     }
     $builtIn = '^(SYSTEM|NT AUTHORITY\\.*|LOCAL SERVICE|NETWORK SERVICE|S-1-5-(18|19|20)|INTERACTIVE|Users|Administrators|BUILTIN\\.*|Everyone)$'
-    $named = @()
+    $named = @(); $perUser = 0
     foreach ($t in @(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.TaskPath -notlike '\Microsoft\*' } | Sort-Object TaskPath,TaskName)) {
         $user = [string]$t.Principal.UserId
         if (-not $user) { $user = [string]$t.Principal.GroupId }
@@ -4428,8 +4435,13 @@ Register-Check -Id 'tasks' -Name 'Scheduled tasks' -Script {
         $fullName = $t.TaskPath + $t.TaskName
         if ($user -and $user -notmatch $builtIn) { Add-RedactionLiteral $user 'ACCOUNT' }
         $script:Data.Snapshot.Tasks += $fullName
+        # Windows' own per-user feed tasks: one line for all of them (#214).
+        if (Test-WindowsPerUserTask $fullName) { $perUser++; continue }
         Add-Result 'TASKS' $fullName 'INFO' ('RunAs=' + $user) @(('State=' + $t.State),('Action=' + $actions)) -Source 'Get-ScheduledTask'
         if ($user -and $user -notmatch $builtIn) { $named += ($fullName + ' (' + $user + ')') }
+    }
+    if ($perUser -gt 0) {
+        Add-Result 'TASKS' 'WindowsPerUserTasks' 'INFO' ('Count=' + $perUser) 'User_Feed_Synchronization-{GUID}: created by Windows for each user who signed in; they run as that user.' -Recommendation 'Not relevant for the upgrade.' -Source 'Get-ScheduledTask'
     }
     if ($named.Count -gt 0) {
         Add-Result 'TASKS' 'TasksWithNamedAccounts' 'WARNING' ('Count=' + $named.Count) $named -Recommendation 'These tasks run as named accounts with stored credentials. Confirm the passwords are known/managed and test the tasks after IPU.' -Kind 'Observation' -Source 'Get-ScheduledTask'

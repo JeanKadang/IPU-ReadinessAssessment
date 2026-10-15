@@ -2510,6 +2510,11 @@ Describe 'Post-upgrade comparison: expected changes and NLA (#158)' {
         $r.Details | Should -Match 'IKEEXT'
         $r.Details | Should -Match 'tiledatamodelsvc'
     }
+    It 'recognises only Windows'' per-user feed tasks at the root (#214)' {
+        Test-WindowsPerUserTask '\User_Feed_Synchronization-{0F5377C2-5909-4495-A7CC-00331141DFDA}' | Should -BeTrue
+        Test-WindowsPerUserTask '\Example\User_Feed_Synchronization-{0F5377C2-5909-4495-A7CC-00331141DFDA}' | Should -BeFalse
+        Test-WindowsPerUserTask '\User_Feed_Synchronization' | Should -BeFalse
+    }
     It 'a task renamed only by its version or GUID is not missing; a removed task still is (#196)' {
         $old = '\ExampleVendor\Updater\UpdaterTaskSystem156.0.8067.0{F1E18D42-90EA-4F0D-AFDA-E08AB09647CA}'
         $new = '\ExampleVendor\Updater\UpdaterTaskSystem157.0.8089.0{0A1B2C3D-4E5F-6071-8293-A4B5C6D7E8F9}'
