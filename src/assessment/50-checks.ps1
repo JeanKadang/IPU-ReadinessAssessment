@@ -344,11 +344,20 @@ Register-Check -Id 'grouppolicy' -Name 'Group Policy and AD groups' -Script {
     # GPOs is the fallback; MANUAL stays only when both fail.
     $gpSource = 'gpresult'
     if (-not $gp -and $domainMember) {
+        $fbEntries = 0; $fbNamed = 0; $fbError = ''; $fbMissing = $false
         try {
             $entries = Get-GpoListRegistryEntry
+            $fbEntries = @($entries | Where-Object { $_ }).Count
             $fallback = ConvertFrom-GpoListEntry @($entries)
-            if (@($fallback.Gpos).Count -gt 0) { $gp = $fallback; $gpSource = 'registry' }
-        } catch { Write-Swallowed $_ }
+            $fbNamed = @($fallback.Gpos).Count
+            if ($fbNamed -gt 0) { $gp = $fallback; $gpSource = 'registry' }
+        } catch {
+            $fbError = $_.Exception.Message
+            $fbMissing = ($_.Exception -is [System.Management.Automation.ItemNotFoundException])
+            Write-Swallowed $_
+        }
+        # Say what the fallback found, so a MANUAL row can be followed up (#215).
+        if (-not $gp) { $gpError = ($gpError + ' | ' + (Get-GpoFallbackNote $fbEntries $fbNamed $fbError $fbMissing)).Trim(' |') }
     }
     $groups = @(); $filters = @{}; $adError = ''; $adRead = $true
     if ($domainMember) {

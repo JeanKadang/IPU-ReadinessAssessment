@@ -745,6 +745,7 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $script:Fake.GpoListError = 'Simulated: key missing'
             $null = Invoke-TestCheck 'grouppolicy'
             (Get-Row 'GROUP_POLICY' 'GroupPolicyScope')[0].Status | Should -Be 'MANUAL'
+            (Get-Row 'GROUP_POLICY' 'GroupPolicyScope')[0].Details | Should -Match 'Registry fallback failed: Simulated: key missing'
             (Get-Row 'GROUP_POLICY' 'ADGroup').Count | Should -Be 3
         }
         It 'Group Policy not applied for longer than GroupPolicyMaxAgeDays is a WARNING (#80)' {

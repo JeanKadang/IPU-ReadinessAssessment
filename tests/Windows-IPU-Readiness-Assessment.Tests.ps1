@@ -3173,6 +3173,17 @@ Describe 'Redaction covers every collected kind (#124)' {
     }
 }
 
+Describe 'Group Policy registry fallback says what it found (#215)' {
+    It '<Case>' -TestCases @(
+        @{ Case = 'key missing';   Entries = 0; Named = 0; Err = 'Cannot find path'; Missing = $true;  Expected = 'Registry fallback: the key HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine\GPO-List does not exist' }
+        @{ Case = 'read error';    Entries = 0; Named = 0; Err = 'Access denied';    Missing = $false; Expected = 'Registry fallback failed: Access denied' }
+        @{ Case = 'empty key';     Entries = 0; Named = 0; Err = '';                 Missing = $false; Expected = 'Registry fallback: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine\GPO-List has no entries' }
+        @{ Case = 'nameless';      Entries = 3; Named = 0; Err = '';                 Missing = $false; Expected = 'Registry fallback: 3 entries in HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine\GPO-List, none with a GPO name' }
+    ) {
+        Get-GpoFallbackNote $Entries $Named $Err $Missing | Should -Be $Expected
+    }
+}
+
 Describe 'Evidence folders named after their contents (#198)' {
     It 'each topic has its own folder under EvidenceRoot' -TestCases @(
         @{ Topic = 'Policy' }, @{ Topic = 'IIS' }, @{ Topic = 'Network' }, @{ Topic = 'Printers' }
