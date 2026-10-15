@@ -11,7 +11,7 @@ $script:ProfileSettingNames = @(
     'CertificateWarningDays','SystemPartitionMinFreeMB','RecoveryPartitionMinFreeMB',
     'RunDISMScanHealth','RunSFCVerifyOnly','DISMTimeoutMinutes','SFCTimeoutMinutes','SlowCheckBudgetMinutes','CompatScanTimeoutMinutes',
     'EvidenceRoot','EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip','EnableIISConfigEvidence','EnableNetworkEvidence','EnablePrintBackup','PrintBackupTimeoutMinutes',
-    'WriteJson','RestrictOutputAcl','NumberCultureName'
+    'WriteJson','RestrictOutputAcl','NumberCultureName','WriteRedactionKey'
 )
 $script:PatternFields = @('Label','App','Service','Display','Driver','Disabled','Link','LinkTitle')
 $script:Results           = New-Object System.Collections.Generic.List[object]

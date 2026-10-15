@@ -83,6 +83,11 @@ param(
     # Write REDACTED- copies of reports that already exist (a folder or one
     # report file), without collecting anything (#101). The originals stay.
     [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$RedactExisting = '',
+    # With -RedactReport or -RedactExisting, also write the key that maps each
+    # placeholder to its original name (#211): DO-NOT-SHARE-...-REDACTION-
+    # KEY.csv next to the redacted copies, readable by SYSTEM, Administrators
+    # and the current user only. Keep it in the team; share only REDACTED-*.
+    [bool]$WriteRedactionKey = $true,
     # Folders this run creates (report, policy evidence) get SYSTEM and
     # Administrators access only; reports describe the server in detail.
     # Existing folders are never changed. $false keeps inherited permissions.

@@ -111,6 +111,9 @@ try {
     $redHtml = @(Get-ChildItem -LiteralPath $redactedFolder -Filter 'REDACTED-*-IPU-Assessment.html' -ErrorAction SilentlyContinue)
     $redJson = @(Get-ChildItem -LiteralPath $redactedFolder -Filter 'REDACTED-*-IPU-Assessment.json' -ErrorAction SilentlyContinue)
     Assert-That ($redHtml.Count -eq 1 -and $redJson.Count -eq 1) 'Redacted run writes REDACTED-* files'
+    # The key to the placeholders (#211): one file, and it does hold the real name.
+    $keyFile = @(Get-ChildItem -LiteralPath $redactedFolder -Filter 'DO-NOT-SHARE-*-REDACTION-KEY.csv' -ErrorAction SilentlyContinue)
+    Assert-That ($keyFile.Count -eq 1 -and ([IO.File]::ReadAllText($keyFile[0].FullName) -match ('(?m);HOST;' + [regex]::Escape($env:COMPUTERNAME) + '\r?$'))) 'Redacted run writes the redaction key, which maps a HOST placeholder to the computer name'
     Assert-That (@(Get-ChildItem -LiteralPath $redactedFolder -Filter ($computer + '-IPU-Assessment.*') -ErrorAction SilentlyContinue | Where-Object { $_.Extension -ne '.log' }).Count -eq 0) 'Redacted run writes no report named after the computer'
     if ($redHtml.Count -eq 1 -and $redJson.Count -eq 1) {
         $secrets = @($env:COMPUTERNAME) + @(Get-CimInstance Win32_NetworkAdapterConfiguration -Filter 'IPEnabled=True' | ForEach-Object { $_.IPAddress } | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' -and $_ -notmatch '^127\.' })

@@ -1401,7 +1401,7 @@ function New-RedactionContext {
     $netbios = @()
     if ($DomainFqdn -and $DomainFqdn -match '\.') { $netbios += ($DomainFqdn -split '\.')[0] }
     if ($ComputerName) { $netbios += $ComputerName }
-    return @{ Map = @{}; Counters = @{}; ComputerName = $ComputerName; DomainFqdn = $DomainFqdn; NetBios = $netbios; Literals = @{} }
+    return @{ Map = @{}; Counters = @{}; Originals = @{}; ComputerName = $ComputerName; DomainFqdn = $DomainFqdn; NetBios = $netbios; Literals = @{} }
 }
 
 # Names that never identify a site: built-in accounts and groups (#100).
@@ -1440,8 +1440,28 @@ function Get-RedactionPlaceholder {
         $n = 1 + [int]$Context.Counters[$Kind]
         $Context.Counters[$Kind] = $n
         $Context.Map[$key] = $Kind + '-' + $n
+        # The original, in its first-seen spelling, for the redaction key (#211).
+        if ($Context.ContainsKey('Originals') -and $null -ne $Context.Originals) { $Context.Originals[$Kind + '-' + $n] = [pscustomobject]@{ Placeholder = ($Kind + '-' + $n); Kind = $Kind; Original = $Value } }
     }
     return $Context.Map[$key]
+}
+
+function ConvertTo-RedactionKeyLine {
+    # Pure (#211): the lines of the redaction key, a ';' CSV with
+    # Placeholder;Kind;Original, sorted by kind and number. A value that a
+    # spreadsheet would run as a formula gets a leading apostrophe; values
+    # with ';', quotes or line breaks are quoted.
+    param([System.Collections.IDictionary]$Originals)
+    $cell = {
+        param([string]$v)
+        if ($v -match '^[=+\-@\t\r]') { $v = "'" + $v }
+        if ($v -match '[;"\r\n]') { $v = '"' + ($v -replace '"', '""') + '"' }
+        return $v
+    }
+    $lines = @('Placeholder;Kind;Original')
+    $rows = @($Originals.Values | Sort-Object @{ Expression = { [string]$_.Kind } }, @{ Expression = { [int](([string]$_.Placeholder) -replace '^.*-', '') } })
+    foreach ($r in $rows) { $lines += ((& $cell ([string]$r.Placeholder)) + ';' + (& $cell ([string]$r.Kind)) + ';' + (& $cell ([string]$r.Original))) }
+    return $lines
 }
 
 function Get-RedactionDomainKey {

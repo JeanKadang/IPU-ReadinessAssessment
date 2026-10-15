@@ -221,6 +221,7 @@ deliberately not inside the report folder, which is retrieved and shared.
 | `NumberCultureName` | `da-DK` | Culture used to format numbers in the SA result line. Invalid values fall back to invariant. The default is kept for existing SA jobs; set your own in a [profile file](#site-data-files-patterns-and-profile) |
 | `RedactExisting` | blank | A folder or report file: write redacted copies of existing reports and stop (see [Sharing a report: redaction](#sharing-a-report-redaction)) |
 | `RedactReport` | `$false` | Replace names, addresses, accounts, SIDs and certificate details with placeholders in the HTML and JSON, for sharing outside the team. See [Sharing a report: redaction](#sharing-a-report-redaction) |
+| `WriteRedactionKey` | `$true` | With `-RedactReport` or `-RedactExisting`, also write the key that maps each placeholder to its original next to the redacted copies (see [Sharing a report: redaction](#sharing-a-report-redaction)). Share only the `REDACTED-*` files |
 
 ### Site data files
 
@@ -369,8 +370,21 @@ What changes with redaction:
 - The JSON has `"Redacted": true`. A redacted result **cannot** be the post-upgrade baseline: placeholders cannot
   be compared with the real server, and the post-upgrade run says so. Keep a normal (unredacted) pre-upgrade run
   for the comparison and redact a second run, or only the copies you share.
-- The placeholder mapping is never written to any file.
+- The key to the placeholders is written next to the redacted copies (see below), and nowhere else.
 - The fleet overview shows each redacted file as its own row, marked `redacted`.
+
+**The redaction key.** With redaction, the script also writes a "translator" file that says which placeholder stands
+for which original (#211), so the team can map answers about a redacted copy back to the real servers:
+
+- `-RedactExisting`: `DO-NOT-SHARE-REDACTION-KEY-<time>.csv` in the same folder, one file for all the copies made in
+  that run (they share one placeholder map, so `HOST-2` means the same server in every copy).
+- `-RedactReport $true`: `DO-NOT-SHARE-<Computer>-IPU-Assessment-REDACTION-KEY.csv` (or `-IPU-PostUpgrade-`) next to
+  the report.
+
+It is a `;` separated file with `Placeholder;Kind;Original` (for example `HOST-1;HOST;SRV-APP01`) that opens in Excel,
+non-ASCII names included. Only SYSTEM, Administrators and the account that ran the script can read it. **It holds the
+real names: keep it in the team, and share only the `REDACTED-*` files, never the whole folder.** Switch it off with
+`-WriteRedactionKey $false`.
 
 ### JSON shape
 
