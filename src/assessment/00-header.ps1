@@ -88,8 +88,8 @@
     4.5.3 - Redaction key (DO-NOT-SHARE-...-REDACTION-KEY.csv) next to
             redacted copies. Certificate locality and other subject
             fields redacted; versions with a build suffix kept. Windows
-            per-user feed tasks summarised; the Group Policy registry
-            fallback says what it found.
+            per-user feed tasks summarised. The Group Policy registry
+            fallback works with more than ten GPOs and says what it found.
     4.5.2 - A server that is not a print server no longer reports the
             print server backup as "not started, time budget used up".
     4.5.1 - Fixes from real redacted reports: evidence copies in

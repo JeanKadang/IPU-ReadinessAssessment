@@ -16,6 +16,7 @@ A redaction key for the team, and fixes from a review of five real reports (Wind
 - When gpresult and the Group Policy registry fallback both give nothing, the MANUAL row says what the fallback found (key missing, empty, unreadable), so it can be followed up (#215).
 
 ### Fixed
+- The Group Policy registry fallback (#160) now works on servers with more than ten applied GPOs: their registry subkeys are numbered in hexadecimal (`a`, `b`, ...), which stopped the read, so Group Policy stayed MANUAL when gpresult had no data as SYSTEM (#223).
 - A version with a build suffix (`11.0.16.1+1`) is no longer redacted as an IPv4 address (#213).
 
 ### Security
