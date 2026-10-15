@@ -581,6 +581,15 @@ function Compare-NetworkAdapter {
 $script:VirtualPrinterDrivers = '^(Microsoft Print To PDF|Microsoft XPS Document Writer( v4)?|Microsoft Shared Fax Driver|Send to Microsoft OneNote.*|Microsoft Software Printer Driver|Remote Desktop Easy Print)$'
 $script:PrinterDriverDocUrl = 'https://learn.microsoft.com/en-us/windows-hardware/drivers/print/end-of-servicing-plan-for-third-party-printer-drivers-on-windows'
 
+function ConvertFrom-GpoListKeyName {
+    # Pure (#223): the position of a GPO-List subkey. Names are hexadecimal
+    # numbers; anything else sorts last instead of failing.
+    param([string]$Name)
+    $n = 0
+    if ([int]::TryParse($Name, [Globalization.NumberStyles]::HexNumber, [Globalization.CultureInfo]::InvariantCulture, [ref]$n)) { return $n }
+    return [int]::MaxValue
+}
+
 function Get-GpoFallbackNote {
     # Pure (#215): what the registry fallback for the applied GPOs found,
     # for the details of the MANUAL Group Policy row.

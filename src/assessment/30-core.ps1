@@ -364,7 +364,9 @@ function Get-GpoListRegistryEntry {
     # says the computer "does not have RSoP data". Read-only.
     $root = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine\GPO-List'
     $list = @()
-    foreach ($k in @(Get-ChildItem -LiteralPath $root -ErrorAction Stop | Sort-Object { [int]$_.PSChildName })) {
+    # The subkeys are numbered in hexadecimal (0..9, a, b, ...); [int]'a'
+    # failed and, inside a check, stopped the whole read (#223).
+    foreach ($k in @(Get-ChildItem -LiteralPath $root -ErrorAction Stop | Sort-Object { ConvertFrom-GpoListKeyName ([string]$_.PSChildName) })) {
         $p = Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction SilentlyContinue
         if ($p) { $list += [pscustomobject]@{ DisplayName = [string]$p.DisplayName; GPOName = [string]$p.GPOName; Link = [string]$p.Link } }
     }
