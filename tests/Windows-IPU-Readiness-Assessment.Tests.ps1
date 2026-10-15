@@ -3116,6 +3116,16 @@ Describe 'Read-only system helpers (#127: every function runs in a test)' {
         $r = try { Get-AdComputerDn } catch { 'threw: ' + $_.Exception.Message }
         $r | Should -Match '^(CN=.+|threw: .+)'
     }
+    It 'Get-GpoListRegistryEntry reads hexadecimal subkeys (a, b, 10) in order, even with errors terminating (#223)' {
+        Mock Get-ChildItem { @('0', '1', '9', 'a', 'b', '10', 'odd') | ForEach-Object { [pscustomobject]@{ PSChildName = $_; PSPath = ('k' + $_) } } }
+        Mock Get-ItemProperty { [pscustomobject]@{ DisplayName = ('GPO ' + $LiteralPath.Substring(1)); GPOName = ''; Link = 'Local' } }
+        $ErrorActionPreference = 'Stop'
+        $list = Get-GpoListRegistryEntry
+        ($list | ForEach-Object { $_.DisplayName }) -join ',' | Should -Be 'GPO 0,GPO 1,GPO 9,GPO a,GPO b,GPO 10,GPO odd'
+        ConvertFrom-GpoListKeyName 'b' | Should -Be 11
+        ConvertFrom-GpoListKeyName '10' | Should -Be 16
+        ConvertFrom-GpoListKeyName 'odd' | Should -Be ([int]::MaxValue)
+    }
     It 'Get-GpoListRegistryEntry reads the GPO-List keys in numeric order' {
         Mock Get-ChildItem { @([pscustomobject]@{ PSChildName = '10'; PSPath = 'k10' }, [pscustomobject]@{ PSChildName = '2'; PSPath = 'k2' }) }
         Mock Get-ItemProperty { if ($LiteralPath -eq 'k2') { [pscustomobject]@{ DisplayName = 'Second'; GPOName = '{2}'; Link = 'Local' } } else { [pscustomobject]@{ DisplayName = 'Tenth'; GPOName = '{10}'; Link = 'Local' } } }
