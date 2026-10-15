@@ -581,6 +581,18 @@ function Compare-NetworkAdapter {
 $script:VirtualPrinterDrivers = '^(Microsoft Print To PDF|Microsoft XPS Document Writer( v4)?|Microsoft Shared Fax Driver|Send to Microsoft OneNote.*|Microsoft Software Printer Driver|Remote Desktop Easy Print)$'
 $script:PrinterDriverDocUrl = 'https://learn.microsoft.com/en-us/windows-hardware/drivers/print/end-of-servicing-plan-for-third-party-printer-drivers-on-windows'
 
+function Get-GpoFallbackNote {
+    # Pure (#215): what the registry fallback for the applied GPOs found,
+    # for the details of the MANUAL Group Policy row.
+    param([int]$EntryCount, [int]$NamedCount, [string]$ErrorMessage = '', [bool]$KeyMissing = $false)
+    $key = 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine\GPO-List'
+    if ($KeyMissing) { return ('Registry fallback: the key ' + $key + ' does not exist') }
+    if ($ErrorMessage) { return ('Registry fallback failed: ' + $ErrorMessage) }
+    if ($EntryCount -eq 0) { return ('Registry fallback: ' + $key + ' has no entries') }
+    if ($NamedCount -eq 0) { return ('Registry fallback: ' + $EntryCount + ' entries in ' + $key + ', none with a GPO name') }
+    return ('Registry fallback: ' + $NamedCount + ' GPOs read')
+}
+
 function Get-EvidenceFolderPath {
     # Pure (#198): the folder for one evidence topic. PolicyEvidenceRoot,
     # when set, keeps the policy evidence where a site already has it.
