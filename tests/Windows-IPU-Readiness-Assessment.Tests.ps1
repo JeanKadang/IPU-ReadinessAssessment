@@ -2088,9 +2088,19 @@ Describe 'Redaction gaps from a live run (#100)' {
         @{ What = 'framework paths';             In = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319' }
         @{ What = 'file names and namespaces';   In = 'applicationHost.config tmmon.dll System.IO.Compression Windows.old ASP.NET' }
         @{ What = 'built-in accounts and GPOs';  In = 'LogOnAs=LocalSystem | GPO: Default Domain Policy | NT AUTHORITY\NetworkService' }
-        @{ What = 'certificate locality fields'; In = 'Subject=L=Copenhagen, C=DK' }
+        @{ What = 'the certificate country code (#212)'; In = 'Subject=C=DK' }
     ) {
         Protect $In | Should -Be $In
+    }
+}
+
+Describe 'Certificate subjects (#212)' {
+    It 'replaces locality, state, street, postal code, e-mail and serial number; keeps the country' {
+        $ctx = New-RedactionContext 'SRV01' 'corp.example.test'
+        $out = Protect-ReportText 'Subject=CN=App Gateway, O=Example Org, L=Exampleton, S=Example Region, STREET=Main Street 1, PostalCode=2750, E=pki@example.org, SERIALNUMBER=12345678, C=DK' $ctx
+        foreach ($w in 'App Gateway', 'Example Org', 'Exampleton', 'Example Region', 'Main Street 1', '2750', 'pki@example.org', '12345678') { $out | Should -Not -Match ([regex]::Escape($w)) }
+        $out | Should -Match 'C=DK'
+        $out | Should -Match 'L=NAME-\d+'
     }
 }
 
@@ -3085,6 +3095,7 @@ Describe 'Redaction covers every collected kind (#124)' {
             Sid = 'S-1-5-21-' + $rng.Next(100000, 999999) + '-' + $rng.Next(100000, 999999) + '-' + $rng.Next(100000, 999999) + '-1105'
             Thumbprint = (New-Hex 40).ToUpperInvariant()
             SqlInstance = 'SQ' + (New-Word 6).ToUpperInvariant()
+            City = 'City' + (New-Word); Region = 'Region' + (New-Word)
             Printer = 'PR-' + (New-Word); PrinterShare = 'PS' + (New-Word); PrinterPort = 'port_' + (New-Word); PrinterHost = 'prn' + (New-Word 5) + '.' + $fqdn
         }
         $script:RedValues = $v
@@ -3117,7 +3128,7 @@ Describe 'Redaction covers every collected kind (#124)' {
         Add-Result 'CLUSTER' ('Node: ' + $v.Node) 'INFO' 'State=Up'
         Add-Result 'LICENSING' 'WindowsActivation' 'OK' 'Licensed (KMS)' ('KMS host: ' + $v.KmsHost + '.' + $fqdn + ':1688 (found via DNS)')
         Add-Result 'NETWORK' 'Ethernet0' 'INFO' ('IPv4=' + $v.IPv4 + ' / 255.255.255.0') @(('Gateway=' + $v.IPv4Gateway), ('DNS=' + $v.IPv4Gateway), ('MAC=' + $v.Mac), ('IPv6=' + $v.IPv6 + ',' + $v.LinkLocal), ('DNS suffix=' + $fqdn))
-        Add-Result 'PKI' 'Certificate' 'INFO' ('CN=' + $v.HostInDomain + ', O=' + $v.Org) ('Thumbprint=' + $v.Thumbprint)
+        Add-Result 'PKI' 'Certificate' 'INFO' ('CN=' + $v.HostInDomain + ', O=' + $v.Org + ', L=' + $v.City + ', S=' + $v.Region + ', C=DK') ('Thumbprint=' + $v.Thumbprint)
         Add-Result 'SQL' ('Database Engine: ' + $v.SqlInstance) 'OK' 'SQL Server 2022' @('Version=16.0.1000.6', 'Edition=Standard Edition', ('InstanceId=MSSQL16.' + $v.SqlInstance))
         Add-Result 'SERVICES' ('MSSQL$' + $v.SqlInstance) 'INFO' ('SQL Server (' + $v.SqlInstance + ')') 'State=Running | StartMode=Auto | LogOnAs=NT Service\MSSQLSERVER'
         Add-Result 'PRINTING' ('Printer: ' + $v.Printer) 'INFO' ('Driver=Example PCL6; Port=' + $v.PrinterPort) @(('Share=' + $v.PrinterShare), 'Published in AD=True')
