@@ -2110,6 +2110,7 @@ Describe 'Redaction keeps version numbers (#194)' {
         @{ What = 'a version after "version"'; In = 'Example Agent version 5.8.3.123' }
         @{ What = 'a version after "Version="'; In = 'Version=5.8.3.123' }
         @{ What = 'a version folder in a path'; In = 'C:\Program Files\Example\datrep\4.0.2.39\scan.exe' }
+        @{ What = 'a version with a build suffix (#213)'; In = 'Example OpenJDK with Hotspot 11.0.16.1+1 (x64)' }
     ) {
         Protect-ReportText $In $script:VerCtx | Should -Be $In
     }
