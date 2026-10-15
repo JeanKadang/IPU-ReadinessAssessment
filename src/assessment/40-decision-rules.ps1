@@ -1571,7 +1571,8 @@ function Protect-ReportText {
     # number after "version" (any case) or alone as a folder in a path
     # (\4.0.2.39\, but not the UNC host \\10.1.2.3\) is a version (#194).
     $text = $t
-    $t = [regex]::Replace($t, '(?<![\w.])(?<![Vv]ersion[=: ])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![\w.])', {
+    # Followed by "+" it is a version with a build suffix, 11.0.16.1+1 (#213).
+    $t = [regex]::Replace($t, '(?<![\w.])(?<![Vv]ersion[=: ])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![\w.+])', {
         param($m)
         $before = $(if ($m.Index -ge 1) { $text[$m.Index - 1] } else { [char]0 })
         $before2 = $(if ($m.Index -ge 2) { $text[$m.Index - 2] } else { [char]0 })
