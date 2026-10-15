@@ -1506,7 +1506,9 @@ function Protect-ReportText {
     # Certificate thumbprints (40 hex characters)
     $t = [regex]::Replace($t, '(?<![0-9A-Fa-f])[0-9A-Fa-f]{40}(?![0-9A-Fa-f])', { param($m) Get-RedactionPlaceholder $ctx 'CERT' $m.Value })
     # Certificate subject and issuer names
-    $t = [regex]::Replace($t, '\b(CN|OU|O)=([^,|<>\]\r\n]*[^,|<>\]\r\n\s])', { param($m) $m.Groups[1].Value + '=' + (Get-RedactionPlaceholder $ctx 'NAME' $m.Groups[2].Value) })
+    # Also locality, state, street, postal code, e-mail and serial number:
+    # a city can identify a customer (#212). C= (country code) is kept.
+    $t = [regex]::Replace($t, '\b(CN|OU|O|L|S|ST|STREET|PostalCode|E|EMAIL|SERIALNUMBER)=([^,|<>\]\r\n]*[^,|<>\]\r\n\s])', { param($m) $m.Groups[1].Value + '=' + (Get-RedactionPlaceholder $ctx 'NAME' $m.Groups[2].Value) })
     # Domain components of a distinguished name (#100, #99)
     # The DC= components together are the domain: one placeholder, the same
     # one the domain name gets elsewhere.

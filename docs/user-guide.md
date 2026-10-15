@@ -345,10 +345,12 @@ within one run (the same address is always `IP-3`):
 | GPO names (not *Default Domain Policy* and *Local Group Policy*) | `GPO-n` | `Web Server Lockdown` |
 | WMI filter names, OU names in Group Policy link paths and distinguished names | `NAME-n` | `.../Servers/Web` |
 | Domain SIDs (well-known SIDs such as `S-1-5-32-544` are kept) | `SID-n` | `S-1-5-21-...-500` |
-| Certificate thumbprints and subject/issuer names | `CERT-n`, `NAME-n` | `CN=srv01.corp...` |
+| Certificate thumbprints and subject/issuer names and fields (all but the country code `C=`) | `CERT-n`, `NAME-n` | `CN=srv01.corp...`, `L=<city>` |
 
 Kept: well-known accounts (`BUILTIN\...`, `NT AUTHORITY\...`, `LocalSystem`), versions, file and registry paths, product
-names, ports, WMI filter query text, and certificate locality fields (`L=`, `S=`, `C=`, city level only).
+names, ports, WMI filter query text, and the country code of certificate subjects (`C=`). Since 4.5.3 the other
+subject fields (`L=`, `S=`, `STREET=`, `PostalCode=`, `E=`, `SERIALNUMBER=`) are replaced too: a city can identify
+a customer (#212).
 
 > **Redaction is best effort.** It recognises the patterns above and the names the script itself collected
 > (accounts, GPO names). Company words inside product, task or file names, or an unusual format, can stay visible.
