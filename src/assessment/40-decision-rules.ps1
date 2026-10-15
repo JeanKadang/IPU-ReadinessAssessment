@@ -422,6 +422,13 @@ function ConvertTo-ServiceBaseName {
     return ($Name -replace '_[0-9a-fA-F]{4,}$', '')
 }
 
+function Test-WindowsPerUserTask {
+    # Pure (#214): the RSS feed synchronisation task Windows creates at the
+    # root of the task library for each user who signs in.
+    param([string]$FullName)
+    return ($FullName -match '^\\User_Feed_Synchronization-\{[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}$')
+}
+
 function ConvertTo-TaskBaseName {
     # Pure (#196): some updaters put their version and a GUID in the task
     # name and rename the task when they update

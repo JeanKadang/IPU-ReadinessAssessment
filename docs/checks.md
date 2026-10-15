@@ -79,7 +79,7 @@ check is added without one.
 |---|---|---|
 | `backup` Backup and VSS | In-guest backup agents (Commvault, Spectrum Protect, Veeam), VSS writers and providers | `ACTION` failed VSS writers; `MANUAL` observation writer state unreadable; `WARNING` observation third-party VSS provider |
 | `services` Services | Automatic and manual services with state and logon account | INFO; the list to compare after the upgrade |
-| `tasks` Scheduled tasks | Non-Microsoft scheduled tasks, run-as account and action | `WARNING` observation for tasks that run as named accounts (stored credentials) |
+| `tasks` Scheduled tasks | Non-Microsoft scheduled tasks, run-as account and action; Windows' per-user `User_Feed_Synchronization-{GUID}` tasks are counted in one line | `WARNING` observation for tasks that run as named accounts (stored credentials); `INFO` count of Windows per-user feed tasks |
 | `checklist` Standard change checklist | Steps that a script cannot prove: backup and fallback, credentials and console access, target licensing (what the target needs for the current activation channel: KMS host key, MAK, AVMA host, OEM or retail licence), installation media, application owner sign-off, monitoring agents | `MANUAL` checklist items (do not affect the overall status) |
 
 ## After the upgrade (`-AssessmentMode Post`)

@@ -1666,6 +1666,18 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             (Get-Row 'TASKS' 'TasksWithNamedAccounts')[0].Details | Should -Match 'svc_batch'
             $script:Data.Snapshot.Tasks | Should -Contain '\Example\Nightly export'
         }
+        It 'Windows per-user feed tasks are one INFO line, not named-account tasks (#214)' {
+            foreach ($g in '0F5377C2-5909-4495-A7CC-00331141DFDA', '55B0E49D-1AF0-44AF-B8D0-0123456789AB') {
+                $script:Fake.Tasks += [pscustomobject]@{ TaskPath = '\'; TaskName = ('User_Feed_Synchronization-{' + $g + '}'); State = 'Ready'; Principal = [pscustomobject]@{ UserId = 'CORP\jdoe'; GroupId = '' }; Actions = @([pscustomobject]@{ Execute = 'C:\Windows\system32\msfeedssync.exe'; Arguments = 'sync' }) }
+            }
+            $script:Fake.Tasks += [pscustomobject]@{ TaskPath = '\Example\'; TaskName = 'Nightly export'; State = 'Ready'; Principal = [pscustomobject]@{ UserId = 'CORP\svc_batch'; GroupId = '' }; Actions = @() }
+            $null = Invoke-TestCheck 'tasks'
+            (Get-Row 'TASKS' 'WindowsPerUserTasks')[0].Value | Should -Be 'Count=2'
+            $named = (Get-Row 'TASKS' 'TasksWithNamedAccounts')[0]
+            $named.Value | Should -Be 'Count=1'
+            $named.Details | Should -Not -Match 'User_Feed'
+            @($script:Data.Snapshot.Tasks | Where-Object { $_ -like '\User_Feed_Synchronization-*' }).Count | Should -Be 2
+        }
         It 'collects run-as accounts for redaction only from non-Microsoft tasks (#114)' {
             # On windows-2022 a Microsoft task runs as an account named like an
             # ordinary word. It is never reported, so it must not become a
