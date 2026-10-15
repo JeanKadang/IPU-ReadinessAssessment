@@ -2128,6 +2128,77 @@ Describe 'Redaction keeps version numbers (#194)' {
     }
 }
 
+Describe 'Redaction key (#211)' {
+    It 'records each placeholder with its kind and first-seen original' {
+        $ctx = New-RedactionContext 'SRV-KEY01' 'corp.example.test'
+        $null = Get-RedactionPlaceholder $ctx 'HOST' 'SRV-Key01'
+        $null = Get-RedactionPlaceholder $ctx 'HOST' 'srv-key01'
+        $null = Get-RedactionPlaceholder $ctx 'IP' '10.1.2.3'
+        $null = Get-RedactionPlaceholder $ctx 'HOST' 'web01.corp.example.test'
+        $lines = ConvertTo-RedactionKeyLine $ctx.Originals
+        ($lines -join '|') | Should -Be 'Placeholder;Kind;Original|HOST-1;HOST;SRV-Key01|HOST-2;HOST;web01.corp.example.test|IP-1;IP;10.1.2.3'
+    }
+    It 'sorts numerically and neutralises formulas, separators and quotes' {
+        $o = [ordered]@{}
+        foreach ($i in 1..11) { $o['NAME-' + $i] = [pscustomobject]@{ Placeholder = 'NAME-' + $i; Kind = 'NAME'; Original = ('n' + $i) } }
+        $o['NAME-2'].Original = '=HYPERLINK("x")'
+        $o['NAME-3'].Original = 'a;b'
+        $lines = ConvertTo-RedactionKeyLine $o
+        $lines[2] | Should -Be 'NAME-2;NAME;"''=HYPERLINK(""x"")"'
+        $lines[3] | Should -Be 'NAME-3;NAME;"a;b"'
+        $lines[11] | Should -Match '^NAME-11;'
+    }
+    It 'Write-RedactionKey writes a BOM UTF-8 CSV that keeps non-ASCII names' {
+        $ctx = New-RedactionContext 'SRV01' ''
+        $null = Get-RedactionPlaceholder $ctx 'NAME' ('S' + [char]0x00F8 + 'borg')
+        $path = Join-Path $TestDrive 'key.csv'
+        Write-RedactionKey $ctx $path | Should -Be $path
+        $bytes = [IO.File]::ReadAllBytes($path)
+        ($bytes[0..2] -join ',') | Should -Be '239,187,191'
+        [IO.File]::ReadAllText($path) | Should -Match ('NAME-1;NAME;S' + [char]0x00F8 + 'borg')
+    }
+    It 'the key file is readable by SYSTEM, Administrators and the current user only (Windows)' -Skip:($env:OS -ne 'Windows_NT') {
+        $path = Join-Path $TestDrive 'key-acl.csv'
+        $null = Write-RedactionKey (New-RedactionContext 'SRV01' '') $path
+        $acl = Get-Acl -LiteralPath $path
+        $acl.AreAccessRulesProtected | Should -BeTrue
+        $sids = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { [string]$_.IdentityReference })
+        @($sids | Where-Object { @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545') -contains $_ }) | Should -BeNullOrEmpty
+    }
+    Context '-RedactExisting' {
+        BeforeAll {
+            $script:KeyDir = Join-Path $TestDrive 'key-existing'
+            New-Item -ItemType Directory -Path $script:KeyDir | Out-Null
+            $sample = Join-Path $PSScriptRoot '..\docs\samples'
+            Copy-Item -LiteralPath (Join-Path $sample 'sample-result.json') -Destination (Join-Path $script:KeyDir 'SRV-APP01-IPU-Assessment.json')
+            Copy-Item -LiteralPath (Join-Path $sample 'sample-report.html') -Destination (Join-Path $script:KeyDir 'SRV-APP01-IPU-Assessment.html')
+            $WriteRedactionKey = $true
+            $script:KeyCode = Invoke-RedactExisting $script:KeyDir
+            $script:KeyFiles = @(Get-ChildItem -LiteralPath $script:KeyDir -Filter 'DO-NOT-SHARE-REDACTION-KEY-*.csv')
+        }
+        It 'writes one key file next to the copies' {
+            $script:KeyCode | Should -Be 0
+            $script:KeyFiles.Count | Should -Be 1
+        }
+        It 'maps the server and every placeholder used in the copies' {
+            $key = [IO.File]::ReadAllText($script:KeyFiles[0].FullName)
+            $key | Should -Match 'HOST-1;HOST;SRV-APP01'
+            $copies = (@(Get-ChildItem -LiteralPath $script:KeyDir -Filter 'REDACTED-*') | ForEach-Object { [IO.File]::ReadAllText($_.FullName) }) -join ' '
+            $used = @([regex]::Matches($copies, '\b(HOST|IP|NAME|ACCOUNT|DOMAIN|GPO|SID|MAC|CERT)-\d+\b') | ForEach-Object { $_.Value } | Sort-Object -Unique)
+            $used.Count | Should -BeGreaterThan 3
+            foreach ($p in $used) { $key | Should -Match ('(?m)^' + [regex]::Escape($p) + ';') }
+        }
+        It 'is not written with -WriteRedactionKey $false' {
+            $dir = Join-Path $TestDrive 'key-off'
+            New-Item -ItemType Directory -Path $dir | Out-Null
+            Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\docs\samples\sample-result.json') -Destination (Join-Path $dir 'SRV-APP01-IPU-Assessment.json')
+            $WriteRedactionKey = $false
+            Invoke-RedactExisting $dir | Should -Be 0
+            @(Get-ChildItem -LiteralPath $dir -Filter 'DO-NOT-SHARE-*').Count | Should -Be 0
+        }
+    }
+}
+
 Describe 'Redact existing reports (#101)' {
     BeforeAll {
         $script:RexDir = Join-Path $TestDrive 'existing'
@@ -2159,7 +2230,7 @@ Describe 'Redact existing reports (#101)' {
         [IO.File]::ReadAllText($script:RexHtml[0].FullName) | Should -Match ([regex]::Escape('<strong>' + $json.ComputerName + '</strong>'))
     }
     It 'leaves the originals unchanged' {
-        $after = @(Get-ChildItem -LiteralPath $script:RexDir | Where-Object { $_.Name -notlike 'REDACTED-*' } | ForEach-Object { $_.Name + '|' + (Get-FileHash -LiteralPath $_.FullName).Hash })
+        $after = @(Get-ChildItem -LiteralPath $script:RexDir | Where-Object { $_.Name -notlike 'REDACTED-*' -and $_.Name -notlike 'DO-NOT-SHARE-*' } | ForEach-Object { $_.Name + '|' + (Get-FileHash -LiteralPath $_.FullName).Hash })
         ($after -join ';') | Should -Be ($script:RexBefore -join ';')
     }
     It 'skips a report that is already redacted' {

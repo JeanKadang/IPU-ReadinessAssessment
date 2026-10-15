@@ -247,6 +247,11 @@ param(
     # Write REDACTED- copies of reports that already exist (a folder or one
     # report file), without collecting anything (#101). The originals stay.
     [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$RedactExisting = '',
+    # With -RedactReport or -RedactExisting, also write the key that maps each
+    # placeholder to its original name (#211): DO-NOT-SHARE-...-REDACTION-
+    # KEY.csv next to the redacted copies, readable by SYSTEM, Administrators
+    # and the current user only. Keep it in the team; share only REDACTED-*.
+    [bool]$WriteRedactionKey = $true,
     # Folders this run creates (report, policy evidence) get SYSTEM and
     # Administrators access only; reports describe the server in detail.
     # Existing folders are never changed. $false keeps inherited permissions.
@@ -355,7 +360,7 @@ $script:ProfileSettingNames = @(
     'CertificateWarningDays','SystemPartitionMinFreeMB','RecoveryPartitionMinFreeMB',
     'RunDISMScanHealth','RunSFCVerifyOnly','DISMTimeoutMinutes','SFCTimeoutMinutes','SlowCheckBudgetMinutes','CompatScanTimeoutMinutes',
     'EvidenceRoot','EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip','EnableIISConfigEvidence','EnableNetworkEvidence','EnablePrintBackup','PrintBackupTimeoutMinutes',
-    'WriteJson','RestrictOutputAcl','NumberCultureName'
+    'WriteJson','RestrictOutputAcl','NumberCultureName','WriteRedactionKey'
 )
 $script:PatternFields = @('Label','App','Service','Display','Driver','Disabled','Link','LinkTitle')
 $script:Results           = New-Object System.Collections.Generic.List[object]
@@ -2764,7 +2769,7 @@ function New-RedactionContext {
     $netbios = @()
     if ($DomainFqdn -and $DomainFqdn -match '\.') { $netbios += ($DomainFqdn -split '\.')[0] }
     if ($ComputerName) { $netbios += $ComputerName }
-    return @{ Map = @{}; Counters = @{}; ComputerName = $ComputerName; DomainFqdn = $DomainFqdn; NetBios = $netbios; Literals = @{} }
+    return @{ Map = @{}; Counters = @{}; Originals = @{}; ComputerName = $ComputerName; DomainFqdn = $DomainFqdn; NetBios = $netbios; Literals = @{} }
 }
 
 # Names that never identify a site: built-in accounts and groups (#100).
@@ -2803,8 +2808,28 @@ function Get-RedactionPlaceholder {
         $n = 1 + [int]$Context.Counters[$Kind]
         $Context.Counters[$Kind] = $n
         $Context.Map[$key] = $Kind + '-' + $n
+        # The original, in its first-seen spelling, for the redaction key (#211).
+        if ($Context.ContainsKey('Originals') -and $null -ne $Context.Originals) { $Context.Originals[$Kind + '-' + $n] = [pscustomobject]@{ Placeholder = ($Kind + '-' + $n); Kind = $Kind; Original = $Value } }
     }
     return $Context.Map[$key]
+}
+
+function ConvertTo-RedactionKeyLine {
+    # Pure (#211): the lines of the redaction key, a ';' CSV with
+    # Placeholder;Kind;Original, sorted by kind and number. A value that a
+    # spreadsheet would run as a formula gets a leading apostrophe; values
+    # with ';', quotes or line breaks are quoted.
+    param([System.Collections.IDictionary]$Originals)
+    $cell = {
+        param([string]$v)
+        if ($v -match '^[=+\-@\t\r]') { $v = "'" + $v }
+        if ($v -match '[;"\r\n]') { $v = '"' + ($v -replace '"', '""') + '"' }
+        return $v
+    }
+    $lines = @('Placeholder;Kind;Original')
+    $rows = @($Originals.Values | Sort-Object @{ Expression = { [string]$_.Kind } }, @{ Expression = { [int](([string]$_.Placeholder) -replace '^.*-', '') } })
+    foreach ($r in $rows) { $lines += ((& $cell ([string]$r.Placeholder)) + ';' + (& $cell ([string]$r.Kind)) + ';' + (& $cell ([string]$r.Original))) }
+    return $lines
 }
 
 function Get-RedactionDomainKey {
@@ -5162,6 +5187,13 @@ function Write-AssessmentReport {
         try { Write-AssessmentJson -Results $results -Overall $overall -Completed $completed -Partial:$Partial }
         catch { Write-AssessmentLog 'WARNING' 'JSON' ('JSON result could not be written: ' + $_.Exception.Message) }
     }
+    # The key to the placeholders (#211), after the HTML and the JSON so it
+    # holds every placeholder they use.
+    if ($RedactReport -and $WriteRedactionKey) {
+        $keyPath = Join-Path (Split-Path -Parent $script:ReportPath) ('DO-NOT-SHARE-' + $script:SafeComputerName + $script:ReportSuffix + '-REDACTION-KEY.csv')
+        try { $script:Data.RedactionKey = Write-RedactionKey (Get-RedactionContext) $keyPath }
+        catch { Write-AssessmentLog 'WARNING' 'REDACTION' ('Redaction key could not be written: ' + $_.Exception.Message) }
+    }
     return [pscustomobject]@{ Overall=$overall; Completed=$completed; Bytes=$info.Length }
 }
 
@@ -5256,8 +5288,9 @@ function Invoke-RedactExisting {
     if ($jsonFiles.Count -eq 0) { [Console]::Out.WriteLine('RedactExisting: no *-IPU-Assessment.json or *-IPU-PostUpgrade.json report found in ' + $Path); return 1 }
     # One placeholder map for the whole folder (#157): a server keeps the
     # same placeholder in its pre- and post-upgrade report, and different
-    # servers get different ones. The map is never written to disk.
-    $shared = @{ Map = @{}; Counters = @{} }
+    # servers get different ones. The key file (#211) is the only place the
+    # map is written to disk.
+    $shared = @{ Map = @{}; Counters = @{}; Originals = @{} }
     $jsonFiles = @($jsonFiles | Sort-Object Name)
     # Number the servers first, in name order (#172): HOST-1..HOST-n in the
     # file names, before other host names in the reports take numbers.
@@ -5277,7 +5310,7 @@ function Invoke-RedactExisting {
             $script:Data = @{}
             foreach ($l in (Get-RedactionLiteralFromResult @($obj.Results))) { Add-RedactionLiteral $l.Value $l.Kind }
             $ctx = New-RedactionContext ([string]$obj.ComputerName) $domain
-            $ctx.Map = $shared.Map; $ctx.Counters = $shared.Counters
+            $ctx.Map = $shared.Map; $ctx.Counters = $shared.Counters; $ctx.Originals = $shared.Originals
             if ($script:Data.RedactLiterals) { foreach ($k in @($script:Data.RedactLiterals.Keys)) { $ctx.Literals[$k] = $script:Data.RedactLiterals[$k] } }
             $suffix = '-IPU-Assessment'; if ($jf.Name -match '-IPU-PostUpgrade\.json$') { $suffix = '-IPU-PostUpgrade' }
             # The placeholder in the file name pairs a server's pre and post
@@ -5300,8 +5333,41 @@ function Invoke-RedactExisting {
             [Console]::Out.WriteLine('RedactExisting: could not redact ' + $jf.Name + ': ' + $_.Exception.Message)
         }
     }
-    if ($done -gt 0) { [Console]::Out.WriteLine('RedactExisting: ' + $done + ' report(s) redacted. Redaction is best effort - read the copies before sharing them.'); return 0 }
+    if ($done -gt 0) {
+        [Console]::Out.WriteLine('RedactExisting: ' + $done + ' report(s) redacted. Redaction is best effort - read the copies before sharing them.')
+        if ($WriteRedactionKey) {
+            $folder = $(if ($item.PSIsContainer) { $item.FullName } else { $item.DirectoryName })
+            $keyPath = Join-Path $folder ('DO-NOT-SHARE-REDACTION-KEY-' + $stampAll + '.csv')
+            try {
+                $null = Write-RedactionKey $shared $keyPath
+                [Console]::Out.WriteLine('RedactExisting: redaction key written: ' + (Split-Path -Leaf $keyPath) + ' - it holds the real names. Keep it in the team; share only the REDACTED-* files.')
+            } catch { [Console]::Out.WriteLine('RedactExisting: the redaction key could not be written: ' + $_.Exception.Message) }
+        }
+        return 0
+    }
     return 1
+}
+
+function Write-RedactionKey {
+    # Writes the redaction key (#211): which placeholder stands for which
+    # original. UTF-8 with BOM so Excel shows non-ASCII names. Access is
+    # limited to SYSTEM, Administrators and the current user (best effort).
+    param([Parameter(Mandatory=$true)][hashtable]$Context, [Parameter(Mandatory=$true)][string]$Path)
+    $originals = @{}
+    if ($Context.ContainsKey('Originals') -and $Context.Originals) { $originals = $Context.Originals }
+    $lines = ConvertTo-RedactionKeyLine $originals
+    [IO.File]::WriteAllText($Path, (($lines -join "`r`n") + "`r`n"), (New-Object System.Text.UTF8Encoding($true)))
+    try {
+        $security = New-Object System.Security.AccessControl.FileSecurity
+        $security.SetAccessRuleProtection($true, $false)
+        $sids = @('S-1-5-18', 'S-1-5-32-544', [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value) | Select-Object -Unique
+        foreach ($sid in $sids) {
+            $identity = New-Object System.Security.Principal.SecurityIdentifier($sid)
+            $security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($identity, [System.Security.AccessControl.FileSystemRights]::FullControl, [System.Security.AccessControl.AccessControlType]::Allow)))
+        }
+        Set-Acl -LiteralPath $Path -AclObject $security -ErrorAction Stop
+    } catch { Write-Swallowed $_ }
+    return $Path
 }
 
 function Get-RedactionContext {
