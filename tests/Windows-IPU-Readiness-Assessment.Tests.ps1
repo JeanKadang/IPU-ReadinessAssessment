@@ -438,6 +438,10 @@ Describe 'Get-FeatureLifecycleFinding' {
     It 'the same feature is not flagged for a 2022 target' {
         (Get-FeatureLifecycleFinding @('SMTP-Server') '2022').Count | Should -Be 0
     }
+    It 'the IIS 6 console and PowerShell 2.0 are not flagged for a 2022 target either (#187)' {
+        (Get-FeatureLifecycleFinding @('Web-Lgcy-Mgmt-Console','PowerShell-V2') '2022').Count | Should -Be 0
+        (Get-FeatureLifecycleFinding @('Web-Lgcy-Mgmt-Console','PowerShell-V2') '2025').Count | Should -Be 2
+    }
     It 'deprecated features are observations' {
         $f = Get-FeatureLifecycleFinding @('NLB') '2022'
         $f[0].Kind | Should -Be 'Observation'
