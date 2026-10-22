@@ -1386,8 +1386,8 @@ $script:FactSources = [ordered]@{
     SupportedUpgradePaths  = @{ Verified = '2026-10-13'; Source = 'https://learn.microsoft.com/en-us/windows-server/get-started/install-upgrade-migrate' }
     SqlSupportedOnTarget   = @{ Verified = '2026-10-13'; Source = 'https://learn.microsoft.com/en-us/troubleshoot/sql/general/use-sql-server-in-windows' }
     ReleaseEndOfSupport    = @{ Verified = '2026-10-13'; Source = 'https://learn.microsoft.com/en-us/lifecycle/products/windows-server-2025' }
-    # FeatureLifecycle: the 2025 page was checked; the 2022 page lists more removals (#187).
-    FeatureLifecycle       = @{ Verified = '2026-10-13'; Source = 'https://learn.microsoft.com/en-us/windows-server/get-started/removed-deprecated-features-windows-server-2025' }
+    # FeatureLifecycle: the page has one tab per release. SMTP Server, the IIS 6 console and PowerShell 2.0 are removed on the 2025 tab only; the 2022 tab removes iSNS and nothing else (#187).
+    FeatureLifecycle       = @{ Verified = '2026-10-22'; Source = 'https://learn.microsoft.com/en-us/windows-server/get-started/removed-deprecated-features-windows-server-2025' }
     VMwareToolsMinimum     = @{ Verified = '2026-10-13'; Source = 'https://blogs.vmware.com/cloud-foundation/2024/11/07/vmware-tools-12-5-0-is-ready-for-the-latest-windows-operating-systems/' }
     # ExpectedWindowsChanges: live runs (#158); AzureArcSetup per learn.microsoft.com/en-us/azure/azure-arc/servers/onboard-windows-server (#197).
     ExpectedWindowsChanges = @{ Verified = '2026-10-14'; Source = 'https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/158' }
