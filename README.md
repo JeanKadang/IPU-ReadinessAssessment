@@ -149,7 +149,7 @@ flowchart TD
 | `docs/result-schema.md`, `docs/result-schema.json` | JSON result format (`IPU-Assessment/1`) and its JSON Schema |
 | `docs/samples/` | Synthetic sample report and result, built by `build/New-SampleReport.ps1` |
 | `docs/adr/` | Architecture decision records |
-| `docs/review/` | Repository quality reviews (newest: `audit-review-claude-v3.md`) |
+| `docs/review/` | Repository quality reviews (newest: `audit-review-claude-v3.md`) and the code-level script evaluation (`script-evaluation-4.5.3.md`) |
 | `.github/` | CI, release and labeler workflows, issue forms, PR template, Dependabot, release notes config |
 | `.claude/`, `AGENTS.md`, `CLAUDE.md` | Shared GitHub workflow skills, plugin settings and assistant guidance (see [CONTRIBUTING](CONTRIBUTING.md#working-with-claude-code)) |
 
