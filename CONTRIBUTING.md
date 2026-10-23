@@ -17,6 +17,20 @@ commits show the wrong author.
 5. Open a pull request using the template. Reference the issue with `Refs #N`. Release notes are built from PR labels: a workflow adds them automatically (`feat/` branch → `enhancement`, `fix/` → `bug`, changed paths → `documentation`, `testing`, `tooling`; see `.github/labeler.yml`). Check them and add or remove labels by hand when they don't fit; the workflow never removes a label.
 6. Merge with a merge commit once CI is green. A review by the other maintainer is welcome, but not required.
 
+## Pull requests from outside
+
+This project has two maintainers, Jean and Micker71, and builds and maintains its own code. Ideas and pull requests
+from outside are welcome and get read, but we do not promise a merge or a timeline, and we do not ask a contributor to
+rework a pull request or to carry follow-up work.
+
+When an outside pull request has something we want, a maintainer builds it on a branch in this repository. The
+contributor's commit stays in the history, so the credit stays with them, and the original pull request is closed with
+a thank-you once ours is merged. Anything that touches the hard rules in `AGENTS.md` (read-only, no network access from
+the assessed server, no host data) is changed to fit them, or left out.
+
+For a larger idea, open an issue first and say what you would like to see; that is easier for us to act on than a
+finished change.
+
 ## What CI runs
 
 | Job | Runs on | What it does |

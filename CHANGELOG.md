@@ -6,6 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - The release zip now includes `docs/samples/` (sample report and result), so the sample links in the bundled docs work offline (#135). `docs/adr/` and `docs/git-setup.md` stay out: they are for contributors.
+- `CONTRIBUTING.md` says how pull requests from outside are handled (#277).
 
 ### Fixed
 - SFC: when the console text is not English, the CBS.log fallback no longer reports OK for a run that logged Cannot verify component files ... manifest is damaged. Such a run is now ACTION (#249).
