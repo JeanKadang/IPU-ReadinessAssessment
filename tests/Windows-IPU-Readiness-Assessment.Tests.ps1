@@ -273,6 +273,30 @@ Describe 'Check runner' {
         Invoke-Check ([pscustomobject]@{ Id='ok'; Name='Fine'; Phase='Fast'; Script={ Add-Result 'STORAGE' 'x' 'OK' } })
         $script:CheckRuns[0].Outcome | Should -Be 'Completed'
     }
+    It 'a break inside a check fails that check and does not end the caller''s loop (#251)' {
+        $ran = 0
+        foreach ($i in 1..3) {
+            Invoke-Check ([pscustomobject]@{ Id="brk$i"; Name='Breaks'; Phase='Fast'; Script={ break } })
+            $ran++
+        }
+        $ran | Should -Be 3
+        @($script:CheckRuns | Where-Object { $_.Outcome -eq 'Failed' }).Count | Should -Be 3
+        $script:CheckRuns[0].Message | Should -Match 'break or continue'
+        @($script:Results | Where-Object { $_.Area -eq 'COLLECTOR' -and $_.Status -eq 'MANUAL' }).Count | Should -Be 3
+    }
+    It 'a continue inside a check fails that check and does not end the caller''s loop (#251)' {
+        $ran = 0
+        foreach ($i in 1..3) {
+            Invoke-Check ([pscustomobject]@{ Id="cont$i"; Name='Continues'; Phase='Fast'; Script={ continue } })
+            $ran++
+        }
+        $ran | Should -Be 3
+        $script:CheckRuns[2].Outcome | Should -Be 'Failed'
+    }
+    It 'a return inside a check is an ordinary finish' {
+        Invoke-Check ([pscustomobject]@{ Id='ret'; Name='Returns'; Phase='Fast'; Script={ Add-Result 'STORAGE' 'r' 'OK'; return } })
+        $script:CheckRuns[0].Outcome | Should -Be 'Completed'
+    }
 }
 
 Describe 'HTML report' {
@@ -2148,6 +2172,93 @@ Describe 'Prerequisites (#94)' {
         $script:CheckRuns.Count | Should -Be 0
         $script:ExitCode | Should -Be 1
         [IO.File]::ReadAllText($script:ReportPath) | Should -Match 'Administrator rights'
+    }
+}
+
+Describe 'A throw outside a check still gives a report and an SA line (#251)' {
+    It 'site data that fails to load ends in FAILED with a report, not a bare error' {
+        $dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $ReportDirectory = $dir
+        $RestrictOutputAcl = $false
+        $WriteJson = $true
+        $script:ReportPath = Join-Path $dir 'SRV-IPU-Assessment.html'
+        $script:JsonPath = Join-Path $dir 'SRV-IPU-Assessment.json'
+        $script:LogPath = Join-Path $dir 'SRV-IPU-Assessment.log'
+        $script:Results.Clear(); $script:CheckRuns.Clear(); $script:Checks.Clear(); $script:Data = @{}
+        Mock Get-PrerequisiteState { [pscustomobject]@{ PowerShellVersion = [Version]'5.1'; DotNetRelease = 528049; IsElevated = $true; MissingModules = @() } }
+        Mock Import-SiteDataFile { throw 'site data file is broken' }
+        $writer = New-Object IO.StringWriter
+        $old = [Console]::Out
+        [Console]::SetOut($writer)
+        try { Invoke-Assessment } finally { [Console]::SetOut($old) }
+        $out = $writer.ToString()
+        $out | Should -Match ';FAILED;MANUAL;'
+        $out | Should -Match 'The run stopped early'
+        $out | Should -Match 'site data file is broken'
+        $script:ExitCode | Should -Be 1
+        Test-Path -LiteralPath $script:ReportPath | Should -BeTrue
+        @($script:Results | Where-Object { $_.Item -eq 'Assessment run' -and $_.Status -eq 'MANUAL' }).Count | Should -Be 1
+    }
+}
+
+Describe 'Get-JsonOutcomeText (#250)' {
+    It 'JSON off says nothing' { Get-JsonOutcomeText $false 'Disabled' 'C:\r\x.json' | Should -Be '' }
+    It 'written names the file' { Get-JsonOutcomeText $true 'Written' 'C:\r\x.json' | Should -Be ', JSON=C:\r\x.json' }
+    It 'a checkpoint is called PARTIAL' {
+        $t = Get-JsonOutcomeText $true 'Partial' 'C:\r\x.json'
+        $t | Should -Match '^, JSON=PARTIAL'
+        $t.Contains('C:\r\x.json') | Should -BeTrue
+    }
+    It 'a failed write is called FAILED and never names the file as if it existed' {
+        $t = Get-JsonOutcomeText $true 'Failed' 'C:\r\x.json'
+        $t | Should -Match '^, JSON=FAILED'
+        $t | Should -Not -Match 'x\.json'
+    }
+}
+
+Describe 'Output folder and JSON problems end in a clear SA line (#250)' {
+    BeforeEach {
+        $script:Results.Clear(); $script:CheckRuns.Clear(); $script:Checks.Clear(); $script:Data = @{}
+        $script:Writer = New-Object IO.StringWriter
+        $script:OldOut = [Console]::Out
+    }
+    AfterEach { [Console]::SetOut($script:OldOut) }
+    It 'an unwritable report folder stops at once with FAILED, before any check' {
+        $blocker = Join-Path $TestDrive 'a-file'
+        Set-Content -LiteralPath $blocker -Value 'x'
+        $ReportDirectory = Join-Path $blocker 'sub'
+        $RestrictOutputAcl = $false
+        $script:LogPath = Join-Path $ReportDirectory 'x.log'
+        Mock Get-PrerequisiteState { throw 'must not get this far' }
+        [Console]::SetOut($script:Writer)
+        Invoke-Assessment
+        [Console]::SetOut($script:OldOut)
+        $out = $script:Writer.ToString()
+        $out | Should -Match ';FAILED;MANUAL;'
+        $out | Should -Match 'Nothing was assessed: the report folder cannot be written'
+        $script:ExitCode | Should -Be 1
+        $script:CheckRuns.Count | Should -Be 0
+    }
+    It 'a JSON that cannot be written makes the line FAILED and says JSON=FAILED' {
+        $dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $ReportDirectory = $dir
+        $RestrictOutputAcl = $false
+        $WriteJson = $true
+        $script:ReportPath = Join-Path $dir 'SRV-IPU-Assessment.html'
+        $script:JsonPath = Join-Path $dir 'SRV-IPU-Assessment.json'
+        $script:LogPath = Join-Path $dir 'SRV-IPU-Assessment.log'
+        Mock Get-PrerequisiteState { [pscustomobject]@{ PowerShellVersion = [Version]'5.1'; DotNetRelease = 528049; IsElevated = $true; MissingModules = @() } }
+        Mock Import-SiteDataFile { }
+        Mock Register-AssessmentCheck { }
+        Mock Write-AssessmentJson { throw 'disk full' }
+        [Console]::SetOut($script:Writer)
+        Invoke-Assessment
+        [Console]::SetOut($script:OldOut)
+        $out = $script:Writer.ToString()
+        $out | Should -Match ';FAILED;'
+        $out | Should -Match 'JSON=FAILED'
+        $script:ExitCode | Should -Be 1
+        Test-Path -LiteralPath $script:ReportPath | Should -BeTrue
     }
 }
 
