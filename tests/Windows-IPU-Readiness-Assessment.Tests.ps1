@@ -273,6 +273,30 @@ Describe 'Check runner' {
         Invoke-Check ([pscustomobject]@{ Id='ok'; Name='Fine'; Phase='Fast'; Script={ Add-Result 'STORAGE' 'x' 'OK' } })
         $script:CheckRuns[0].Outcome | Should -Be 'Completed'
     }
+    It 'a break inside a check fails that check and does not end the caller''s loop (#251)' {
+        $ran = 0
+        foreach ($i in 1..3) {
+            Invoke-Check ([pscustomobject]@{ Id="brk$i"; Name='Breaks'; Phase='Fast'; Script={ break } })
+            $ran++
+        }
+        $ran | Should -Be 3
+        @($script:CheckRuns | Where-Object { $_.Outcome -eq 'Failed' }).Count | Should -Be 3
+        $script:CheckRuns[0].Message | Should -Match 'break or continue'
+        @($script:Results | Where-Object { $_.Area -eq 'COLLECTOR' -and $_.Status -eq 'MANUAL' }).Count | Should -Be 3
+    }
+    It 'a continue inside a check fails that check and does not end the caller''s loop (#251)' {
+        $ran = 0
+        foreach ($i in 1..3) {
+            Invoke-Check ([pscustomobject]@{ Id="cont$i"; Name='Continues'; Phase='Fast'; Script={ continue } })
+            $ran++
+        }
+        $ran | Should -Be 3
+        $script:CheckRuns[2].Outcome | Should -Be 'Failed'
+    }
+    It 'a return inside a check is an ordinary finish' {
+        Invoke-Check ([pscustomobject]@{ Id='ret'; Name='Returns'; Phase='Fast'; Script={ Add-Result 'STORAGE' 'r' 'OK'; return } })
+        $script:CheckRuns[0].Outcome | Should -Be 'Completed'
+    }
 }
 
 Describe 'HTML report' {
@@ -2148,6 +2172,32 @@ Describe 'Prerequisites (#94)' {
         $script:CheckRuns.Count | Should -Be 0
         $script:ExitCode | Should -Be 1
         [IO.File]::ReadAllText($script:ReportPath) | Should -Match 'Administrator rights'
+    }
+}
+
+Describe 'A throw outside a check still gives a report and an SA line (#251)' {
+    It 'site data that fails to load ends in FAILED with a report, not a bare error' {
+        $dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $ReportDirectory = $dir
+        $RestrictOutputAcl = $false
+        $WriteJson = $true
+        $script:ReportPath = Join-Path $dir 'SRV-IPU-Assessment.html'
+        $script:JsonPath = Join-Path $dir 'SRV-IPU-Assessment.json'
+        $script:LogPath = Join-Path $dir 'SRV-IPU-Assessment.log'
+        $script:Results.Clear(); $script:CheckRuns.Clear(); $script:Checks.Clear(); $script:Data = @{}
+        Mock Get-PrerequisiteState { [pscustomobject]@{ PowerShellVersion = [Version]'5.1'; DotNetRelease = 528049; IsElevated = $true; MissingModules = @() } }
+        Mock Import-SiteDataFile { throw 'site data file is broken' }
+        $writer = New-Object IO.StringWriter
+        $old = [Console]::Out
+        [Console]::SetOut($writer)
+        try { Invoke-Assessment } finally { [Console]::SetOut($old) }
+        $out = $writer.ToString()
+        $out | Should -Match ';FAILED;MANUAL;'
+        $out | Should -Match 'The run stopped early'
+        $out | Should -Match 'site data file is broken'
+        $script:ExitCode | Should -Be 1
+        Test-Path -LiteralPath $script:ReportPath | Should -BeTrue
+        @($script:Results | Where-Object { $_.Item -eq 'Assessment run' -and $_.Status -eq 'MANUAL' }).Count | Should -Be 1
     }
 }
 

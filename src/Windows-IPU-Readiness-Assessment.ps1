@@ -626,7 +626,15 @@ function Invoke-Check {
         # -ErrorAction SilentlyContinue or try/catch explicitly, so an
         # unexpected failure is visible instead of looking like a clean result.
         $ErrorActionPreference = 'Stop'
-        $null = & $Check.Script
+        # try/catch does not catch break or continue: left alone, one inside a
+        # check would end the caller's loop and drop the rest of the phase.
+        # The do/while is the loop they end instead (#251).
+        $ranToEnd = $false
+        do {
+            $null = & $Check.Script
+            $ranToEnd = $true
+        } while ($false)
+        if (-not $ranToEnd) { throw 'The check left the runner with break or continue before it finished; its remaining rows are missing' }
         if ($script:CurrentCheckOutcome) { $outcome = $script:CurrentCheckOutcome }
         if ($script:CurrentCheckMessage) { $message = $script:CurrentCheckMessage }
     } catch {
@@ -5683,57 +5691,70 @@ function Invoke-Assessment {
         return
     }
 
-    Import-SiteDataFile
-    Register-AssessmentCheck
-    $skip = @()
-    if ($AssessmentMode -eq 'Post') { $skip = @('checklist','compatscan') }
-    # The baseline first: it decides whether this is a SPECIAL server (#152).
-    $baselineCheck = @($script:Checks | Where-Object { $_.Id -eq 'baseline' }) | Select-Object -First 1
-    if ($baselineCheck) { Invoke-Check $baselineCheck; $skip += 'baseline' }
-    $script:Data.SpecialKind = ''
-    if ($AssessmentMode -ne 'Post') {
-        try { $script:Data.SpecialKind = Get-SpecialServerState } catch { $script:Data.SpecialKind = 'Undecided'; Write-Swallowed $_ }
-    }
-    if ($script:Data.SpecialKind -eq 'Cluster' -or $script:Data.SpecialKind -eq 'DomainController') {
-        # Short report: only what is needed to choose a plan.
-        $keep = Get-SpecialServerCheckId
-        Write-AssessmentLog 'INFO' 'SPECIAL' ('Kind=' + $script:Data.SpecialKind + ' | short report with checks: ' + ($keep -join ','))
-        foreach ($c in @($script:Checks | Where-Object { $keep -notcontains $_.Id -and $skip -notcontains $_.Id })) {
-            $script:CheckRuns.Add([pscustomobject]@{ Id=$c.Id; Name=$c.Name; Phase=$c.Phase; Outcome='Skipped'; Duration='00:00:00'; Seconds=0; Message='Not applicable: SPECIAL server, short report' })
-            $skip += $c.Id
+    # Anything that throws outside a check (site data, registering checks, the
+    # SPECIAL decision, skipping a slow check) must still end in a report and an SA
+    # result line, not in a bare error (#251).
+    $runFailure = ''
+    try {
+        Import-SiteDataFile
+        Register-AssessmentCheck
+        $skip = @()
+        if ($AssessmentMode -eq 'Post') { $skip = @('checklist','compatscan') }
+        # The baseline first: it decides whether this is a SPECIAL server (#152).
+        $baselineCheck = @($script:Checks | Where-Object { $_.Id -eq 'baseline' }) | Select-Object -First 1
+        if ($baselineCheck) { Invoke-Check $baselineCheck; $skip += 'baseline' }
+        $script:Data.SpecialKind = ''
+        if ($AssessmentMode -ne 'Post') {
+            try { $script:Data.SpecialKind = Get-SpecialServerState } catch { $script:Data.SpecialKind = 'Undecided'; Write-Swallowed $_ }
         }
-    }
-    foreach ($check in @($script:Checks | Where-Object { $_.Phase -eq 'Fast' -and $skip -notcontains $_.Id })) { Invoke-Check $check }
-    if ($AssessmentMode -eq 'Post') { Invoke-PostUpgradeComparison }
-
-    try { $null = Write-AssessmentReport -Partial } catch { Write-AssessmentLog 'WARNING' 'REPORT' ('Checkpoint report failed: ' + $_.Exception.Message) }
-
-    $budgetMinutes = Get-SlowCheckBudget $SlowCheckBudgetMinutes $CompatScanTimeoutMinutes $TargetMediaPath $AssessmentMode
-    $slowWatch = [Diagnostics.Stopwatch]::StartNew()
-    foreach ($check in @($script:Checks | Where-Object { $_.Phase -eq 'Slow' -and $skip -notcontains $_.Id })) {
-        $script:SlowSecondsLeft = Get-SlowSecondsLeft $budgetMinutes $slowWatch.Elapsed.TotalSeconds
-        if (Test-SlowCheckSkip $script:SlowSecondsLeft) {
-            Add-SkippedSlowCheck $check $budgetMinutes
-            continue
+        if ($script:Data.SpecialKind -eq 'Cluster' -or $script:Data.SpecialKind -eq 'DomainController') {
+            # Short report: only what is needed to choose a plan.
+            $keep = Get-SpecialServerCheckId
+            Write-AssessmentLog 'INFO' 'SPECIAL' ('Kind=' + $script:Data.SpecialKind + ' | short report with checks: ' + ($keep -join ','))
+            foreach ($c in @($script:Checks | Where-Object { $keep -notcontains $_.Id -and $skip -notcontains $_.Id })) {
+                $script:CheckRuns.Add([pscustomobject]@{ Id=$c.Id; Name=$c.Name; Phase=$c.Phase; Outcome='Skipped'; Duration='00:00:00'; Seconds=0; Message='Not applicable: SPECIAL server, short report' })
+                $skip += $c.Id
+            }
         }
-        Invoke-Check $check
+        foreach ($check in @($script:Checks | Where-Object { $_.Phase -eq 'Fast' -and $skip -notcontains $_.Id })) { Invoke-Check $check }
+        if ($AssessmentMode -eq 'Post') { Invoke-PostUpgradeComparison }
+
+        try { $null = Write-AssessmentReport -Partial } catch { Write-AssessmentLog 'WARNING' 'REPORT' ('Checkpoint report failed: ' + $_.Exception.Message) }
+
+        $budgetMinutes = Get-SlowCheckBudget $SlowCheckBudgetMinutes $CompatScanTimeoutMinutes $TargetMediaPath $AssessmentMode
+        $slowWatch = [Diagnostics.Stopwatch]::StartNew()
+        foreach ($check in @($script:Checks | Where-Object { $_.Phase -eq 'Slow' -and $skip -notcontains $_.Id })) {
+            $script:SlowSecondsLeft = Get-SlowSecondsLeft $budgetMinutes $slowWatch.Elapsed.TotalSeconds
+            if (Test-SlowCheckSkip $script:SlowSecondsLeft) {
+                Add-SkippedSlowCheck $check $budgetMinutes
+                continue
+            }
+            Invoke-Check $check
+        }
+
+    } catch {
+        $runFailure = $_.Exception.GetType().Name + ': ' + $_.Exception.Message
+        Write-AssessmentLog 'ERROR' 'RUN' ($runFailure + ' | Line ' + $_.InvocationInfo.ScriptLineNumber)
+        try { Add-Result 'COLLECTOR' 'Assessment run' 'MANUAL' 'The run stopped early' $runFailure -Recommendation 'Read the log, fix the cause and run again. Checks that had not run yet are missing from this report; absence of findings is NOT evidence of a clean server.' -Source 'Invoke-Assessment' } catch { Write-Swallowed $_ }
     }
 
     $records = $script:Results.Count
     $failedChecks = @($script:CheckRuns | Where-Object { $_.Outcome -ne 'Completed' }).Count
+    $runStatus = 'SUCCEEDED'; if ($runFailure) { $runStatus = 'FAILED' }
     try {
         $final = Write-AssessmentReport
         $specialNote = ''
         if ($script:Data.Special) { $specialNote = 'SPECIAL server (' + $script:Data.Special.Title + '): short report, separate plan needed. ' }
         $msg = $specialNote + 'Mode=' + $AssessmentMode + ', Checks=' + $script:CheckRuns.Count + ', NotCompleted=' + $failedChecks + $(if ($WriteJson) { ', JSON=' + $script:JsonPath } else { '' }) + '. Retrieve the HTML via the approved SA process.'
+        if ($runFailure) { $msg = 'The run stopped early (' + $runFailure + '). ' + $msg }
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
-            $script:ComputerName,'SUCCEEDED',$final.Overall,$script:ReportPath,$script:LogPath,
+            $script:ComputerName,$runStatus,$final.Overall,$script:ReportPath,$script:LogPath,
             ([Math]::Round($final.Bytes/1KB,1)).ToString('N1',$script:NumberCulture),$records,
             $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss'),$final.Completed.ToString('yyyy-MM-dd HH:mm:ss'),
             (Format-Duration ($final.Completed - $script:CollectionStarted)),$script:CollectorVersion,$msg
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
-        $script:ExitCode = 0
+        $script:ExitCode = $(if ($runFailure) { 1 } else { 0 })
     } catch {
         $msg = $_.Exception.GetType().Name + ': ' + $_.Exception.Message
         Write-AssessmentLog 'ERROR' 'FAILED' $msg
@@ -5763,11 +5784,18 @@ if ($script:Is32BitHost -and $env:IPU_ASSESSMENT_RELAUNCHED -ne '1') {
     $ps64 = Join-Path $env:windir 'Sysnative\WindowsPowerShell\v1.0\powershell.exe'
     if ($selfPath -and (Test-Path -LiteralPath $ps64)) {
         $env:IPU_ASSESSMENT_RELAUNCHED = '1'
-        # Pass through every parameter the caller gave, typed correctly.
-        $argText = ConvertTo-RelaunchArgumentText $PSBoundParameters
-        $command = "& '" + ($selfPath -replace "'","''") + "'" + $argText + '; exit $LASTEXITCODE'
-        & $ps64 -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $command
-        exit $LASTEXITCODE
+        # Pass through every parameter the caller gave, typed correctly. If
+        # building the command fails, carry on in this 32-bit host: the
+        # baseline reports it (#251).
+        $relaunchCommand = ''
+        try {
+            $argText = ConvertTo-RelaunchArgumentText $PSBoundParameters
+            $relaunchCommand = "& '" + ($selfPath -replace "'","''") + "'" + $argText + '; exit $LASTEXITCODE'
+        } catch { Write-Swallowed $_ }
+        if ($relaunchCommand) {
+            & $ps64 -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $relaunchCommand
+            exit $LASTEXITCODE
+        }
     }
 }
 
