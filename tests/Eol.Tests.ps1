@@ -158,3 +158,101 @@ Describe 'Get-EolOnlineRelease' {
         Should -Invoke Invoke-RestMethod -Times 1 -Exactly
     }
 }
+
+Describe 'New-EolSnapshotObject' {
+    It 'holds the date, the source, the licence, the attribution and the releases by product' {
+        $s = New-EolSnapshotObject -Products @{ php = @((New-Cycle '8.4' '2028-12-31')); nginx = @((New-Cycle '1.30' $false)) } -AsOf '2026-10-23'
+        $s.asOf | Should -Be '2026-10-23'; $s.license | Should -Be 'MIT'; $s.attribution | Should -Match 'endoflife.date'
+        $s.licenseNotice | Should -Match 'Copyright 2020 endoflife.date contributors'; $s.licenseNotice | Should -Match 'Permission is hereby granted'
+        @($s.products.Keys) -join ',' | Should -Be 'nginx,php'
+    }
+}
+
+Describe 'Get-EolSnapshotAge' {
+    It 'fresh inside the limit' {
+        $a = Get-EolSnapshotAge '2026-06-01' ([datetime]'2026-10-23') 6
+        $a.State | Should -Be 'Fresh'; $a.Months | Should -Be 4
+    }
+    It 'the last day of the limit is still fresh, the next day is stale' {
+        (Get-EolSnapshotAge '2026-04-23' ([datetime]'2026-10-23') 6).State | Should -Be 'Fresh'
+        (Get-EolSnapshotAge '2026-04-23' ([datetime]'2026-10-24') 6).State | Should -Be 'Stale'
+    }
+    It 'stale says how old' {
+        $a = Get-EolSnapshotAge '2025-10-23' ([datetime]'2026-10-23') 6
+        $a.State | Should -Be 'Stale'; $a.Months | Should -Be 12; $a.Text | Should -Match '12 months old, limit 6'
+    }
+    It 'no usable date counts as too old' {
+        (Get-EolSnapshotAge '' ([datetime]'2026-10-23') 6).State | Should -Be 'Unknown'
+        (Get-EolSnapshotAge 'last spring' ([datetime]'2026-10-23') 6).State | Should -Be 'Unknown'
+    }
+    It 'a date in the future is not negative' { (Get-EolSnapshotAge '2027-01-01' ([datetime]'2026-10-23') 6).Months | Should -Be 0 }
+}
+
+Describe 'ConvertTo-EolStaleDecision' {
+    BeforeAll {
+        $script:Fresh = [pscustomobject]@{ State = 'Fresh'; Months = 1; Text = 'The snapshot is from 2026-09-01.' }
+        $script:Stale = [pscustomobject]@{ State = 'Stale'; Months = 12; Text = 'The snapshot is from 2025-10-23 (12 months old, limit 6).' }
+        function New-Decision([string]$State, [string]$Status) { [pscustomobject]@{ Product = 'php'; State = $State; Status = $Status; Text = 'php 8.4 verdict.' } }
+    }
+    It 'a fresh snapshot leaves the verdict alone' {
+        $d = New-Decision 'Supported' 'OK'
+        (ConvertTo-EolStaleDecision $d $script:Fresh).Status | Should -Be 'OK'
+    }
+    It 'a stale snapshot cannot confirm support: <State> becomes MANUAL' -ForEach @(@{ State = 'Supported' }, @{ State = 'SecurityOnly' }) {
+        $r = ConvertTo-EolStaleDecision (New-Decision $State 'OK') $script:Stale
+        $r.Status | Should -Be 'MANUAL'; $r.State | Should -Be 'Unconfirmed'; $r.Text | Should -Match '12 months old'
+    }
+    It 'a stale snapshot still shows <State>, with the age' -ForEach @(@{ State = 'EndOfLife'; Status = 'WARNING' }, @{ State = 'EndingSoon'; Status = 'INFO' }) {
+        $r = ConvertTo-EolStaleDecision (New-Decision $State $Status) $script:Stale
+        $r.Status | Should -Be $Status; $r.State | Should -Be $State; $r.Text | Should -Match 'limit 6'
+    }
+    It 'an unknown snapshot date is treated like a stale one' {
+        $r = ConvertTo-EolStaleDecision (New-Decision 'Supported' 'OK') ([pscustomobject]@{ State = 'Unknown'; Months = $null; Text = 'The snapshot has no usable date.' })
+        $r.Status | Should -Be 'MANUAL'
+    }
+}
+
+Describe 'Save-EolSnapshot' {
+    BeforeEach { $script:OutPath = Join-Path ([IO.Path]::GetTempPath()) ('eol-out-' + [guid]::NewGuid().ToString('N') + '.json') }
+    AfterEach { Remove-Item -LiteralPath $script:OutPath -ErrorAction SilentlyContinue }
+    It 'writes every product and names the one that failed' {
+        Mock Get-EolOnlineRelease { if ($Product -eq 'php') { throw 'HTTP 503' }; [pscustomobject]@{ Cycles = @([pscustomobject]@{ cycle = '1'; eol = $false }); Source = 'endoflife.date'; AsOf = '2026-10-23' } }
+        $r = Save-EolSnapshot -Path $script:OutPath -Today ([datetime]'2026-10-23')
+        $r.Failed.Count | Should -Be 1; $r.Failed[0] | Should -Match '^php: HTTP 503'
+        $r.Written | Should -Not -Contain 'php'; $r.Written.Count | Should -Be ($script:EolProducts.Count - 1)
+        $back = Get-EolSnapshotRelease -Product 'nginx' -SnapshotPath $script:OutPath
+        $back.AsOf | Should -Be '2026-10-23'; @($back.Cycles).Count | Should -Be 1
+        Get-EolSnapshotRelease -Product 'php' -SnapshotPath $script:OutPath | Should -BeNullOrEmpty
+    }
+    It 'the file starts without a byte-order mark' {
+        Mock Get-EolOnlineRelease { [pscustomobject]@{ Cycles = @([pscustomobject]@{ cycle = '1'; eol = $false }); Source = 'endoflife.date'; AsOf = '2026-10-23' } }
+        [void](Save-EolSnapshot -Path $script:OutPath -Today ([datetime]'2026-10-23'))
+        [IO.File]::ReadAllBytes($script:OutPath)[0] | Should -Be 123
+    }
+    It 'a folder as the path gets eol-snapshot.json inside it' {
+        Mock Get-EolOnlineRelease { [pscustomobject]@{ Cycles = @([pscustomobject]@{ cycle = '1'; eol = $false }); Source = 'endoflife.date'; AsOf = '2026-10-23' } }
+        $dir = Join-Path ([IO.Path]::GetTempPath()) ('eol-dir-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $dir | Out-Null
+        try {
+            $r = Save-EolSnapshot -Path $dir -Today ([datetime]'2026-10-23')
+            $r.Path | Should -Be (Join-Path $dir 'eol-snapshot.json')
+            Test-Path -LiteralPath (Join-Path $dir 'eol-snapshot.json') | Should -BeTrue
+        } finally { Remove-Item -LiteralPath $dir -Recurse -ErrorAction SilentlyContinue }
+    }
+    It 'a folder that does not exist is an error, not a result' {
+        Mock Get-EolOnlineRelease { [pscustomobject]@{ Cycles = @(); Source = 'endoflife.date'; AsOf = '2026-10-23' } }
+        { Save-EolSnapshot -Path (Join-Path ([IO.Path]::GetTempPath()) ('no-such-' + [guid]::NewGuid().ToString('N') + '\x.json')) -Today ([datetime]'2026-10-23') } | Should -Throw '*does not exist*'
+    }
+    It 'a write that fails is an error, never a result' {
+        Mock Get-EolOnlineRelease { [pscustomobject]@{ Cycles = @([pscustomobject]@{ cycle = '1'; eol = $false }); Source = 'endoflife.date'; AsOf = '2026-10-23' } }
+        $locked = Join-Path ([IO.Path]::GetTempPath()) ('eol-lock-' + [guid]::NewGuid().ToString('N') + '.json')
+        $fs = [IO.File]::Open($locked, 'Create', 'ReadWrite', 'None')
+        try { { Save-EolSnapshot -Path $locked -Today ([datetime]'2026-10-23') } | Should -Throw '*Could not write the snapshot*' }
+        finally { $fs.Dispose(); Remove-Item -LiteralPath $locked -ErrorAction SilentlyContinue }
+    }
+    It 'no product at all is an error and writes nothing' {
+        Mock Get-EolOnlineRelease { throw 'offline' }
+        { Save-EolSnapshot -Path $script:OutPath -Today ([datetime]'2026-10-23') } | Should -Throw '*No product could be fetched*'
+        Test-Path -LiteralPath $script:OutPath | Should -BeFalse
+    }
+}
