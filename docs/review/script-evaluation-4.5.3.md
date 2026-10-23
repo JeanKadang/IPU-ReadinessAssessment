@@ -20,7 +20,7 @@ Line references are `part:line`, for example `50:498` = `src/assessment/50-check
 ## Contents
 
 1. [Verdict](#1-verdict)
-2. [How the script works](#2-how-the-script-works)
+2. [How the script works](#2-how-the-script-works) (includes the [complete code flow](#complete-code-flow-every-task-in-run-order))
 3. [The main theme: unknown becomes clean](#3-the-main-theme-unknown-becomes-clean)
 4. [Findings](#4-findings)
 5. [Check by check](#5-check-by-check)
@@ -113,6 +113,117 @@ flowchart TD
     FR -- throws --> FAIL2["FAILED line, checkpoint stays, exit 1"]
     SD -. "throw outside a check (SE-19)" .-> X["No SA line, exit 1"]
 ```
+
+### Complete code flow: every task, in run order
+
+The same flow as above, followed to the end: startup, all 36 checks in the order `Register-Check` registers them (`50-checks.ps1`, run by `70-main.ps1`), the Post-mode differences, both report writes, the exits, and the hand-off to the fleet merge. The 32 fast checks are grouped by the chapter they belong to; the order inside a group is the run order.
+
+```mermaid
+flowchart TD
+    subgraph START["1. Startup (00 to 30, 70)"]
+        S1["Load script:<br/>param block, detection patterns,<br/>core globals, report paths"] --> S2{"IPU_ASSESSMENT_LIBRARY_ONLY=1?"}
+        S2 -- yes --> S2A(["Return: functions only<br/>(Pester)"])
+        S2 -- no --> S3{"-RedactExisting?"}
+        S3 -- yes --> S3A["Invoke-RedactExisting:<br/>redact old JSON/HTML, write key, no collection"] --> S3B(["exit"])
+        S3 -- no --> S4{"32-bit host on<br/>64-bit Windows?"}
+        S4 -- yes --> S4A["Relaunch in 64-bit PowerShell<br/>ConvertTo-RelaunchArgumentText"] --> S4B(["exit with its code"])
+        S4 -- no --> S5["Invoke-Assessment"]
+    end
+
+    subgraph INIT["2. Prepare (Invoke-Assessment)"]
+        I1["Initialize-OutputFolder<br/>create folder, SYSTEM + Administrators ACL<br/>start log"] --> I2["Get-PrerequisiteState<br/>Get-PrerequisiteDecision"]
+        I2 --> I3{"Can run?<br/>PowerShell, .NET, elevation,<br/>required modules"}
+        I3 -- no --> I3A["MANUAL rows:<br/>Not assessed, a required component is missing"]
+        I3A --> I3B["Write-AssessmentReport"] --> I3C(["SA line FAILED<br/>exit 1"])
+        I3 -- yes --> I4["Import-SiteDataFile<br/>site patterns / profile JSON"]
+        I4 --> I5["Register-AssessmentCheck<br/>36 checks into script:Checks"]
+        I5 --> I6{"Mode = Post?"}
+        I6 -- yes --> I6A["skip: checklist, compatscan"]
+        I6 -- no --> I7
+        I6A --> I7["Invoke-Check baseline<br/>OS, CS, BIOS, CPU, services, apps,<br/>features, drivers"]
+        I7 --> I8{"Pre mode:<br/>Get-SpecialServerState"}
+        I8 -- "Cluster or DomainController" --> I8A["Short report:<br/>keep Get-SpecialServerCheckId only,<br/>others recorded as Skipped"]
+        I8 -- "no / Undecided" --> F1
+        I8A --> F1
+    end
+
+    subgraph FAST["3. Fast phase: Invoke-Check for each, no time bound"]
+        F1["Windows health and upgrade path<br/>upgradepath, licensing, pendingreboot,<br/>patchlevel, history"] --> F2["Domain and access<br/>domain, grouppolicy, rdp"]
+        F2 --> F3["Hardware<br/>platform, performance"]
+        F3 --> F4["Clustering<br/>cluster, special"]
+        F4 --> F5["Storage and network<br/>storage, network"]
+        F5 --> F6["Workloads<br/>exchange, sql, workloads, fileshares,<br/>printers, iis, rds"]
+        F6 --> F7["Certificates and security<br/>pki, agents, antivirus, backup"]
+        F7 --> F8["Services, virtualization, listeners<br/>services, vmware, drivers, ports, tasks"]
+        F8 --> F9["checklist<br/>(Pre only)"]
+    end
+
+    subgraph ONE["Inside every Invoke-Check"]
+        C1["Local ErrorActionPreference = Stop"] --> C2["Run the check script block<br/>reads and writes script:Data,<br/>Add-Result rows"]
+        C2 --> C3{"Throws?"}
+        C3 -- no --> C4["CheckRuns: Completed"]
+        C3 -- yes --> C5["MANUAL Finding:<br/>Check did not complete<br/>CheckRuns: Failed"]
+    end
+
+    subgraph MID["4. Post comparison and checkpoint"]
+        M1{"Mode = Post?"}
+        M1 -- yes --> M2["Invoke-PostUpgradeComparison<br/>reads the Pre JSON from the same folder:<br/>services, ports, routes, adapters, printers,<br/>shares, GPOs, features, tasks"]
+        M1 -- no --> M3
+        M2 --> M3["Write-AssessmentReport -Partial<br/>checkpoint HTML + JSON, Partial = true"]
+    end
+
+    subgraph SLOW["5. Slow phase, inside a time budget"]
+        L0["Get-SlowCheckBudget<br/>minutes from SlowCheckBudgetMinutes,<br/>CompatScanTimeoutMinutes, media, mode"] --> L1{"Time left for<br/>the next check?"}
+        L1 -- no --> L1A["Add-SkippedSlowCheck<br/>MANUAL: budget used up"]
+        L1 -- yes --> L2["printbackup, dism, sfc, compatscan<br/>(compatscan only with TargetMediaPath, Pre only)"]
+        L1A --> L3
+        L2 --> L3{"More slow checks?"}
+        L3 -- yes --> L1
+    end
+
+    subgraph FINAL["6. Final report: Write-AssessmentReport"]
+        R1["Get-OverallStatus<br/>SPECIAL, BLOCKER, ACTION, WARNING, MANUAL, else OK<br/>Findings only"] --> R2["New-IPUReportHtml"]
+        R2 --> R3{"-RedactReport?"}
+        R3 -- yes --> R3A["Protect-ReportText"] --> R4
+        R3 -- no --> R4["Validate HTML:<br/>length, doctype, closing tag"]
+        R4 --> R5["Write .writing file,<br/>move to final name"]
+        R5 --> R6{"-WriteJson?"}
+        R6 -- yes --> R6A["Write-AssessmentJson<br/>schema IPU-Assessment/1"] --> R7
+        R6 -- no --> R7{"-RedactReport and<br/>-WriteRedactionKey?"}
+        R7 -- yes --> R7A["Write-RedactionKey<br/>DO-NOT-SHARE-...csv"]
+    end
+
+    subgraph EXIT["7. Result for the automation platform"]
+        E1(["SA line: SUCCEEDED; Overall; paths; counts<br/>exit 0"])
+        E2(["SA line: FAILED; exception text<br/>remove .writing, exit 1"])
+    end
+
+    subgraph FLEET["8. Fleet (admin workstation)"]
+        G1["Merge-IPUAssessments.ps1<br/>reads every server JSON"] --> G2["IPU-Fleet-Overview.html"]
+        G1 --> G3["IPU-Fleet-Servers.csv"]
+        G1 --> G4["IPU-Fleet-Findings.csv<br/>CSV formula guard"]
+    end
+
+    S5 --> I1
+    F9 --> M1
+    F8 -. "Post: no checklist" .-> M1
+    M3 --> L0
+    L3 -- no --> R1
+    R7A --> E1
+    R7 -- no --> E1
+    R5 -. "throws" .-> E2
+    F1 -. "each check" .-> C1
+    E1 --> G1
+    M2 -. "needs earlier Pre JSON" .-> G1
+```
+
+How to read the diagram:
+
+- **Two exits, one contract.** Every path that reaches the end prints one semicolon-delimited line for SA (`SUCCEEDED` or `FAILED`) and sets the exit code. A throw *outside* a check, for example in `Register-AssessmentCheck`, prints no line (SE-19).
+- **The checkpoint is the safety net.** The report is written once after the fast phase, so a hang or crash in DISM, SFC or the Setup scan still leaves a readable, `Partial` report.
+- **Every check has the same wrapper.** The box "Inside every Invoke-Check" applies to each of the 36 checks; a throw becomes a `MANUAL` finding, never a clean result.
+- **Post mode differs in three places:** it skips `checklist` and `compatscan`, adds the comparison against the Pre JSON before the checkpoint, and gets its baseline from the file a Pre run wrote.
+- **Special servers get a short report.** For a cluster node or domain controller (Pre mode) only the checks in `Get-SpecialServerCheckId` run; the rest are recorded as `Skipped`.
 
 ### How one check runs
 
