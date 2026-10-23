@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- A two-part VMware Tools version such as `12.5` is compared as `12.5.0`, so it no longer counts as older than the 12.5.0 minimum for a Windows Server 2025 target (#253).
+
 ## [4.5.3] - 2026-10-15
 
 A redaction key for the team, and fixes from a review of five real reports (Windows Server 2016, redacted with 4.5.2).

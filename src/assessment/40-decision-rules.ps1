@@ -334,6 +334,8 @@ function Get-VMwareToolsDecision {
     if (-not $clean -or -not [version]::TryParse($clean, [ref]$parsed)) {
         return [pscustomobject]@{ Status='MANUAL'; Text=("VMware Tools version '" + $Version + "' could not be parsed. Confirm it is current.") }
     }
+    # [version]'12.5' has no build part (-1) and so sorts below '12.5.0'; compare with three parts (#253).
+    if ($parsed.Build -lt 0) { $parsed = New-Object System.Version $parsed.Major, $parsed.Minor, 0 }
     if ($Target -eq '2025' -and $parsed -lt [version]'12.5.0') {
         return [pscustomobject]@{ Status='ACTION'; Text=('VMware Tools ' + $clean + ' predates 12.5.0, the first release with drivers certified for Windows Server 2025. Update VMware Tools before IPU.') }
     }
