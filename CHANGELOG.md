@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- End-of-life status for products and Windows Server 2008 to 2025, evaluated off the server from an endoflife.date snapshot (ADR 0003, `src/Get-IPUEolStatus.ps1`, first part of #266). Not yet wired into the assessment or the merged report. Based on the proof of concept from pull request #271.
+
 ### Changed
 - The release zip now includes `docs/samples/` (sample report and result), so the sample links in the bundled docs work offline (#135). `docs/adr/` and `docs/git-setup.md` stay out: they are for contributors.
 - `CONTRIBUTING.md` says how pull requests from outside are handled (#277).
