@@ -224,7 +224,7 @@ BeforeAll {
     function Import-Module { [CmdletBinding()] param([Parameter(Position = 0)][string]$Name) }
 
     # ------------------------------------------- Windows feature cmdlets
-    function Get-WindowsFeature { [CmdletBinding()] param() foreach ($k in @($script:Fake.Features.Keys)) { [pscustomobject]@{ Name = $k; Installed = [bool]$script:Fake.Features[$k] } } }
+    function Get-WindowsFeature { [CmdletBinding()] param() if ($script:Fake.FeaturesThrow) { throw 'Simulated: ServerManager provider failed' } foreach ($k in @($script:Fake.Features.Keys)) { [pscustomobject]@{ Name = $k; Installed = [bool]$script:Fake.Features[$k] } } }
     function Get-WinSystemLocale { [CmdletBinding()] param() [pscustomobject]@{ Name = $script:Fake.SystemLocale } }
     function Get-HotFix { [CmdletBinding()] param() return @($script:Fake.HotFixes) }
     function Test-ComputerSecureChannel { [CmdletBinding()] param() if ($null -eq $script:Fake.SecureChannel) { throw 'Simulated: domain unreachable' } return $script:Fake.SecureChannel }
@@ -307,7 +307,7 @@ BeforeAll {
         $hosts = 'C:\Windows\System32\drivers\etc\hosts'
         if ($env:SystemRoot) { $hosts = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts' }
         $f = @{
-            NativeCalls = @(); CimThrow = @(); MissingCommands = @('Get-Cluster', 'Get-VMSwitch')
+            NativeCalls = @(); CimThrow = @(); FeaturesThrow = $false; MissingCommands = @('Get-Cluster', 'Get-VMSwitch')
             Shares = @(); ShareAccess = @{}
             SystemLocale = 'en-US'
             Cim = @{
@@ -325,7 +325,7 @@ BeforeAll {
                 "Win32_LogicalDisk|DeviceID='C:'" = [pscustomobject]@{ Size = [double]100GB; FreeSpace = [double]55GB }
                 'Win32_NetworkAdapterConfiguration|IPEnabled=True' = [pscustomobject]@{ Index = 1; IPAddress = @('10.20.30.40', 'fe80::1'); IPSubnet = @('255.255.255.0', '64'); DefaultIPGateway = @('10.20.30.1'); DNSServerSearchOrder = @('10.20.1.10', '10.20.1.11'); DHCPEnabled = $false; MACAddress = '00:50:56:00:00:01'; Description = 'vmxnet3 Ethernet Adapter' }
                 'Win32_NetworkAdapter|Index=1' = [pscustomobject]@{ NetConnectionID = 'Ethernet0' }
-                'Win32_UserAccount|LocalAccount=True' = @([pscustomobject]@{ Name = 'LocalAdmin'; SID = 'S-1-5-21-1-2-3-500'; Disabled = $false }, [pscustomobject]@{ Name = 'Guest'; SID = 'S-1-5-21-1-2-3-501'; Disabled = $true })
+                'Win32_UserAccount|LocalAccount=True AND SID LIKE ''%-500''' = @([pscustomobject]@{ Name = 'LocalAdmin'; SID = 'S-1-5-21-1-2-3-500'; Disabled = $false }, [pscustomobject]@{ Name = 'Guest'; SID = 'S-1-5-21-1-2-3-501'; Disabled = $true })
                 'Win32_PnPSignedDriver' = @(
                     [pscustomobject]@{ DeviceName = 'Microsoft Basic Display'; DriverProviderName = 'Microsoft'; DriverVersion = '10.0'; DriverDate = (Get-Date -Year 2016 -Month 6 -Day 21); DeviceClass = 'DISPLAY'; IsSigned = $true },
                     [pscustomobject]@{ DeviceName = 'vmxnet3 Ethernet Adapter'; DriverProviderName = 'VMware, Inc.'; DriverVersion = '1.9.2'; DriverDate = (Get-Date -Year 2023 -Month 1 -Day 1); DeviceClass = 'NET'; IsSigned = $true })
@@ -483,6 +483,56 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $run = Invoke-TestCheck 'baseline'
             $run.Outcome | Should -Be 'Failed'
             (Get-Row 'COLLECTOR' 'Baseline inventory')[0].Status | Should -Be 'MANUAL'
+        }
+    }
+
+    Context 'storage: space after C (#241)' {
+        It 'is worked out from the partition layout and the disk size, not from Get-PartitionSupportedSize' {
+            $script:Fake.SupportedSize = $null
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'storage'
+            $row = (Get-Row 'STORAGE' 'CExtendableNowGB')
+            $row.Count | Should -Be 1
+            $row[0].Value | Should -Match '^0[.,]4'
+            $row[0].Source | Should -Be 'Get-Partition, Get-Disk'
+        }
+    }
+
+    Context 'feature inventory fails (#238)' {
+        BeforeEach {
+            $script:Fake.FeaturesThrow = $true
+            $script:Data = @{}
+            $script:BaselineRun = Invoke-TestCheck 'baseline'
+            $script:BaselineRows = $script:Results.ToArray()
+        }
+        It 'leaves the features unknown, not empty, and the rest of the baseline still runs' {
+            $script:BaselineRun.Outcome | Should -Be 'Completed'
+            $script:Data.Features | Should -BeNullOrEmpty
+            $null -eq $script:Data.Features | Should -BeTrue
+            $script:Data.Platform.Hypervisor | Should -Be 'VMware'
+            $script:Data.Snapshot | Should -Not -BeNullOrEmpty
+            @($script:Data.Snapshot.Features).Count | Should -Be 0
+        }
+        It 'says so in one MANUAL row' {
+            $row = @($script:BaselineRows | Where-Object { $_.Area -eq 'ASSESSMENT' -and $_.Item -eq 'FeatureInventory' })
+            $row.Count | Should -Be 1; $row[0].Status | Should -Be 'MANUAL'; $row[0].Kind | Should -Be 'Finding'
+            $row[0].Details | Should -Match 'ServerManager provider failed'
+        }
+        It 'IIS is MANUAL, not "Not installed"' {
+            $null = Invoke-TestCheck 'iis'
+            (Get-Row 'IIS' 'Web-Server')[0].Status | Should -Be 'MANUAL'
+        }
+        It 'RDS is MANUAL, not "Not installed"' {
+            $null = Invoke-TestCheck 'rds'
+            (Get-Row 'RDS' 'RDSRoles')[0].Status | Should -Be 'MANUAL'
+            (Get-Row 'RDS' 'RDSessionHost').Count | Should -Be 0
+        }
+        It 'the cluster check is MANUAL, not "Feature not installed"' {
+            $null = Invoke-TestCheck 'cluster'
+            (Get-Row 'CLUSTER' 'FailoverClustering')[0].Status | Should -Be 'MANUAL'
+        }
+        It 'the overall status is not OK' {
+            Get-OverallStatus $script:BaselineRows | Should -Be 'MANUAL'
         }
     }
 
@@ -833,6 +883,14 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $null = Invoke-TestCheck 'domain'
             $script:Data.DomainRoleText | Should -Be 'Workgroup server (standalone), workgroup WORKGROUP'
             (Get-Row 'ACCESS' 'DomainMembership')[0].Details | Should -Be 'Role=Workgroup server (standalone), workgroup WORKGROUP'
+        }
+        It 'a domain controller does not list its accounts for the built-in Administrator (#241)' {
+            $script:Fake.Cim['Win32_ComputerSystem'].DomainRole = 5
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'domain'
+            $row = (Get-Row 'ACCESS' 'BuiltInAdministrator')[0]
+            $row.Value | Should -Be 'Not looked up on a domain controller'
+            $row.Status | Should -Be 'INFO'
         }
         It 'a member server with a working secure channel is OK' {
             (Invoke-TestCheck 'domain').Outcome | Should -Be 'Completed'
