@@ -420,6 +420,9 @@ Describe 'Get-VMwareToolsDecision' {
         @{ Version='12.4.5.23787635'; Target='2025'; Expected='ACTION' }
         @{ Version='12.5.0.24276846'; Target='2025'; Expected='OK' }
         @{ Version='13.0.0';          Target='2025'; Expected='OK' }
+        @{ Version='12.5';            Target='2025'; Expected='OK' }
+        @{ Version='13.0';            Target='2025'; Expected='OK' }
+        @{ Version='12.4';            Target='2025'; Expected='ACTION' }
         @{ Version='11.3.5';          Target='2022'; Expected='OK' }
         @{ Version='';                Target='2025'; Expected='ACTION' }
         @{ Version='unknown';         Target='2025'; Expected='MANUAL' }
@@ -443,7 +446,24 @@ Describe 'Get-FeatureLifecycleFinding' {
         (Get-FeatureLifecycleFinding @('Web-Lgcy-Mgmt-Console','PowerShell-V2') '2025').Count | Should -Be 2
     }
     It 'deprecated features are observations' {
-        $f = Get-FeatureLifecycleFinding @('NLB') '2022'
+        $f = Get-FeatureLifecycleFinding @('NLB') '2025'
+        $f[0].Kind | Should -Be 'Observation'
+    }
+    It 'NLB, WebDAV Redirector and WID are listed on the 2025 tab only, not for a 2022 target (#232)' {
+        (Get-FeatureLifecycleFinding @('NLB','WebDAV-Redirector','Windows-Internal-Database') '2022').Count | Should -Be 0
+        (Get-FeatureLifecycleFinding @('NLB','WebDAV-Redirector','Windows-Internal-Database') '2025').Count | Should -Be 3
+    }
+    It 'iSNS is removed for a 2022 target and stays removed for 2025 (#232)' {
+        foreach ($t in '2022','2025') {
+            $f = Get-FeatureLifecycleFinding @('ISNS') $t
+            $f.Count | Should -Be 1
+            $f[0].Status | Should -Be 'ACTION'
+            $f[0].Kind | Should -Be 'Finding'
+        }
+    }
+    It 'WINS is an observation for a 2022 target (#232)' {
+        $f = Get-FeatureLifecycleFinding @('WINS') '2022'
+        $f.Count | Should -Be 1
         $f[0].Kind | Should -Be 'Observation'
     }
 }
@@ -2700,6 +2720,19 @@ Describe 'Post-upgrade comparison: per-user services and on-demand ports (#173)'
         (Get-Row173 'Service changes made by Windows').Details | Should -Match 'OneSyncSvc'
         (Get-Row173 'Services no longer present').Details | Should -Be 'GoneSvc'
     }
+    It 'only Windows'' per-user service templates lose their suffix; a hex-like suffix on another service stays (#247)' {
+        foreach ($name in 'AppSvc_DB01', 'Backup_2016', 'Agent_CAFE', 'MSSQL_0001') { ConvertTo-ServiceBaseName $name | Should -Be $name }
+        ConvertTo-ServiceBaseName 'OneSyncSvc_443f50' | Should -Be 'OneSyncSvc'
+        ConvertTo-ServiceBaseName 'onesyncsvc_443F50' | Should -Be 'onesyncsvc'
+        ConvertTo-ServiceBaseName 'webthreatdefusersvc_a1b2c3' | Should -Be 'webthreatdefusersvc'
+    }
+    It 'a running Auto service with a hex-like suffix that is gone after the upgrade is WARNING, not INFO (#247)' {
+        $b = [pscustomobject]@{ Services = @((New-Svc 'AppSvc_DB01' 'Running' 'Auto')) }
+        $a = [pscustomobject]@{ Services = @() }
+        $d = Compare-IPUSnapshot $b $a
+        @($d | Where-Object { $_.Item -eq 'Services no longer present' })[0].Details | Should -Be 'AppSvc_DB01'
+        @($d | Where-Object { $_.Item -eq 'Service changes made by Windows' }).Count | Should -Be 0
+    }
     It 'a port whose service is no longer started automatically is INFO, even when the service was Manual before' {
         (Get-Row173 'Ports closed with their service').Details | Should -Be 'UDP:1900'
     }
@@ -2991,7 +3024,7 @@ Describe 'Save-NetworkEvidence (#149)' {
 
 Describe 'Dated facts have a source and a recent check (#132)' {
     It 'every fact table is listed with a date and an https source' {
-        foreach ($name in 'SupportedUpgradePaths', 'SqlSupportedOnTarget', 'ReleaseEndOfSupport', 'FeatureLifecycle', 'VMwareToolsMinimum', 'ExpectedWindowsChanges', 'WinReMinPartitionMB', 'DocLinks') {
+        foreach ($name in 'SupportedUpgradePaths', 'SqlSupportedOnTarget', 'ReleaseEndOfSupport', 'FeatureLifecycle', 'PerUserServices', 'VMwareToolsMinimum', 'ExpectedWindowsChanges', 'WinReMinPartitionMB', 'DocLinks') {
             $script:FactSources.Contains($name) | Should -BeTrue -Because $name
         }
         @(Get-StaleFactSource $script:FactSources ([datetime]'2026-10-13')) | Should -BeNullOrEmpty
