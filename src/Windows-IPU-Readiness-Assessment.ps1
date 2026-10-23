@@ -1506,6 +1506,14 @@ function Resolve-ClusterFeatureState {
     return $null
 }
 
+function Format-UtcOffset {
+    # Pure: +02:00, -05:30, +00:00 (#252).
+    param([TimeSpan]$Offset)
+    $sign = '+'; if ($Offset -lt [TimeSpan]::Zero) { $sign = '-' }
+    $abs = $Offset.Duration()
+    return ('{0}{1:00}:{2:00}' -f $sign, [int]$abs.Hours, [int]$abs.Minutes)
+}
+
 function Get-ActivationChannelKind {
     # Pure: SoftwareLicensingProduct channel/description -> KMS, MAK, AVMA, OEM, Retail or Unknown.
     param([string]$Channel, [string]$Description)
@@ -5313,6 +5321,7 @@ function New-AssessmentJsonObject {
         TargetServerVersion = $TargetServerVersion
         Started             = $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss')
         Completed           = $Completed.ToString('yyyy-MM-dd HH:mm:ss')
+        UtcOffset           = (Format-UtcOffset ([TimeZoneInfo]::Local.GetUtcOffset($Completed)))
         Partial             = [bool]$Partial
         Redacted            = $false
         Overall             = $Overall
