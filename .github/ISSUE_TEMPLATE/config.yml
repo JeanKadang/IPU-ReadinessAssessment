@@ -1,1 +1,5 @@
 blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/JeanKadang/IPU-ReadinessAssessment/security/advisories/new
+    about: Do not open a public issue for a vulnerability. Report it privately; see SECURITY.md.
