@@ -65,10 +65,12 @@ $script:FeatureLifecycle = @(
     @{ Feature='SMTP-Server';              Name='SMTP Server';                     State='Removed';    Targets=@('2025') }
     @{ Feature='Web-Lgcy-Mgmt-Console';    Name='IIS 6 Management Console';        State='Removed';    Targets=@('2025') }
     @{ Feature='PowerShell-V2';            Name='Windows PowerShell 2.0 engine';   State='Removed';    Targets=@('2025') }
-    @{ Feature='WebDAV-Redirector';        Name='WebDAV Redirector';               State='Deprecated'; Targets=@('2022','2025') }
-    @{ Feature='NLB';                      Name='Network Load Balancing';          State='Deprecated'; Targets=@('2022','2025') }
-    @{ Feature='Windows-Internal-Database';Name='Windows Internal Database (WID)'; State='Deprecated'; Targets=@('2022','2025') }
+    @{ Feature='WebDAV-Redirector';        Name='WebDAV Redirector';               State='Deprecated'; Targets=@('2025') }
+    @{ Feature='NLB';                      Name='Network Load Balancing';          State='Deprecated'; Targets=@('2025') }
+    @{ Feature='Windows-Internal-Database';Name='Windows Internal Database (WID)'; State='Deprecated'; Targets=@('2025') }
     @{ Feature='UpdateServices';           Name='WSUS';                            State='Deprecated'; Targets=@('2025') }
+    @{ Feature='ISNS';                     Name='iSNS Server service';             State='Removed';    Targets=@('2022','2025') }
+    @{ Feature='WINS';                     Name='Windows Internet Name Service (WINS)'; State='Deprecated'; Targets=@('2022') }
 )
 
 
