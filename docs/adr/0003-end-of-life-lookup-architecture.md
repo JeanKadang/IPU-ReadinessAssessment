@@ -35,9 +35,13 @@ Constraints:
 3. **Everything else is evaluated centrally** by `src/Get-IPUEolStatus.ps1`, on an analysis machine, from a
    snapshot file (`asOf`, `source`, `products.<slug>` = the releases from `endoflife.date`). The merge step
    (`Merge-IPUAssessments.ps1`) will call the same function for a fleet report.
-4. **The snapshot is a dated file in the repository,** refreshed by a pull request from a maintainer tool
-   (follow-up). Every verdict shows the snapshot date, so an old snapshot is visible. `-Online` exists only for
-   an analysis machine with internet access; the assessment script never calls it.
+4. **The snapshot is one dated JSON file** made by `Get-IPUEolStatus.ps1 -Update -SnapshotPath <file>` on a machine
+   with internet access and copied by hand to where the verdicts are made (#283). It is not fetched by the assessed
+   server. A snapshot older than `-MaxAgeMonths` (default 6, like the dated facts in `FactSources`) cannot confirm
+   that a release is still supported: Supported and SecurityOnly become MANUAL with the snapshot age, while
+   EndOfLife and EndingSoon still show, because end dates rarely move earlier. A snapshot without a usable date
+   counts as too old. `-Online` is a one-off lookup for an analysis machine with internet access; the assessment
+   script never calls it.
 5. **The verdict is a pure function** (`Get-EolDecision`: releases, version and today's date in, verdict out)
    with Pester tests, as the hard rules require.
 
@@ -83,5 +87,5 @@ The snapshot file records that its content is a copy of the source data and the 
 - The assessment script itself does not yet recognise 2008 and 2008 R2 as a source release (its release table
   starts at 2012), so on those servers the upgrade-path and support rows fall back to MANUAL. Teaching it the two
   releases is a separate change, because it touches the upgrade-path rules.
-- Follow-up work, tracked on #266: the snapshot refresh tool, detection of PHP and Apache HTTP Server, a result
+- Follow-up work, tracked on #266: detection of PHP and Apache HTTP Server, a result
   field for the product versions the script already collects, and showing the verdicts in the merged report.

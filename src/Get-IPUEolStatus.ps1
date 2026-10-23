@@ -28,6 +28,17 @@
     analysis machines with internet access only.
 .PARAMETER WarnDays
     A release that ends within this many days is reported as ending soon.
+.PARAMETER Update
+    Fetch every supported product from endoflife.date and write one snapshot
+    file to -SnapshotPath. Run it on a machine with internet access, then copy
+    the file to where the verdicts are made. Nothing on an assessed server
+    does this.
+.PARAMETER MaxAgeMonths
+    A snapshot older than this is too old to confirm that a release is still
+    supported: that verdict becomes MANUAL. End-of-life and ending-soon verdicts
+    are still shown, because end dates rarely move earlier.
+.EXAMPLE
+    .\Get-IPUEolStatus.ps1 -Update -SnapshotPath .\eol-snapshot.json
 .EXAMPLE
     .\Get-IPUEolStatus.ps1 -Product php -Version 8.2.12 -SnapshotPath .\eol-snapshot.json
 #>
@@ -37,7 +48,9 @@ param(
     [string]$Version,
     [string]$SnapshotPath,
     [switch]$Online,
-    [int]$WarnDays = 180
+    [switch]$Update,
+    [int]$WarnDays = 180,
+    [int]$MaxAgeMonths = 6
 )
 
 $script:EolAttribution = 'End-of-life data sourced from endoflife.date under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).'
@@ -170,7 +183,7 @@ function Get-EolDecision {
     $result.DaysLeft = $days
     if ($Today.Date -gt $eol) {
         $result.State = 'EndOfLife'; $result.Status = 'WARNING'
-        $result.Text = $name + ' ' + $result.Cycle + ' reached end of life on ' + $result.EolDate + '. It gets no security fixes; plan an upgrade to a supported release.'
+        $result.Text = $name + ' ' + $result.Cycle + ' reached end of life on ' + $result.EolDate + '. It gets no regular security fixes (paid extended updates may exist); plan an upgrade to a supported release.'
         return [pscustomobject]$result
     }
     if ($days -le $WarnDays) {
@@ -189,6 +202,54 @@ function Get-EolDecision {
     return [pscustomobject]$result
 }
 
+function New-EolSnapshotObject {
+    # Pure: product -> releases and a date -> the snapshot document. The
+    # attribution travels with the data (CC BY 4.0, ADR 0003).
+    param([hashtable]$Products, [string]$AsOf)
+    $byProduct = [ordered]@{}
+    foreach ($k in ($Products.Keys | Sort-Object)) { $byProduct[$k] = @($Products[$k]) }
+    return [ordered]@{
+        asOf        = $AsOf
+        source      = 'https://endoflife.date'
+        license     = 'CC BY 4.0'
+        attribution = $script:EolAttribution
+        products    = $byProduct
+    }
+}
+
+function Get-EolSnapshotAge {
+    # Pure: snapshot date + today -> Fresh, Stale or Unknown (no usable date,
+    # which counts as too old).
+    param([string]$AsOf, [datetime]$Today, [int]$MaxAgeMonths = 6)
+    $d = ConvertTo-EolDate $AsOf
+    if ($null -eq $d) { return [pscustomobject]@{ State = 'Unknown'; Months = $null; Text = 'The snapshot has no usable date.' } }
+    $months = ($Today.Year - $d.Year) * 12 + ($Today.Month - $d.Month)
+    if ($Today.Day -lt $d.Day) { $months-- }
+    if ($months -lt 0) { $months = 0 }
+    if ($d.AddMonths($MaxAgeMonths) -lt $Today.Date) {
+        return [pscustomobject]@{ State = 'Stale'; Months = $months; Text = ('The snapshot is from ' + $d.ToString('yyyy-MM-dd') + ' (' + $months + ' months old, limit ' + $MaxAgeMonths + ').') }
+    }
+    return [pscustomobject]@{ State = 'Fresh'; Months = $months; Text = ('The snapshot is from ' + $d.ToString('yyyy-MM-dd') + '.') }
+}
+
+function ConvertTo-EolStaleDecision {
+    # Pure: a verdict + the snapshot age -> the verdict to show. An old
+    # snapshot cannot confirm that a release is still supported, so
+    # Supported and SecurityOnly become MANUAL; EndOfLife, EndingSoon and
+    # Unknown stand, with the age added.
+    param($Decision, $Age)
+    if ($Age.State -eq 'Fresh') { return $Decision }
+    $out = [ordered]@{}
+    foreach ($prop in $Decision.PSObject.Properties) { $out[$prop.Name] = $prop.Value }
+    if (@('Supported', 'SecurityOnly') -contains $Decision.State) {
+        $out.State = 'Unconfirmed'; $out.Status = 'MANUAL'
+        $out.Text = $Decision.Text + ' ' + $Age.Text + ' Check the vendor lifecycle page before relying on this.'
+    } else {
+        $out.Text = $Decision.Text + ' ' + $Age.Text
+    }
+    return [pscustomobject]$out
+}
+
 function Get-EolSnapshotRelease {
     # Reads one product from a snapshot file. $null when the file or the
     # product is missing; the caller decides what that means.
@@ -197,7 +258,10 @@ function Get-EolSnapshotRelease {
     $snap = Get-Content -LiteralPath $SnapshotPath -Raw -ErrorAction Stop | ConvertFrom-Json
     $p = $snap.products.PSObject.Properties[$Product]
     if ($null -eq $p) { return $null }
-    return [pscustomobject]@{ Cycles = @($p.Value); Source = 'snapshot'; AsOf = [string]$snap.asOf }
+    # PowerShell 7 turns an ISO date in JSON into a DateTime; keep the text form.
+    $asOf = $snap.asOf
+    if ($asOf -is [datetime]) { $asOf = $asOf.ToString('yyyy-MM-dd') }
+    return [pscustomobject]@{ Cycles = @($p.Value); Source = 'snapshot'; AsOf = [string]$asOf }
 }
 
 function Get-EolOnlineRelease {
@@ -209,9 +273,32 @@ function Get-EolOnlineRelease {
     return [pscustomobject]@{ Cycles = @($r); Source = 'endoflife.date'; AsOf = (Get-Date -Format 'yyyy-MM-dd') }
 }
 
+function Save-EolSnapshot {
+    # Analysis machines with internet access only. One product that cannot
+    # be fetched is named and left out; the rest is written. A verdict for
+    # a missing product is MANUAL.
+    param([string]$Path, [datetime]$Today)
+    $products = @{}; $failed = @()
+    foreach ($slug in $script:EolProducts.Keys) {
+        try { $products[$slug] = @((Get-EolOnlineRelease -Product $slug).Cycles) }
+        catch { $failed += ($slug + ': ' + $_.Exception.Message) }
+    }
+    if ($products.Count -eq 0) { throw 'No product could be fetched from endoflife.date; no snapshot was written.' }
+    $snapshot = New-EolSnapshotObject -Products $products -AsOf $Today.ToString('yyyy-MM-dd')
+    $json = ConvertTo-Json -InputObject $snapshot -Depth 6
+    [IO.File]::WriteAllText($Path, $json, (New-Object Text.UTF8Encoding($false)))
+    return [pscustomobject]@{ Path = $Path; Written = @($products.Keys | Sort-Object); Failed = $failed; AsOf = $snapshot.asOf }
+}
+
 # Dot-sourcing (tests) loads the functions only.
 if ($MyInvocation.InvocationName -ne '.') {
-    if (-not $Product -or -not $Version) { throw 'Give -Product and -Version.' }
+    if ($Update) {
+        if (-not $SnapshotPath) { throw 'Give -SnapshotPath: the file to write the snapshot to.' }
+        $saved = Save-EolSnapshot -Path $SnapshotPath -Today (Get-Date)
+        $saved | Add-Member -NotePropertyName Attribution -NotePropertyValue $script:EolAttribution -PassThru
+        return
+    }
+    if (-not $Product -or -not $Version) { throw ('Give -Product and -Version, or -Update with -SnapshotPath to create the snapshot. See: Get-Help "' + $PSCommandPath + '" -Full') }
     if (-not $script:EolProducts.Contains($Product)) { throw ('Unsupported product ' + $Product + '. Supported: ' + ($script:EolProducts.Keys -join ', ')) }
     $data = Get-EolSnapshotRelease -Product $Product -SnapshotPath $SnapshotPath
     if ($null -eq $data -and $Online) { $data = Get-EolOnlineRelease -Product $Product }
@@ -222,6 +309,7 @@ if ($MyInvocation.InvocationName -ne '.') {
         return
     }
     $d = Get-EolDecision -Product $Product -Version $Version -Cycles $data.Cycles -Today (Get-Date) -WarnDays $WarnDays
+    $d = ConvertTo-EolStaleDecision $d (Get-EolSnapshotAge -AsOf $data.AsOf -Today (Get-Date) -MaxAgeMonths $MaxAgeMonths)
     $d | Add-Member -NotePropertyName Source -NotePropertyValue $data.Source -PassThru |
         Add-Member -NotePropertyName AsOf -NotePropertyValue $data.AsOf -PassThru |
         Add-Member -NotePropertyName Attribution -NotePropertyValue $script:EolAttribution -PassThru
