@@ -199,3 +199,24 @@ Version history: [CHANGELOG.md](CHANGELOG.md).
 ## License
 
 GPL-3.0. See [LICENSE](LICENSE).
+
+### Licence FAQ
+
+A plain-language summary for people who use the scripts. It is not legal advice; the licence text in
+[LICENSE](LICENSE) is what counts.
+
+- **Can we run it on our servers, through our own automation (for example OpenText Server Automation)?** Yes. Running
+  the scripts, in your own organisation or on a customer's servers you manage, needs no permission and no payment.
+- **Can we change it for our own use?** Yes. Changes you keep inside your organisation carry no obligation.
+- **Can we give a copy to someone else (a customer, a partner)?** Yes, as long as the copy keeps the GPL-3.0 terms: the
+  licence text goes with it, and the recipient gets the same rights you got. The scripts are plain text, so the source
+  is the file itself.
+- **Can we give away a modified copy?** Yes, under GPL-3.0 as well, with a note of what you changed. You cannot hand it
+  on under a more restrictive licence.
+- **Can we build the scripts into a product that we sell and keep closed?** No. That would need a different licence from
+  the copyright holders (open an issue to talk about it).
+- **What about the reports?** The server data in a report is yours. The fixed text and layout the script adds come from
+  the script; the copyright holders do not apply the GPL's conditions to a report you share with your team or your
+  customer. The redaction options (`-RedactReport`, `-RedactExisting`) are for hiding names before you share one.
+- **Does the end-of-life data change this?** The snapshot from [endoflife.date](https://endoflife.date) is under that
+  project's MIT licence; the notice travels in the snapshot file (see [ADR 0003](docs/adr/0003-end-of-life-lookup-architecture.md)).
