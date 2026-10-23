@@ -400,6 +400,10 @@ catch { $script:NumberCulture = [System.Globalization.CultureInfo]::InvariantCul
 $script:StatusOrder  = @('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL','OK','INFO')
 $script:FindingStatuses = @('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL')
 $script:ValidKinds   = @('Finding','Observation','Evidence','Checklist')
+# Get-OverallStatus counts Findings only. A MANUAL row that is an Observation or Evidence would be left out of the overall status, so a failed read could still end in OK (#240). Add-Result refuses that combination unless the area is listed here with the reason.
+$script:ManualNotCounted = @{
+    AGENTS = 'A management agent that is not found may simply not be expected on this server; the row asks the operator to confirm in the backend and must not turn every such server MANUAL.'
+}
 
 # The single definition of report areas. Name = what readers see, Chapter =
 # which collapsible chapter the area belongs to.
@@ -573,6 +577,9 @@ function Add-Result {
         if ($script:FindingStatuses -contains $Status) { $Kind = 'Finding' } else { $Kind = 'Evidence' }
     }
     if ($script:ValidKinds -notcontains $Kind) { throw ("Unknown result kind '{0}'." -f $Kind) }
+    if ($Status -eq 'MANUAL' -and (@('Observation','Evidence') -contains $Kind) -and -not $script:ManualNotCounted.ContainsKey($Area)) {
+        throw ("Add-Result: a MANUAL row in {0} ('{1}') must be a Finding so it counts towards the overall status. Use -Kind Finding, or add the area to $script:ManualNotCounted with the reason." -f $Area, $Item)
+    }
     $detailParts = @()
     foreach ($part in @($Details)) {
         $clean = ConvertTo-CleanText $part
@@ -619,7 +626,15 @@ function Invoke-Check {
         # -ErrorAction SilentlyContinue or try/catch explicitly, so an
         # unexpected failure is visible instead of looking like a clean result.
         $ErrorActionPreference = 'Stop'
-        $null = & $Check.Script
+        # try/catch does not catch break or continue: left alone, one inside a
+        # check would end the caller's loop and drop the rest of the phase.
+        # The do/while is the loop they end instead (#251).
+        $ranToEnd = $false
+        do {
+            $null = & $Check.Script
+            $ranToEnd = $true
+        } while ($false)
+        if (-not $ranToEnd) { throw 'The check left the runner with break or continue before it finished; its remaining rows are missing' }
         if ($script:CurrentCheckOutcome) { $outcome = $script:CurrentCheckOutcome }
         if ($script:CurrentCheckMessage) { $message = $script:CurrentCheckMessage }
     } catch {
@@ -801,6 +816,7 @@ function Get-WmiFilterQuery {
     $nc = [string]$root.Properties['defaultNamingContext'][0]
     foreach ($guid in @($GpoGuids | Where-Object { $_ } | Sort-Object -Unique)) {
         $s = New-Object System.DirectoryServices.DirectorySearcher([ADSI]('LDAP://CN=Policies,CN=System,' + $nc))
+        $s.ClientTimeout = [TimeSpan]::FromSeconds(30); $s.ServerTimeLimit = [TimeSpan]::FromSeconds(30)
         $s.Filter = '(&(objectClass=groupPolicyContainer)(cn=' + $guid + '))'
         $null = $s.PropertiesToLoad.Add('gPCWQLFilter')
         $gpo = $s.FindOne()
@@ -809,6 +825,7 @@ function Get-WmiFilterQuery {
         $m = [regex]::Match($link, '\{[0-9A-Fa-f-]{36}\}')
         if (-not $m.Success) { continue }
         $f = New-Object System.DirectoryServices.DirectorySearcher([ADSI]('LDAP://CN=SOM,CN=WMIPolicy,CN=System,' + $nc))
+        $f.ClientTimeout = [TimeSpan]::FromSeconds(30); $f.ServerTimeLimit = [TimeSpan]::FromSeconds(30)
         $f.Filter = '(&(objectClass=msWMI-Som)(msWMI-ID=' + $m.Value + '))'
         foreach ($p in 'msWMI-Name','msWMI-Parm2') { $null = $f.PropertiesToLoad.Add($p) }
         $hit = $f.FindOne()
@@ -1107,12 +1124,36 @@ function Get-RegistryValueSafe {
     return $result
 }
 
+$script:CimOperationTimeoutSec = 120
+
+function Invoke-WithTimeout {
+    # Runs a self-contained script block in its own runspace and gives up
+    # after TimeoutSec: for .NET calls that have no timeout of their own
+    # (for example Domain.GetComputerDomain on an unreachable DC, #241). The
+    # block cannot see the script's variables or functions; it returns data,
+    # not live objects. A timeout or an error inside is thrown.
+    param([scriptblock]$ScriptBlock, [int]$TimeoutSec = 30)
+    $ps = [powershell]::Create()
+    [void]$ps.AddScript($ScriptBlock.ToString())
+    $handle = $ps.BeginInvoke()
+    if (-not $handle.AsyncWaitHandle.WaitOne($TimeoutSec * 1000)) {
+        [void]$ps.BeginStop($null, $null)
+        throw ('Timed out after ' + $TimeoutSec + ' seconds')
+    }
+    try {
+        $out = $ps.EndInvoke($handle)
+        if ($ps.Streams.Error.Count -gt 0) { throw $ps.Streams.Error[0].Exception }
+        return $out
+    } finally { $ps.Dispose() }
+}
+
 function Get-CimRequired {
     # Essential CIM query: a failure throws, so the calling check is reported
     # as "did not complete" instead of looking clean. CIM cmdlets exist from
     # PowerShell 3.0; a local query needs no WinRM.
     param([string]$Class, [string]$Filter = '', [string]$Namespace = 'root\cimv2')
-    $p = @{ ClassName=$Class; Namespace=$Namespace; ErrorAction='Stop' }
+    # A hung provider must not stall the run until SA's job timeout (#241).
+    $p = @{ ClassName=$Class; Namespace=$Namespace; ErrorAction='Stop'; OperationTimeoutSec=$script:CimOperationTimeoutSec }
     if ($Filter) { $p.Filter = $Filter }
     return @(Get-CimInstance @p)
 }
@@ -1318,9 +1359,9 @@ function Read-FileTail {
 # special check. Defined here (script scope), not inside Register-AssessmentCheck.
 function Get-SpecialServerState {
     # What decides SPECIAL (#152), read once after the baseline. Read-only.
-    $clusterFeature = (Get-FeatureState 'Failover-Clustering') -eq $true
     $clusSvc = @($script:Data.Services | Where-Object { $_.Name -eq 'ClusSvc' -and $_.StartMode -ne 'Disabled' }).Count -gt 0
     $clusterKey = [bool](Test-Path 'HKLM:\Cluster')
+    $clusterFeature = (Resolve-ClusterFeatureState (Get-FeatureState 'Failover-Clustering') $clusSvc $clusterKey) -eq $true
     $role = 0; if ($script:Data.CS) { $role = [int]$script:Data.CS.DomainRole }
     return (Get-SpecialServerDecision $role $clusterFeature $clusSvc $clusterKey $BlockDomainControllerIPU)
 }
@@ -1353,16 +1394,22 @@ function Get-SpecialServerFact {
     }
     if ($Kind -eq 'DomainController') {
         try {
-            $domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()
-            $me = $env:COMPUTERNAME
-            $mine = @()
-            foreach ($r in @(@('PDC emulator', $domain.PdcRoleOwner), @('RID master', $domain.RidRoleOwner), @('Infrastructure master', $domain.InfrastructureRoleOwner), @('Schema master', $domain.Forest.SchemaRoleOwner), @('Domain naming master', $domain.Forest.NamingRoleOwner))) {
-                if ($r[1] -and ([string]$r[1].Name -split '\.')[0] -ieq $me) { $mine += $r[0] }
+            # No timeout of its own: run it bounded, as strings only (#241).
+            $dcFacts = Invoke-WithTimeout -TimeoutSec 60 -ScriptBlock {
+                $facts = @()
+                $domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()
+                $me = $env:COMPUTERNAME
+                $mine = @()
+                foreach ($r in @(@('PDC emulator', $domain.PdcRoleOwner), @('RID master', $domain.RidRoleOwner), @('Infrastructure master', $domain.InfrastructureRoleOwner), @('Schema master', $domain.Forest.SchemaRoleOwner), @('Domain naming master', $domain.Forest.NamingRoleOwner))) {
+                    if ($r[1] -and ([string]$r[1].Name -split '\.')[0] -ieq $me) { $mine += $r[0] }
+                }
+                $facts += ('FSMO roles on this server: ' + $(if ($mine.Count) { $mine -join ', ' } else { 'none' }))
+                $dc = @($domain.DomainControllers | Where-Object { ([string]$_.Name -split '\.')[0] -ieq $me }) | Select-Object -First 1
+                if ($dc) { $facts += ('Global catalog: ' + $(if ($dc.IsGlobalCatalog()) { 'yes' } else { 'no' })) }
+                $facts += ('Domain controllers in the domain: ' + @($domain.DomainControllers).Count)
+                $facts
             }
-            $facts += ('FSMO roles on this server: ' + $(if ($mine.Count) { $mine -join ', ' } else { 'none' }))
-            $dc = @($domain.DomainControllers | Where-Object { ([string]$_.Name -split '\.')[0] -ieq $me }) | Select-Object -First 1
-            if ($dc) { $facts += ('Global catalog: ' + $(if ($dc.IsGlobalCatalog()) { 'yes' } else { 'no' })) }
-            $facts += ('Domain controllers in the domain: ' + @($domain.DomainControllers).Count)
+            $facts += @($dcFacts | ForEach-Object { [string]$_ })
         } catch { $facts += ('FSMO roles and global catalog not readable: ' + $_.Exception.Message) }
         $same = @(@(@('DNS','DNS Server'), @('DHCP','DHCP Server'), @('ADCS-Cert-Authority','Certification Authority')) | Where-Object { (Get-FeatureState $_[0]) -eq $true } | ForEach-Object { $_[1] })
         $facts += ('Other roles on this server: ' + $(if ($same.Count) { $same -join ', ' } else { 'none of DNS, DHCP, certificate services' }))
@@ -1487,6 +1534,28 @@ function Get-SupportLifecycleDecision {
     }
     $days = [int][math]::Floor(($end - $Today.Date).TotalDays)
     return [pscustomobject]@{ Status='INFO'; Ended=$false; EndDate=$endText; Value=($name + ': supported until ' + $endText + ' (' + $days + ' days)'); Text='' }
+}
+
+function Get-SpaceAfterPartition {
+    # Pure: bytes of unallocated space directly after a partition, up to the
+    # next partition or the end of the disk. Does not subtract the reserved
+    # GPT tail (about 1 MB). Offsets are those of every partition on the disk.
+    param([double]$PartitionOffset, [double]$PartitionSize, [double[]]$PartitionOffsets, [double]$DiskSize)
+    $end = $PartitionOffset + $PartitionSize
+    $limit = $DiskSize
+    foreach ($o in @($PartitionOffsets)) { if ($o -ge $end -and $o -lt $limit) { $limit = $o } }
+    if ($limit -le $end) { return [double]0 }
+    return [double]($limit - $end)
+}
+
+function Resolve-ClusterFeatureState {
+    # Pure: the feature table says installed or not; when the inventory failed
+    # ($null) the Cluster service together with HKLM:\Cluster is the evidence,
+    # and without it the state stays unknown ($null), never "not installed" (#238).
+    param($FeatureState, [bool]$ClusterService, [bool]$ClusterKey)
+    if ($null -ne $FeatureState) { return [bool]$FeatureState }
+    if ($ClusterService -and $ClusterKey) { return $true }
+    return $null
 }
 
 function Get-ActivationChannelKind {
@@ -3169,9 +3238,15 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
     $script:Data.Apps     = @(Get-InstalledApplication)
     $script:Data.CV       = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
     $script:Data.Features = $null
+    $featureInventoryError = ''
     if (Test-CommandAvailable 'Get-WindowsFeature') {
-        $script:Data.Features = @{}
-        foreach ($f in @(Get-WindowsFeature -ErrorAction Stop)) { $script:Data.Features[$f.Name] = [bool]$f.Installed }
+        # Fill a local table and keep it only when the whole list was read:
+        # an empty or partial table would read as "not installed" (#238).
+        try {
+            $featureTable = @{}
+            foreach ($f in @(Get-WindowsFeature -ErrorAction Stop)) { $featureTable[$f.Name] = [bool]$f.Installed }
+            $script:Data.Features = $featureTable
+        } catch { $featureInventoryError = $_.Exception.Message }
     }
     # Drivers: file-system filter drivers (fltmc) and running kernel drivers.
     # Used to recognise AV/EDR/security products independently of their names.
@@ -3194,6 +3269,9 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
     }
     if ($script:Data.Features) { $script:Data.Snapshot.Features = @($script:Data.Features.Keys | Where-Object { $script:Data.Features[$_] } | Sort-Object) }
 
+    if ($featureInventoryError) {
+        Add-Result 'ASSESSMENT' 'FeatureInventory' 'MANUAL' 'Get-WindowsFeature failed' $featureInventoryError -Recommendation 'List the installed roles and features by hand (Server Manager, or Get-WindowsFeature in an elevated session). Until then the cluster, IIS and RDS rows are MANUAL, not "not installed".' -Source 'ServerManager'
+    }
     Add-Result 'ASSESSMENT' 'CollectorVersion' 'INFO' $script:CollectorVersion 'Restructured 4.x edition' -Source 'Script constant'
     Add-Result 'ASSESSMENT' 'Target' 'INFO' (Get-ReleaseDisplayName $TargetServerVersion) ('MediaLanguage=' + $(if ($TargetMediaLanguage) { $TargetMediaLanguage } else { 'not set' })) -Source 'SETTINGS'
     Add-Result 'ASSESSMENT' 'ExecutionContext' 'INFO' ('Identity=' + [Security.Principal.WindowsIdentity]::GetCurrent().Name) @(('PowerShell=' + $PSVersionTable.PSVersion),('LanguageMode=' + $ExecutionContext.SessionState.LanguageMode)) -Source 'Runtime'
@@ -3478,13 +3556,21 @@ Register-Check -Id 'domain' -Name 'Domain role and access' -Script {
     if ($script:Data.Snapshot) { $script:Data.Snapshot.Uac = $uac.Text }
     Add-Result 'ACCESS' 'UAC' 'INFO' $uac.Text (@($uacValues.Keys | Sort-Object | ForEach-Object { $_ + '=' + $(if ($null -eq $uacValues[$_]) { '(default)' } else { [string]$uacValues[$_] }) }) -join ', ') -Source ($uacKey -replace '^HKLM:','HKLM')
 
-    $rid500 = @(Get-CimSafe 'Win32_UserAccount' 'LocalAccount=True') | Where-Object { $_.SID -match '-500$' } | Select-Object -First 1
+    # On a domain controller "local" accounts are the domain's accounts, and
+    # listing them can take minutes (#241): skip the lookup there. Elsewhere
+    # ask for the one account by SID instead of listing all of them.
+    $rid500 = $null
+    if ($script:Data.CS -and [int]$script:Data.CS.DomainRole -ge 4) {
+        Add-Result 'ACCESS' 'BuiltInAdministrator' 'INFO' 'Not looked up on a domain controller' 'Its accounts are the domain accounts; the domain Administrator account is the one to record.' -Source 'Win32_ComputerSystem'
+    } else {
+        $rid500 = @(Get-CimSafe 'Win32_UserAccount' "LocalAccount=True AND SID LIKE '%-500'") | Where-Object { $_.SID -match '-500$' } | Select-Object -First 1
+    }
     if ($rid500) {
         Add-Result 'ACCESS' 'BuiltInAdministrator' 'INFO' ('Name=' + $rid500.Name) @(('Disabled=' + $rid500.Disabled),('SID=' + $rid500.SID)) -Recommendation 'Record the (possibly renamed) built-in Administrator and confirm PAM/console fallback.' -Source 'Win32_UserAccount'
     }
     $admins = Get-LocalGroupMembersBySid 'S-1-5-32-544'
     foreach ($member in $admins) { Add-Result 'ACCESS' 'LocalAdministratorsMember' 'INFO' $member -Source 'Local group S-1-5-32-544' }
-    if ($admins.Count -eq 0) { Add-Result 'ACCESS' 'LocalAdministratorsMember' 'MANUAL' 'No members returned' -Recommendation 'Enumerate local Administrators manually.' -Kind 'Observation' -Source 'Local group S-1-5-32-544' }
+    if ($admins.Count -eq 0) { Add-Result 'ACCESS' 'LocalAdministratorsMember' 'MANUAL' 'No members returned' -Recommendation 'Enumerate local Administrators manually.' -Kind 'Finding' -Source 'Local group S-1-5-32-544' }
 }
 
 # ---------------------------------------------------------------------------
@@ -3576,7 +3662,7 @@ Register-Check -Id 'grouppolicy' -Name 'Group Policy and AD groups' -Script {
         }
     } elseif (-not $domainMember) {
         # Workgroup server and gpresult failed: still only local policy.
-        Add-Result 'GROUP_POLICY' 'LocalPolicy' 'MANUAL' 'Could not list the local policy (gpresult)' $gpError -Recommendation (Get-LocalPolicyAdvice (Test-LgpoAvailable) $EnableRDPPolicyEvidence) -Kind 'Observation' -Source 'gpresult'
+        Add-Result 'GROUP_POLICY' 'LocalPolicy' 'MANUAL' 'Could not list the local policy (gpresult)' $gpError -Recommendation (Get-LocalPolicyAdvice (Test-LgpoAvailable) $EnableRDPPolicyEvidence) -Kind 'Finding' -Source 'gpresult'
     }
     # The AD groups come from AD, not gpresult: list them even when no GPO
     # list could be read (#160).
@@ -3651,7 +3737,9 @@ Register-Check -Id 'performance' -Name 'CPU and memory' -Script {
 
 # ---------------------------------------------------------------------------
 Register-Check -Id 'cluster' -Name 'Failover clustering' -Script {
-    $feature = Get-FeatureState 'Failover-Clustering'
+    $clusSvcPresent = @($script:Data.Services | Where-Object { $_.Name -eq 'ClusSvc' -and $_.StartMode -ne 'Disabled' }).Count -gt 0
+    $feature = Resolve-ClusterFeatureState (Get-FeatureState 'Failover-Clustering') $clusSvcPresent ([bool](Test-Path 'HKLM:\Cluster'))
+    if ($null -eq $feature) { Add-Result 'CLUSTER' 'FailoverClustering' 'MANUAL' 'Feature state unknown: the role inventory failed' -Recommendation 'Confirm by hand whether this server is a cluster node (Get-Cluster, the Cluster service) before planning an IPU.' -Source 'Get-WindowsFeature'; return }
     if ($feature -ne $true) { Add-Result 'CLUSTER' 'FailoverClustering' 'OK' 'Feature not installed' -Source 'Get-WindowsFeature'; return }
     if (-not (Test-CommandAvailable 'Get-Cluster')) {
         Add-Result 'CLUSTER' 'FailoverClustering' 'ACTION' 'Feature installed; cluster cmdlets unavailable' -Recommendation 'Confirm cluster membership before planning an IPU.' -Source 'Get-WindowsFeature'
@@ -3725,7 +3813,7 @@ Register-Check -Id 'storage' -Name 'Storage' -Script {
     $winRe = $null
     $ra = Invoke-NativeCapture (Join-Path $env:windir 'System32\reagentc.exe') @('/info') 60
     if ($ra.TimedOut -or $ra.Error -or ($null -ne $ra.ExitCode -and [int]$ra.ExitCode -ne 0)) {
-        Add-Result 'STORAGE' 'WinREStatus' 'MANUAL' 'reagentc /info failed' ([string]$ra.Error + ' ExitCode=' + $ra.ExitCode) -Recommendation 'Run "reagentc /info" as administrator to see where WinRE is before changing partitions.' -Kind 'Observation' -Source 'reagentc /info'
+        Add-Result 'STORAGE' 'WinREStatus' 'MANUAL' 'reagentc /info failed' ([string]$ra.Error + ' ExitCode=' + $ra.ExitCode) -Recommendation 'Run "reagentc /info" as administrator to see where WinRE is before changing partitions.' -Kind 'Finding' -Source 'reagentc /info'
     } else {
         $winRe = ConvertFrom-ReagentcInfo $ra.Output
         if ($null -ne $winRe.Partition -or $null -ne $winRe.Enabled) {
@@ -3747,8 +3835,11 @@ Register-Check -Id 'storage' -Name 'Storage' -Script {
         Add-Result 'STORAGE' 'RecoveryPartitionAfterC' 'OK' $rd.Value -Source 'Get-Partition'
     }
     try {
-        $sup = Get-PartitionSupportedSize -DriveLetter C -ErrorAction Stop
-        Add-Result 'STORAGE' 'CExtendableNowGB' 'INFO' (Format-Number (($sup.SizeMax - $cp.Size)/1GB)) 'Currently available contiguous space only.' -Source 'Get-PartitionSupportedSize'
+        # Worked out from the partition layout: Get-PartitionSupportedSize
+        # computes the shrink size too and can take minutes on a large volume (#241).
+        $diskSize = [double](Get-Disk -Number $cp.DiskNumber -ErrorAction Stop).Size
+        $spaceAfterC = Get-SpaceAfterPartition ([double]$cp.Offset) ([double]$cp.Size) @($layout | ForEach-Object { $_.Offset }) $diskSize
+        Add-Result 'STORAGE' 'CExtendableNowGB' 'INFO' (Format-Number ($spaceAfterC / 1GB)) 'Currently available contiguous space only.' -Source 'Get-Partition, Get-Disk'
     } catch { Write-Swallowed $_ }
 
     $total = 0
@@ -3959,7 +4050,7 @@ Register-Check -Id 'sql' -Name 'SQL Server' -Script {
 # ---------------------------------------------------------------------------
 Register-Check -Id 'workloads' -Name 'Roles and workloads' -Script {
     if ($null -eq $script:Data.Features) {
-        Add-Result 'ROLES' 'Inventory' 'MANUAL' 'Get-WindowsFeature unavailable' -Recommendation 'List installed roles/features manually.' -Kind 'Observation' -Source 'ServerManager'
+        Add-Result 'ROLES' 'Inventory' 'MANUAL' 'Get-WindowsFeature unavailable' -Recommendation 'List installed roles/features manually.' -Kind 'Finding' -Source 'ServerManager'
     } else {
         foreach ($name in @($script:Data.Features.Keys | Where-Object { $script:Data.Features[$_] } | Sort-Object)) {
             Add-Result 'ROLES' $name 'INFO' 'Installed' -Source 'Get-WindowsFeature'
@@ -4009,7 +4100,7 @@ Register-Check -Id 'fileshares' -Name 'File shares' -Script {
     # test, and the post-upgrade run can report a share that is gone.
     $role = Get-FeatureState 'FS-FileServer'
     if (-not (Test-CommandAvailable 'Get-SmbShare')) {
-        if ($role -eq $true) { Add-Result 'FILE_SHARES' 'FileShares' 'MANUAL' 'Get-SmbShare is not available' -Recommendation 'List the shares manually (net share) and record their share permissions before the change.' -Kind 'Observation' -Source 'SmbShare module' }
+        if ($role -eq $true) { Add-Result 'FILE_SHARES' 'FileShares' 'MANUAL' 'Get-SmbShare is not available' -Recommendation 'List the shares manually (net share) and record their share permissions before the change.' -Kind 'Finding' -Source 'SmbShare module' }
         return
     }
     $printing = (Get-FeatureState 'Print-Server') -eq $true
@@ -4108,7 +4199,9 @@ Register-Check -Id 'printers' -Name 'Print server: printers, ports and drivers' 
 
 # ---------------------------------------------------------------------------
 Register-Check -Id 'iis' -Name 'IIS' -Script {
-    if ((Get-FeatureState 'Web-Server') -ne $true) { Add-Result 'IIS' 'Web-Server' 'OK' 'Not installed' -Source 'Get-WindowsFeature'; return }
+    $iisState = Get-FeatureState 'Web-Server'
+    if ($null -eq $iisState) { Add-Result 'IIS' 'Web-Server' 'MANUAL' 'Feature state unknown: the role inventory failed' -Recommendation 'Check by hand whether IIS is installed (Get-WindowsFeature Web-Server, or the W3SVC service).' -Source 'Get-WindowsFeature'; return }
+    if ($iisState -ne $true) { Add-Result 'IIS' 'Web-Server' 'OK' 'Not installed' -Source 'Get-WindowsFeature'; return }
     Add-Result 'IIS' 'Web-Server' 'WARNING' 'Installed' -Recommendation 'Immediately before the IPU, run the appcmd.exe add backup command shown (the copy in this report is from assessment time), and keep site, binding and certificate documentation.' -Source 'Get-WindowsFeature' -Command (Get-RecommendationCommand 'IisBackup').Command -CommandKind 'Change' -Link $script:DocLinks.AppCmd.Url -LinkTitle $script:DocLinks.AppCmd.Title
     if ($EnableIISConfigEvidence) {
         try {
@@ -4137,6 +4230,7 @@ Register-Check -Id 'iis' -Name 'IIS' -Script {
 Register-Check -Id 'rds' -Name 'Remote Desktop Services roles' -Script {
     $rdsh = Get-FeatureState 'RDS-RD-Server'
     $rdlic = Get-FeatureState 'RDS-Licensing'
+    if ($null -eq $rdsh -or $null -eq $rdlic) { Add-Result 'RDS' 'RDSRoles' 'MANUAL' 'Feature state unknown: the role inventory failed' -Recommendation 'Check by hand whether the Remote Desktop Session Host and Licensing roles are installed (Get-WindowsFeature RDS-*).' -Source 'Get-WindowsFeature'; return }
     if ($rdsh -eq $true) { Add-Result 'RDS' 'RDSessionHost' 'ACTION' 'Installed' -Recommendation ('Plan a longer IPU window, record the licensing configuration, and confirm RDS CALs are valid for ' + (Get-ReleaseDisplayName $TargetServerVersion) + ' (CALs must be the same or newer release as the server).') -Source 'Get-WindowsFeature' }
     else { Add-Result 'RDS' 'RDSessionHost' 'OK' 'Not installed' -Source 'Get-WindowsFeature' }
     if ($rdlic -eq $true) { Add-Result 'RDS' 'RDLicensingServer' 'ACTION' 'Installed' -Recommendation 'This is an RD Licensing server. Upgrading it affects every RDS host that uses it; confirm installed CALs and the order of upgrades with the RDS owner.' -Source 'Get-WindowsFeature' }
@@ -4218,7 +4312,7 @@ Register-Check -Id 'pki' -Name 'PKI, certificates and TLS bindings' -Script {
             $st = 'OK'; if ($c.NotAfter -lt (Get-Date)) { $st = 'WARNING' }
             Add-Result 'CERTIFICATES' 'RDP-Tcp certificate' $st ('Thumbprint=' + $thumb) @(('Subject=' + $c.Subject),('NotAfter=' + $c.NotAfter.ToString('yyyy-MM-dd'))) -Recommendation 'Verify RDP connects after IPU.' -Kind 'Observation' -Source 'Win32_TSGeneralSetting'
         } elseif ($thumb) {
-            Add-Result 'CERTIFICATES' 'RDP-Tcp certificate' 'MANUAL' ('Thumbprint=' + $thumb) 'Not found in My, Remote Desktop or WebHosting' -Recommendation 'Verify the RDP certificate configuration.' -Kind 'Observation' -Source 'Win32_TSGeneralSetting'
+            Add-Result 'CERTIFICATES' 'RDP-Tcp certificate' 'MANUAL' ('Thumbprint=' + $thumb) 'Not found in My, Remote Desktop or WebHosting' -Recommendation 'Verify the RDP certificate configuration.' -Kind 'Finding' -Source 'Win32_TSGeneralSetting'
         }
     }
 
@@ -4366,7 +4460,7 @@ Register-Check -Id 'backup' -Name 'Backup and VSS' -Script {
     $vss = Invoke-NativeCapture (Join-Path $env:windir 'System32\vssadmin.exe') @('list','writers') 120
     $writers = ConvertFrom-VssWriterOutput $vss.Lines
     if ($vss.TimedOut -or $writers.Count -eq 0) {
-        Add-Result 'BACKUP' 'VSSWriters' 'MANUAL' 'VSS writer state could not be read' @(('TimedOut=' + $vss.TimedOut),$vss.Error) -Recommendation 'Run "vssadmin list writers" manually; failed writers break application-consistent backups and snapshots.' -Kind 'Observation' -Source 'vssadmin list writers'
+        Add-Result 'BACKUP' 'VSSWriters' 'MANUAL' 'VSS writer state could not be read' @(('TimedOut=' + $vss.TimedOut),$vss.Error) -Recommendation 'Run "vssadmin list writers" manually; failed writers break application-consistent backups and snapshots.' -Kind 'Finding' -Source 'vssadmin list writers'
     }
     $failed = 0
     foreach ($w in $writers) {
@@ -4758,7 +4852,7 @@ function Invoke-RdpPolicyAssessment {
         $null = Initialize-OutputFolder $root
         New-Item -ItemType Directory -Path $lgpoRoot -Force | Out-Null
     }
-    catch { $folderOk = $false; $review.Add('Evidence folder could not be created'); Add-Result 'POLICY_EVIDENCE' 'EvidenceFolder' 'MANUAL' $root $_.Exception.Message -Recommendation 'Make the evidence folder writable and re-run.' -Kind 'Observation' }
+    catch { $folderOk = $false; $review.Add('Evidence folder could not be created'); Add-Result 'POLICY_EVIDENCE' 'EvidenceFolder' 'MANUAL' $root $_.Exception.Message -Recommendation 'Make the evidence folder writable and re-run.' -Kind 'Finding' }
 
     if ($folderOk) {
         # LGPO backup (local policy only; never imports).
@@ -4770,7 +4864,7 @@ function Invoke-RdpPolicyAssessment {
             $r = Invoke-NativeCapture $LgpoExe @('/b',$lgpoRoot,'/n',('Pre-IPU-' + $stamp)) 120
             $r.Output | Out-File -LiteralPath (Join-Path $root 'LGPO-Backup-Output.txt') -Encoding UTF8
             if ($r.ExitCode -eq 0) { Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'OK' $lgpoRoot -Source 'LGPO.exe /b' }
-            else { Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'MANUAL' ('ExitCode=' + $r.ExitCode) $r.Error -Recommendation 'Review the LGPO output if a restorable local-policy copy is required.' -Kind 'Observation' -Source 'LGPO.exe /b' }
+            else { Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'MANUAL' ('ExitCode=' + $r.ExitCode) $r.Error -Recommendation 'Review the LGPO output if a restorable local-policy copy is required.' -Kind 'Finding' -Source 'LGPO.exe /b' }
             foreach ($pol in @(
                 @{ Scope='Machine'; Mode='/m'; Path=(Join-Path $env:windir 'System32\GroupPolicy\Machine\Registry.pol') },
                 @{ Scope='User'; Mode='/u'; Path=(Join-Path $env:windir 'System32\GroupPolicy\User\Registry.pol') })) {
@@ -4790,7 +4884,7 @@ function Invoke-RdpPolicyAssessment {
         $gpText.Output | Out-File -LiteralPath (Join-Path $root 'GPResult-Computer.txt') -Encoding UTF8
         $gpHtml = Invoke-NativeCapture $gpresult @('/Scope','Computer','/H',(Join-Path $root 'GPResult-Computer.html'),'/F') 180
         if ($gpText.ExitCode -eq 0 -or $gpHtml.ExitCode -eq 0) { Add-Result 'POLICY_EVIDENCE' 'ComputerRSoP' 'OK' (Join-Path $root 'GPResult-Computer.html') -Source 'gpresult' }
-        else { $review.Add('gpresult did not return computer policy'); Add-Result 'POLICY_EVIDENCE' 'ComputerRSoP' 'MANUAL' ('Exit=' + $gpText.ExitCode + '/' + $gpHtml.ExitCode) -Recommendation 'Collect RSoP manually.' -Kind 'Observation' -Source 'gpresult' }
+        else { $review.Add('gpresult did not return computer policy'); Add-Result 'POLICY_EVIDENCE' 'ComputerRSoP' 'MANUAL' ('Exit=' + $gpText.ExitCode + '/' + $gpHtml.ExitCode) -Recommendation 'Collect RSoP manually.' -Kind 'Finding' -Source 'gpresult' }
     }
 
     $policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
@@ -4903,7 +4997,7 @@ function Invoke-RdpPolicyAssessment {
                 if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
                 New-ZipFromFolder $root $zip
                 $script:Data.PolicyEvidence = $zip
-            } catch { Add-Result 'POLICY_EVIDENCE' 'EvidenceArchive' 'MANUAL' 'ZIP creation failed' $_.Exception.Message -Recommendation 'Retrieve the folder directly.' -Kind 'Observation' }
+            } catch { Add-Result 'POLICY_EVIDENCE' 'EvidenceArchive' 'MANUAL' 'ZIP creation failed' $_.Exception.Message -Recommendation 'Retrieve the folder directly.' -Kind 'Finding' }
         }
         Add-Result 'POLICY_EVIDENCE' 'EvidenceLocation' 'INFO' $script:Data.PolicyEvidence $root -Source 'Local filesystem'
     }
@@ -5597,57 +5691,70 @@ function Invoke-Assessment {
         return
     }
 
-    Import-SiteDataFile
-    Register-AssessmentCheck
-    $skip = @()
-    if ($AssessmentMode -eq 'Post') { $skip = @('checklist','compatscan') }
-    # The baseline first: it decides whether this is a SPECIAL server (#152).
-    $baselineCheck = @($script:Checks | Where-Object { $_.Id -eq 'baseline' }) | Select-Object -First 1
-    if ($baselineCheck) { Invoke-Check $baselineCheck; $skip += 'baseline' }
-    $script:Data.SpecialKind = ''
-    if ($AssessmentMode -ne 'Post') {
-        try { $script:Data.SpecialKind = Get-SpecialServerState } catch { $script:Data.SpecialKind = 'Undecided'; Write-Swallowed $_ }
-    }
-    if ($script:Data.SpecialKind -eq 'Cluster' -or $script:Data.SpecialKind -eq 'DomainController') {
-        # Short report: only what is needed to choose a plan.
-        $keep = Get-SpecialServerCheckId
-        Write-AssessmentLog 'INFO' 'SPECIAL' ('Kind=' + $script:Data.SpecialKind + ' | short report with checks: ' + ($keep -join ','))
-        foreach ($c in @($script:Checks | Where-Object { $keep -notcontains $_.Id -and $skip -notcontains $_.Id })) {
-            $script:CheckRuns.Add([pscustomobject]@{ Id=$c.Id; Name=$c.Name; Phase=$c.Phase; Outcome='Skipped'; Duration='00:00:00'; Seconds=0; Message='Not applicable: SPECIAL server, short report' })
-            $skip += $c.Id
+    # Anything that throws outside a check (site data, registering checks, the
+    # SPECIAL decision, skipping a slow check) must still end in a report and an SA
+    # result line, not in a bare error (#251).
+    $runFailure = ''
+    try {
+        Import-SiteDataFile
+        Register-AssessmentCheck
+        $skip = @()
+        if ($AssessmentMode -eq 'Post') { $skip = @('checklist','compatscan') }
+        # The baseline first: it decides whether this is a SPECIAL server (#152).
+        $baselineCheck = @($script:Checks | Where-Object { $_.Id -eq 'baseline' }) | Select-Object -First 1
+        if ($baselineCheck) { Invoke-Check $baselineCheck; $skip += 'baseline' }
+        $script:Data.SpecialKind = ''
+        if ($AssessmentMode -ne 'Post') {
+            try { $script:Data.SpecialKind = Get-SpecialServerState } catch { $script:Data.SpecialKind = 'Undecided'; Write-Swallowed $_ }
         }
-    }
-    foreach ($check in @($script:Checks | Where-Object { $_.Phase -eq 'Fast' -and $skip -notcontains $_.Id })) { Invoke-Check $check }
-    if ($AssessmentMode -eq 'Post') { Invoke-PostUpgradeComparison }
-
-    try { $null = Write-AssessmentReport -Partial } catch { Write-AssessmentLog 'WARNING' 'REPORT' ('Checkpoint report failed: ' + $_.Exception.Message) }
-
-    $budgetMinutes = Get-SlowCheckBudget $SlowCheckBudgetMinutes $CompatScanTimeoutMinutes $TargetMediaPath $AssessmentMode
-    $slowWatch = [Diagnostics.Stopwatch]::StartNew()
-    foreach ($check in @($script:Checks | Where-Object { $_.Phase -eq 'Slow' -and $skip -notcontains $_.Id })) {
-        $script:SlowSecondsLeft = Get-SlowSecondsLeft $budgetMinutes $slowWatch.Elapsed.TotalSeconds
-        if (Test-SlowCheckSkip $script:SlowSecondsLeft) {
-            Add-SkippedSlowCheck $check $budgetMinutes
-            continue
+        if ($script:Data.SpecialKind -eq 'Cluster' -or $script:Data.SpecialKind -eq 'DomainController') {
+            # Short report: only what is needed to choose a plan.
+            $keep = Get-SpecialServerCheckId
+            Write-AssessmentLog 'INFO' 'SPECIAL' ('Kind=' + $script:Data.SpecialKind + ' | short report with checks: ' + ($keep -join ','))
+            foreach ($c in @($script:Checks | Where-Object { $keep -notcontains $_.Id -and $skip -notcontains $_.Id })) {
+                $script:CheckRuns.Add([pscustomobject]@{ Id=$c.Id; Name=$c.Name; Phase=$c.Phase; Outcome='Skipped'; Duration='00:00:00'; Seconds=0; Message='Not applicable: SPECIAL server, short report' })
+                $skip += $c.Id
+            }
         }
-        Invoke-Check $check
+        foreach ($check in @($script:Checks | Where-Object { $_.Phase -eq 'Fast' -and $skip -notcontains $_.Id })) { Invoke-Check $check }
+        if ($AssessmentMode -eq 'Post') { Invoke-PostUpgradeComparison }
+
+        try { $null = Write-AssessmentReport -Partial } catch { Write-AssessmentLog 'WARNING' 'REPORT' ('Checkpoint report failed: ' + $_.Exception.Message) }
+
+        $budgetMinutes = Get-SlowCheckBudget $SlowCheckBudgetMinutes $CompatScanTimeoutMinutes $TargetMediaPath $AssessmentMode
+        $slowWatch = [Diagnostics.Stopwatch]::StartNew()
+        foreach ($check in @($script:Checks | Where-Object { $_.Phase -eq 'Slow' -and $skip -notcontains $_.Id })) {
+            $script:SlowSecondsLeft = Get-SlowSecondsLeft $budgetMinutes $slowWatch.Elapsed.TotalSeconds
+            if (Test-SlowCheckSkip $script:SlowSecondsLeft) {
+                Add-SkippedSlowCheck $check $budgetMinutes
+                continue
+            }
+            Invoke-Check $check
+        }
+
+    } catch {
+        $runFailure = $_.Exception.GetType().Name + ': ' + $_.Exception.Message
+        Write-AssessmentLog 'ERROR' 'RUN' ($runFailure + ' | Line ' + $_.InvocationInfo.ScriptLineNumber)
+        try { Add-Result 'COLLECTOR' 'Assessment run' 'MANUAL' 'The run stopped early' $runFailure -Recommendation 'Read the log, fix the cause and run again. Checks that had not run yet are missing from this report; absence of findings is NOT evidence of a clean server.' -Source 'Invoke-Assessment' } catch { Write-Swallowed $_ }
     }
 
     $records = $script:Results.Count
     $failedChecks = @($script:CheckRuns | Where-Object { $_.Outcome -ne 'Completed' }).Count
+    $runStatus = 'SUCCEEDED'; if ($runFailure) { $runStatus = 'FAILED' }
     try {
         $final = Write-AssessmentReport
         $specialNote = ''
         if ($script:Data.Special) { $specialNote = 'SPECIAL server (' + $script:Data.Special.Title + '): short report, separate plan needed. ' }
         $msg = $specialNote + 'Mode=' + $AssessmentMode + ', Checks=' + $script:CheckRuns.Count + ', NotCompleted=' + $failedChecks + $(if ($WriteJson) { ', JSON=' + $script:JsonPath } else { '' }) + '. Retrieve the HTML via the approved SA process.'
+        if ($runFailure) { $msg = 'The run stopped early (' + $runFailure + '). ' + $msg }
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
-            $script:ComputerName,'SUCCEEDED',$final.Overall,$script:ReportPath,$script:LogPath,
+            $script:ComputerName,$runStatus,$final.Overall,$script:ReportPath,$script:LogPath,
             ([Math]::Round($final.Bytes/1KB,1)).ToString('N1',$script:NumberCulture),$records,
             $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss'),$final.Completed.ToString('yyyy-MM-dd HH:mm:ss'),
             (Format-Duration ($final.Completed - $script:CollectionStarted)),$script:CollectorVersion,$msg
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
-        $script:ExitCode = 0
+        $script:ExitCode = $(if ($runFailure) { 1 } else { 0 })
     } catch {
         $msg = $_.Exception.GetType().Name + ': ' + $_.Exception.Message
         Write-AssessmentLog 'ERROR' 'FAILED' $msg
@@ -5677,11 +5784,18 @@ if ($script:Is32BitHost -and $env:IPU_ASSESSMENT_RELAUNCHED -ne '1') {
     $ps64 = Join-Path $env:windir 'Sysnative\WindowsPowerShell\v1.0\powershell.exe'
     if ($selfPath -and (Test-Path -LiteralPath $ps64)) {
         $env:IPU_ASSESSMENT_RELAUNCHED = '1'
-        # Pass through every parameter the caller gave, typed correctly.
-        $argText = ConvertTo-RelaunchArgumentText $PSBoundParameters
-        $command = "& '" + ($selfPath -replace "'","''") + "'" + $argText + '; exit $LASTEXITCODE'
-        & $ps64 -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $command
-        exit $LASTEXITCODE
+        # Pass through every parameter the caller gave, typed correctly. If
+        # building the command fails, carry on in this 32-bit host: the
+        # baseline reports it (#251).
+        $relaunchCommand = ''
+        try {
+            $argText = ConvertTo-RelaunchArgumentText $PSBoundParameters
+            $relaunchCommand = "& '" + ($selfPath -replace "'","''") + "'" + $argText + '; exit $LASTEXITCODE'
+        } catch { Write-Swallowed $_ }
+        if ($relaunchCommand) {
+            & $ps64 -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $relaunchCommand
+            exit $LASTEXITCODE
+        }
     }
 }
 

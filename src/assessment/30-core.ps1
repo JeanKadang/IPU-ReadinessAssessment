@@ -44,6 +44,10 @@ catch { $script:NumberCulture = [System.Globalization.CultureInfo]::InvariantCul
 $script:StatusOrder  = @('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL','OK','INFO')
 $script:FindingStatuses = @('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL')
 $script:ValidKinds   = @('Finding','Observation','Evidence','Checklist')
+# Get-OverallStatus counts Findings only. A MANUAL row that is an Observation or Evidence would be left out of the overall status, so a failed read could still end in OK (#240). Add-Result refuses that combination unless the area is listed here with the reason.
+$script:ManualNotCounted = @{
+    AGENTS = 'A management agent that is not found may simply not be expected on this server; the row asks the operator to confirm in the backend and must not turn every such server MANUAL.'
+}
 
 # The single definition of report areas. Name = what readers see, Chapter =
 # which collapsible chapter the area belongs to.
@@ -217,6 +221,9 @@ function Add-Result {
         if ($script:FindingStatuses -contains $Status) { $Kind = 'Finding' } else { $Kind = 'Evidence' }
     }
     if ($script:ValidKinds -notcontains $Kind) { throw ("Unknown result kind '{0}'." -f $Kind) }
+    if ($Status -eq 'MANUAL' -and (@('Observation','Evidence') -contains $Kind) -and -not $script:ManualNotCounted.ContainsKey($Area)) {
+        throw ("Add-Result: a MANUAL row in {0} ('{1}') must be a Finding so it counts towards the overall status. Use -Kind Finding, or add the area to $script:ManualNotCounted with the reason." -f $Area, $Item)
+    }
     $detailParts = @()
     foreach ($part in @($Details)) {
         $clean = ConvertTo-CleanText $part
@@ -263,7 +270,15 @@ function Invoke-Check {
         # -ErrorAction SilentlyContinue or try/catch explicitly, so an
         # unexpected failure is visible instead of looking like a clean result.
         $ErrorActionPreference = 'Stop'
-        $null = & $Check.Script
+        # try/catch does not catch break or continue: left alone, one inside a
+        # check would end the caller's loop and drop the rest of the phase.
+        # The do/while is the loop they end instead (#251).
+        $ranToEnd = $false
+        do {
+            $null = & $Check.Script
+            $ranToEnd = $true
+        } while ($false)
+        if (-not $ranToEnd) { throw 'The check left the runner with break or continue before it finished; its remaining rows are missing' }
         if ($script:CurrentCheckOutcome) { $outcome = $script:CurrentCheckOutcome }
         if ($script:CurrentCheckMessage) { $message = $script:CurrentCheckMessage }
     } catch {
@@ -445,6 +460,7 @@ function Get-WmiFilterQuery {
     $nc = [string]$root.Properties['defaultNamingContext'][0]
     foreach ($guid in @($GpoGuids | Where-Object { $_ } | Sort-Object -Unique)) {
         $s = New-Object System.DirectoryServices.DirectorySearcher([ADSI]('LDAP://CN=Policies,CN=System,' + $nc))
+        $s.ClientTimeout = [TimeSpan]::FromSeconds(30); $s.ServerTimeLimit = [TimeSpan]::FromSeconds(30)
         $s.Filter = '(&(objectClass=groupPolicyContainer)(cn=' + $guid + '))'
         $null = $s.PropertiesToLoad.Add('gPCWQLFilter')
         $gpo = $s.FindOne()
@@ -453,6 +469,7 @@ function Get-WmiFilterQuery {
         $m = [regex]::Match($link, '\{[0-9A-Fa-f-]{36}\}')
         if (-not $m.Success) { continue }
         $f = New-Object System.DirectoryServices.DirectorySearcher([ADSI]('LDAP://CN=SOM,CN=WMIPolicy,CN=System,' + $nc))
+        $f.ClientTimeout = [TimeSpan]::FromSeconds(30); $f.ServerTimeLimit = [TimeSpan]::FromSeconds(30)
         $f.Filter = '(&(objectClass=msWMI-Som)(msWMI-ID=' + $m.Value + '))'
         foreach ($p in 'msWMI-Name','msWMI-Parm2') { $null = $f.PropertiesToLoad.Add($p) }
         $hit = $f.FindOne()
@@ -751,12 +768,36 @@ function Get-RegistryValueSafe {
     return $result
 }
 
+$script:CimOperationTimeoutSec = 120
+
+function Invoke-WithTimeout {
+    # Runs a self-contained script block in its own runspace and gives up
+    # after TimeoutSec: for .NET calls that have no timeout of their own
+    # (for example Domain.GetComputerDomain on an unreachable DC, #241). The
+    # block cannot see the script's variables or functions; it returns data,
+    # not live objects. A timeout or an error inside is thrown.
+    param([scriptblock]$ScriptBlock, [int]$TimeoutSec = 30)
+    $ps = [powershell]::Create()
+    [void]$ps.AddScript($ScriptBlock.ToString())
+    $handle = $ps.BeginInvoke()
+    if (-not $handle.AsyncWaitHandle.WaitOne($TimeoutSec * 1000)) {
+        [void]$ps.BeginStop($null, $null)
+        throw ('Timed out after ' + $TimeoutSec + ' seconds')
+    }
+    try {
+        $out = $ps.EndInvoke($handle)
+        if ($ps.Streams.Error.Count -gt 0) { throw $ps.Streams.Error[0].Exception }
+        return $out
+    } finally { $ps.Dispose() }
+}
+
 function Get-CimRequired {
     # Essential CIM query: a failure throws, so the calling check is reported
     # as "did not complete" instead of looking clean. CIM cmdlets exist from
     # PowerShell 3.0; a local query needs no WinRM.
     param([string]$Class, [string]$Filter = '', [string]$Namespace = 'root\cimv2')
-    $p = @{ ClassName=$Class; Namespace=$Namespace; ErrorAction='Stop' }
+    # A hung provider must not stall the run until SA's job timeout (#241).
+    $p = @{ ClassName=$Class; Namespace=$Namespace; ErrorAction='Stop'; OperationTimeoutSec=$script:CimOperationTimeoutSec }
     if ($Filter) { $p.Filter = $Filter }
     return @(Get-CimInstance @p)
 }
@@ -962,9 +1003,9 @@ function Read-FileTail {
 # special check. Defined here (script scope), not inside Register-AssessmentCheck.
 function Get-SpecialServerState {
     # What decides SPECIAL (#152), read once after the baseline. Read-only.
-    $clusterFeature = (Get-FeatureState 'Failover-Clustering') -eq $true
     $clusSvc = @($script:Data.Services | Where-Object { $_.Name -eq 'ClusSvc' -and $_.StartMode -ne 'Disabled' }).Count -gt 0
     $clusterKey = [bool](Test-Path 'HKLM:\Cluster')
+    $clusterFeature = (Resolve-ClusterFeatureState (Get-FeatureState 'Failover-Clustering') $clusSvc $clusterKey) -eq $true
     $role = 0; if ($script:Data.CS) { $role = [int]$script:Data.CS.DomainRole }
     return (Get-SpecialServerDecision $role $clusterFeature $clusSvc $clusterKey $BlockDomainControllerIPU)
 }
@@ -997,16 +1038,22 @@ function Get-SpecialServerFact {
     }
     if ($Kind -eq 'DomainController') {
         try {
-            $domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()
-            $me = $env:COMPUTERNAME
-            $mine = @()
-            foreach ($r in @(@('PDC emulator', $domain.PdcRoleOwner), @('RID master', $domain.RidRoleOwner), @('Infrastructure master', $domain.InfrastructureRoleOwner), @('Schema master', $domain.Forest.SchemaRoleOwner), @('Domain naming master', $domain.Forest.NamingRoleOwner))) {
-                if ($r[1] -and ([string]$r[1].Name -split '\.')[0] -ieq $me) { $mine += $r[0] }
+            # No timeout of its own: run it bounded, as strings only (#241).
+            $dcFacts = Invoke-WithTimeout -TimeoutSec 60 -ScriptBlock {
+                $facts = @()
+                $domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()
+                $me = $env:COMPUTERNAME
+                $mine = @()
+                foreach ($r in @(@('PDC emulator', $domain.PdcRoleOwner), @('RID master', $domain.RidRoleOwner), @('Infrastructure master', $domain.InfrastructureRoleOwner), @('Schema master', $domain.Forest.SchemaRoleOwner), @('Domain naming master', $domain.Forest.NamingRoleOwner))) {
+                    if ($r[1] -and ([string]$r[1].Name -split '\.')[0] -ieq $me) { $mine += $r[0] }
+                }
+                $facts += ('FSMO roles on this server: ' + $(if ($mine.Count) { $mine -join ', ' } else { 'none' }))
+                $dc = @($domain.DomainControllers | Where-Object { ([string]$_.Name -split '\.')[0] -ieq $me }) | Select-Object -First 1
+                if ($dc) { $facts += ('Global catalog: ' + $(if ($dc.IsGlobalCatalog()) { 'yes' } else { 'no' })) }
+                $facts += ('Domain controllers in the domain: ' + @($domain.DomainControllers).Count)
+                $facts
             }
-            $facts += ('FSMO roles on this server: ' + $(if ($mine.Count) { $mine -join ', ' } else { 'none' }))
-            $dc = @($domain.DomainControllers | Where-Object { ([string]$_.Name -split '\.')[0] -ieq $me }) | Select-Object -First 1
-            if ($dc) { $facts += ('Global catalog: ' + $(if ($dc.IsGlobalCatalog()) { 'yes' } else { 'no' })) }
-            $facts += ('Domain controllers in the domain: ' + @($domain.DomainControllers).Count)
+            $facts += @($dcFacts | ForEach-Object { [string]$_ })
         } catch { $facts += ('FSMO roles and global catalog not readable: ' + $_.Exception.Message) }
         $same = @(@(@('DNS','DNS Server'), @('DHCP','DHCP Server'), @('ADCS-Cert-Authority','Certification Authority')) | Where-Object { (Get-FeatureState $_[0]) -eq $true } | ForEach-Object { $_[1] })
         $facts += ('Other roles on this server: ' + $(if ($same.Count) { $same -join ', ' } else { 'none of DNS, DHCP, certificate services' }))

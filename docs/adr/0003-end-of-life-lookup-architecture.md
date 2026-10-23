@@ -18,10 +18,13 @@ Constraints:
    no outbound internet access.
 2. A call from the assessment script to a third-party API would break zero-egress policies and could leak the
    server's software inventory. The script stays read-only and offline (see `AGENTS.md`).
-3. End-of-life data from `endoflife.date` is licensed under Creative Commons Attribution 4.0 International
-   (CC BY 4.0). Using it requires attribution, a link to the licence, and a note of changes.
-4. This project is licensed under GPL-3.0. CC BY 4.0 data is facts used as input, not code that is merged into
-   the program, so the two do not conflict; the attribution still has to be shown.
+3. The data comes from `endoflife.date`. Its repository (`endoflife-date/endoflife.date`) states "Licensed under the MIT
+   License" (Copyright 2020 endoflife.date contributors); its product descriptions are adapted from Wikipedia under
+   CC BY-SA 3.0, which we do not use (we copy release names and dates only). The MIT licence lets us copy and
+   redistribute the data if the copyright and permission notice come with it. (The first draft of this ADR, in
+   pull request #271, said CC BY 4.0; that was checked against the source and is wrong.)
+4. This project is licensed under GPL-3.0. MIT data is compatible with that: it is facts used as input, not code
+   merged into the program. This is the maintainers' reading, not legal advice.
 
 ## Decision
 
@@ -35,9 +38,13 @@ Constraints:
 3. **Everything else is evaluated centrally** by `src/Get-IPUEolStatus.ps1`, on an analysis machine, from a
    snapshot file (`asOf`, `source`, `products.<slug>` = the releases from `endoflife.date`). The merge step
    (`Merge-IPUAssessments.ps1`) will call the same function for a fleet report.
-4. **The snapshot is a dated file in the repository,** refreshed by a pull request from a maintainer tool
-   (follow-up). Every verdict shows the snapshot date, so an old snapshot is visible. `-Online` exists only for
-   an analysis machine with internet access; the assessment script never calls it.
+4. **The snapshot is one dated JSON file** made by `Get-IPUEolStatus.ps1 -Update -SnapshotPath <file>` on a machine
+   with internet access and copied by hand to where the verdicts are made (#283). It is not fetched by the assessed
+   server. A snapshot older than `-MaxAgeMonths` (default 6, like the dated facts in `FactSources`) cannot confirm
+   that a release is still supported: Supported and SecurityOnly become MANUAL with the snapshot age, while
+   EndOfLife and EndingSoon still show, because end dates rarely move earlier. A snapshot without a usable date
+   counts as too old. `-Online` is a one-off lookup for an analysis machine with internet access; the assessment
+   script never calls it.
 5. **The verdict is a pure function** (`Get-EolDecision`: releases, version and today's date in, verdict out)
    with Pester tests, as the hard rules require.
 
@@ -67,10 +74,10 @@ because a wrong one fails quietly. First list:
 Not in the first list: SharePoint, Citrix, Veeam and Commvault (their release names are not plain numbers and
 need their own matching), IIS (follows the operating system), and products `endoflife.date` does not track.
 
-**Attribution (CC BY 4.0, section 3(a)(1)).** Documentation, release notes and report output that show EOL
-data carry:
-`End-of-life data sourced from endoflife.date under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).`
-The snapshot file records that its content is a copy of the source data and the date it was taken.
+**Attribution and licence notice (MIT).** Every snapshot carries the licence name, the copyright line and the full MIT
+permission notice (`license`, `attribution`, `licenseNotice`). Documentation, release notes and report output that
+show EOL data carry: `End-of-life data from endoflife.date (https://endoflife.date), MIT License, Copyright 2020
+endoflife.date contributors.` The snapshot file also records the date it was taken.
 
 ## Consequences
 
@@ -83,5 +90,5 @@ The snapshot file records that its content is a copy of the source data and the 
 - The assessment script itself does not yet recognise 2008 and 2008 R2 as a source release (its release table
   starts at 2012), so on those servers the upgrade-path and support rows fall back to MANUAL. Teaching it the two
   releases is a separate change, because it touches the upgrade-path rules.
-- Follow-up work, tracked on #266: the snapshot refresh tool, detection of PHP and Apache HTTP Server, a result
+- Follow-up work, tracked on #266: detection of PHP and Apache HTTP Server, a result
   field for the product versions the script already collects, and showing the verdicts in the merged report.
