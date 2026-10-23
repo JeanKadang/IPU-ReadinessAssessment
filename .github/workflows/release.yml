@@ -101,6 +101,7 @@ jobs:
           cp src/Windows-IPU-Readiness-Assessment.ps1 src/Merge-IPUAssessments.ps1 README.md CHANGELOG.md LICENSE SECURITY.md "dist/$name/"
           cp docs/user-guide.md docs/checks.md docs/result-schema.md docs/result-schema.json "dist/$name/docs/"
           cp -r docs/examples "dist/$name/docs/"
+          cp -r docs/samples "dist/$name/docs/"
           (cd dist && zip -r -X "$name.zip" "$name")
           (cd dist && cp "$name/Windows-IPU-Readiness-Assessment.ps1" "$name/Merge-IPUAssessments.ps1" . \
             && sha256sum "$name.zip" Windows-IPU-Readiness-Assessment.ps1 Merge-IPUAssessments.ps1 > SHA256SUMS.txt)
