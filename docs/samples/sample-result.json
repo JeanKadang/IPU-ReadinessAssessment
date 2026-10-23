@@ -1,11 +1,12 @@
 {
   "Schema": "IPU-Assessment/1",
-  "CollectorVersion": "4.5.3",
+  "CollectorVersion": "4.5.4",
   "ComputerName": "SRV-APP01",
   "Mode": "Pre",
   "TargetServerVersion": "2025",
   "Started": "2026-10-06 09:44:41",
   "Completed": "2026-10-06 09:58:41",
+  "UtcOffset": "+02:00",
   "Partial": false,
   "Redacted": false,
   "Overall": "BLOCKER",

@@ -1,8 +1,8 @@
 <#
 ===============================================================================
  SCRIPT NAME : Windows-IPU-Readiness-Assessment.ps1
- VERSION     : 4.5.3
- RELEASE DATE: 2026-10-15
+ VERSION     : 4.5.4
+ RELEASE DATE: 2026-10-23
  PURPOSE     : Windows Server in-place upgrade (IPU) readiness assessment and
                post-upgrade verification, with a self-contained HTML report
                and a JSON result file written on the assessed server.
@@ -85,6 +85,11 @@
     load, nothing is collected. The Pester tests use this.
 
 .VERSION HISTORY
+    4.5.4 - A failed read is never a clean result: roles, MANUAL rows
+            and the post-upgrade baseline are checked. Time limits for
+            the fast phase, a clear SA line when the folder or JSON
+            cannot be written, native arguments escaped, restricted
+            folders created in one step, fleet CSV with a BOM.
     4.5.3 - Redaction key (DO-NOT-SHARE-...-REDACTION-KEY.csv) next to
             redacted copies. Certificate locality and other subject
             fields redacted; versions with a build suffix kept. Windows
@@ -358,7 +363,7 @@ $script:FeatureLifecycle = @(
 # 3. CORE
 # =============================================================================
 $ProgressPreference = 'SilentlyContinue'
-$script:CollectorVersion  = '4.5.3'
+$script:CollectorVersion  = '4.5.4'
 # Settings a profile file (-ProfileFile) may set. Mode, target, media path,
 # report folder and redaction describe one run, so they stay arguments only.
 $script:ProfileSettingNames = @(
