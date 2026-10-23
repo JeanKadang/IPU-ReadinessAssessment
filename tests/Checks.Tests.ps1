@@ -325,7 +325,7 @@ BeforeAll {
                 "Win32_LogicalDisk|DeviceID='C:'" = [pscustomobject]@{ Size = [double]100GB; FreeSpace = [double]55GB }
                 'Win32_NetworkAdapterConfiguration|IPEnabled=True' = [pscustomobject]@{ Index = 1; IPAddress = @('10.20.30.40', 'fe80::1'); IPSubnet = @('255.255.255.0', '64'); DefaultIPGateway = @('10.20.30.1'); DNSServerSearchOrder = @('10.20.1.10', '10.20.1.11'); DHCPEnabled = $false; MACAddress = '00:50:56:00:00:01'; Description = 'vmxnet3 Ethernet Adapter' }
                 'Win32_NetworkAdapter|Index=1' = [pscustomobject]@{ NetConnectionID = 'Ethernet0' }
-                'Win32_UserAccount|LocalAccount=True' = @([pscustomobject]@{ Name = 'LocalAdmin'; SID = 'S-1-5-21-1-2-3-500'; Disabled = $false }, [pscustomobject]@{ Name = 'Guest'; SID = 'S-1-5-21-1-2-3-501'; Disabled = $true })
+                'Win32_UserAccount|LocalAccount=True AND SID LIKE ''%-500''' = @([pscustomobject]@{ Name = 'LocalAdmin'; SID = 'S-1-5-21-1-2-3-500'; Disabled = $false }, [pscustomobject]@{ Name = 'Guest'; SID = 'S-1-5-21-1-2-3-501'; Disabled = $true })
                 'Win32_PnPSignedDriver' = @(
                     [pscustomobject]@{ DeviceName = 'Microsoft Basic Display'; DriverProviderName = 'Microsoft'; DriverVersion = '10.0'; DriverDate = (Get-Date -Year 2016 -Month 6 -Day 21); DeviceClass = 'DISPLAY'; IsSigned = $true },
                     [pscustomobject]@{ DeviceName = 'vmxnet3 Ethernet Adapter'; DriverProviderName = 'VMware, Inc.'; DriverVersion = '1.9.2'; DriverDate = (Get-Date -Year 2023 -Month 1 -Day 1); DeviceClass = 'NET'; IsSigned = $true })
@@ -483,6 +483,18 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $run = Invoke-TestCheck 'baseline'
             $run.Outcome | Should -Be 'Failed'
             (Get-Row 'COLLECTOR' 'Baseline inventory')[0].Status | Should -Be 'MANUAL'
+        }
+    }
+
+    Context 'storage: space after C (#241)' {
+        It 'is worked out from the partition layout and the disk size, not from Get-PartitionSupportedSize' {
+            $script:Fake.SupportedSize = $null
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'storage'
+            $row = (Get-Row 'STORAGE' 'CExtendableNowGB')
+            $row.Count | Should -Be 1
+            $row[0].Value | Should -Match '^0[.,]4'
+            $row[0].Source | Should -Be 'Get-Partition, Get-Disk'
         }
     }
 
@@ -890,6 +902,14 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $null = Invoke-TestCheck 'domain'
             $script:Data.DomainRoleText | Should -Be 'Workgroup server (standalone), workgroup WORKGROUP'
             (Get-Row 'ACCESS' 'DomainMembership')[0].Details | Should -Be 'Role=Workgroup server (standalone), workgroup WORKGROUP'
+        }
+        It 'a domain controller does not list its accounts for the built-in Administrator (#241)' {
+            $script:Fake.Cim['Win32_ComputerSystem'].DomainRole = 5
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'domain'
+            $row = (Get-Row 'ACCESS' 'BuiltInAdministrator')[0]
+            $row.Value | Should -Be 'Not looked up on a domain controller'
+            $row.Status | Should -Be 'INFO'
         }
         It 'a member server with a working secure channel is OK' {
             (Invoke-TestCheck 'domain').Outcome | Should -Be 'Completed'
