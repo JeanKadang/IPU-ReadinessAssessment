@@ -134,12 +134,27 @@ function Resolve-ClusterFeatureState {
     return $null
 }
 
+<<<<<<< HEAD
 function Format-UtcOffset {
     # Pure: +02:00, -05:30, +00:00 (#252).
     param([TimeSpan]$Offset)
     $sign = '+'; if ($Offset -lt [TimeSpan]::Zero) { $sign = '-' }
     $abs = $Offset.Duration()
     return ('{0}{1:00}:{2:00}' -f $sign, [int]$abs.Hours, [int]$abs.Minutes)
+=======
+function Get-JsonOutcomeText {
+    # Pure: what the SA result line says about the JSON file (#250). The fleet
+    # overview and the post-upgrade comparison depend on it, so a JSON that
+    # was not written is never reported as if it were.
+    #   Outcome: Written | Partial | Failed | Disabled
+    param([bool]$WriteJson, [string]$Outcome, [string]$Path)
+    if (-not $WriteJson) { return '' }
+    switch ($Outcome) {
+        'Written' { return ', JSON=' + $Path }
+        'Partial' { return ', JSON=PARTIAL (checkpoint only: ' + $Path + ')' }
+        default   { return ', JSON=FAILED (not written; the fleet overview and the post-upgrade comparison need it)' }
+    }
+>>>>>>> origin/main
 }
 
 function Get-ActivationChannelKind {

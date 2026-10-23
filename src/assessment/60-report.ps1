@@ -340,9 +340,15 @@ function Write-AssessmentReport {
     Move-Item -LiteralPath $temp -Destination $script:ReportPath -Force -ErrorAction Stop
     $info = Get-Item -LiteralPath $script:ReportPath -ErrorAction Stop
     Write-AssessmentLog 'INFO' 'REPORT' ('Written. Partial={0} | Overall={1} | Bytes={2}' -f [bool]$Partial,$overall,$info.Length)
+    $jsonOutcome = 'Disabled'
     if ($WriteJson) {
-        try { Write-AssessmentJson -Results $results -Overall $overall -Completed $completed -Partial:$Partial }
-        catch { Write-AssessmentLog 'WARNING' 'JSON' ('JSON result could not be written: ' + $_.Exception.Message) }
+        try {
+            Write-AssessmentJson -Results $results -Overall $overall -Completed $completed -Partial:$Partial
+            $jsonOutcome = 'Written'; if ($Partial) { $jsonOutcome = 'Partial' }
+        } catch {
+            $jsonOutcome = 'Failed'
+            Write-AssessmentLog 'WARNING' 'JSON' ('JSON result could not be written: ' + $_.Exception.Message)
+        }
     }
     # The key to the placeholders (#211), after the HTML and the JSON so it
     # holds every placeholder they use.
@@ -351,7 +357,7 @@ function Write-AssessmentReport {
         try { $script:Data.RedactionKey = Write-RedactionKey (Get-RedactionContext) $keyPath }
         catch { Write-AssessmentLog 'WARNING' 'REDACTION' ('Redaction key could not be written: ' + $_.Exception.Message) }
     }
-    return [pscustomobject]@{ Overall=$overall; Completed=$completed; Bytes=$info.Length }
+    return [pscustomobject]@{ Overall=$overall; Completed=$completed; Bytes=$info.Length; JsonOutcome=$jsonOutcome }
 }
 
 function New-AssessmentJsonObject {
