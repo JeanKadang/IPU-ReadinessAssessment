@@ -12,6 +12,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `CONTRIBUTING.md` says how pull requests from outside are handled (#277).
 
 ### Fixed
+- A row that says a read failed (`MANUAL`) now counts towards the overall status. Eleven such rows were tagged Observation or Evidence, which the overall status ignores, so a server whose role inventory, shares, printers, IIS copy, VSS writers, local policy, WinRE, RDP certificate or evidence copy could not be read could still end as `OK`. They are now Findings, and `Add-Result` refuses a `MANUAL` Observation or Evidence row; the only exception is a missing management agent, which stays an observation (#240).
 - SFC: when the console text is not English, the CBS.log fallback no longer reports OK for a run that logged Cannot verify component files ... manifest is damaged. Such a run is now ACTION (#249).
 - Post-upgrade comparison: only Windows' own per-user services (CDPUserSvc, OneSyncSvc and the other templates Microsoft lists) are treated as per-user. A service whose name only ends in a hex-like suffix, such as `AppSvc_DB01`, is no longer filed as "exists only while a user is signed in" when it is gone after the upgrade: it is reported as a missing service (#247).
 - A two-part VMware Tools version such as `12.5` is compared as `12.5.0`, so it no longer counts as older than the 12.5.0 minimum for a Windows Server 2025 target (#253).
