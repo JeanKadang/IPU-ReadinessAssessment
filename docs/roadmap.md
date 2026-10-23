@@ -14,11 +14,6 @@ Next patch release: P1 correctness and failure-visibility fixes in the assessmen
 | [#239](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/239) | P1 | Micker71 | Post-upgrade comparison is clean against an empty, partial or overwritten baseline |
 | [#130](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/130) | P2 | JeanKadang | PowerShell 4.0 support is only checked statically |
 | [#236](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/236) | P2 | JeanKadang | README lags behind 4.4.0 to 4.5.3: SPECIAL, evidence, redaction, build step |
-| [#250](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/250) | P2 | Micker71 | An unwritable output folder is noticed at the end; the SA line says SUCCEEDED when the JSON write failed |
-| [#252](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/252) | P2 | Micker71 | Fleet CSV files have no byte-order mark under PowerShell 7; JSON times have no time-zone offset |
-| [#136](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/136) | P3 | Micker71 | Native argument quoting does not escape quotes or trailing backslashes |
-| [#138](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/138) | P3 | Micker71 | Fleet overview counts a server twice when its redacted copy is present |
-| [#139](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/139) | P3 | Micker71 | NumberCultureName is unvalidated and new folders are restricted after creation |
 | [#280](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/280) | P3 | JeanKadang | Add docs/roadmap.md with the milestone plan |
 
 ## 4.6.0
@@ -63,7 +58,6 @@ End-of-life reporting (ADR 0003), larger refactors and the cluster node script.
 | [#266](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/266) | P3 | JeanKadang | End-of-life dates for installed applications and runtimes, looked up off the server |
 | [#276](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/276) | P3 | Micker71 | Recognise Windows Server 2008 and 2008 R2 as a source release |
 | [#279](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/279) | P3 | Micker71 | VMware Tools: show how far behind the installed version is |
-| [#287](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/287) | P3 | JeanKadang | ADR 0003: let the assessment read a local EOL snapshot |
 
 ## Future
 

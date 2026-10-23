@@ -340,9 +340,15 @@ function Write-AssessmentReport {
     Move-Item -LiteralPath $temp -Destination $script:ReportPath -Force -ErrorAction Stop
     $info = Get-Item -LiteralPath $script:ReportPath -ErrorAction Stop
     Write-AssessmentLog 'INFO' 'REPORT' ('Written. Partial={0} | Overall={1} | Bytes={2}' -f [bool]$Partial,$overall,$info.Length)
+    $jsonOutcome = 'Disabled'
     if ($WriteJson) {
-        try { Write-AssessmentJson -Results $results -Overall $overall -Completed $completed -Partial:$Partial }
-        catch { Write-AssessmentLog 'WARNING' 'JSON' ('JSON result could not be written: ' + $_.Exception.Message) }
+        try {
+            Write-AssessmentJson -Results $results -Overall $overall -Completed $completed -Partial:$Partial
+            $jsonOutcome = 'Written'; if ($Partial) { $jsonOutcome = 'Partial' }
+        } catch {
+            $jsonOutcome = 'Failed'
+            Write-AssessmentLog 'WARNING' 'JSON' ('JSON result could not be written: ' + $_.Exception.Message)
+        }
     }
     # The key to the placeholders (#211), after the HTML and the JSON so it
     # holds every placeholder they use.
@@ -351,7 +357,7 @@ function Write-AssessmentReport {
         try { $script:Data.RedactionKey = Write-RedactionKey (Get-RedactionContext) $keyPath }
         catch { Write-AssessmentLog 'WARNING' 'REDACTION' ('Redaction key could not be written: ' + $_.Exception.Message) }
     }
-    return [pscustomobject]@{ Overall=$overall; Completed=$completed; Bytes=$info.Length }
+    return [pscustomobject]@{ Overall=$overall; Completed=$completed; Bytes=$info.Length; JsonOutcome=$jsonOutcome }
 }
 
 function New-AssessmentJsonObject {
@@ -370,6 +376,7 @@ function New-AssessmentJsonObject {
         TargetServerVersion = $TargetServerVersion
         Started             = $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss')
         Completed           = $Completed.ToString('yyyy-MM-dd HH:mm:ss')
+        UtcOffset           = (Format-UtcOffset ([TimeZoneInfo]::Local.GetUtcOffset($Completed)))
         Partial             = [bool]$Partial
         Redacted            = $false
         Overall             = $Overall
@@ -595,8 +602,8 @@ function Import-SiteDataFile {
             }
             foreach ($k in @($decision.Ignored)) { $details += ($k + ': the argument given to the script was used') }
             if ($decision.Settings.Contains('NumberCultureName')) {
-                try { $script:NumberCulture = New-Object System.Globalization.CultureInfo($decision.Settings['NumberCultureName']) }
-                catch { $script:NumberCulture = [System.Globalization.CultureInfo]::InvariantCulture }
+                $script:NumberCultureResolved = Resolve-NumberCulture ([string]$decision.Settings['NumberCultureName'])
+                $script:NumberCulture = $script:NumberCultureResolved.Culture
             }
             Add-Result 'COLLECTOR' 'Profile file' 'INFO' ('Applied, ' + $decision.Settings.Count + ' setting(s)') ($details + @('SHA256=' + $hash)) -Source $ProfileFile
             Write-AssessmentLog 'INFO' 'SITEDATA' ('Profile file applied: ' + $ProfileFile + ' | ' + ($details -join '; '))

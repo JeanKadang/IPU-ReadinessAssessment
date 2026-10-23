@@ -536,6 +536,25 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
         }
     }
 
+    Context 'number format that does not exist (#139)' {
+        It 'says so in the report instead of falling back silently' {
+            $script:NumberCultureResolved = [pscustomobject]@{ Culture = [Globalization.CultureInfo]::InvariantCulture; Known = $false }
+            $script:Data = @{}
+            $null = Invoke-TestCheck 'baseline'
+            $row = (Get-Row 'ASSESSMENT' 'NumberCulture')
+            $row.Count | Should -Be 1
+            $row[0].Status | Should -Be 'INFO'
+            $row[0].Value | Should -Match 'is not a culture on this server'
+            $script:NumberCultureResolved = Resolve-NumberCulture 'da-DK'
+        }
+        It 'no row for a known culture' {
+            $script:NumberCultureResolved = Resolve-NumberCulture 'da-DK'
+            $script:Data = @{}
+            $null = Invoke-TestCheck 'baseline'
+            (Get-Row 'ASSESSMENT' 'NumberCulture').Count | Should -Be 0
+        }
+    }
+
     Context 'upgradepath' {
         It 'a healthy 2016 Standard server has a supported path and the right media' {
             (Invoke-TestCheck 'upgradepath').Outcome | Should -Be 'Completed'

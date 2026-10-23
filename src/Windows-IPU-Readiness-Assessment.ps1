@@ -392,8 +392,22 @@ $script:LogPath           = [IO.Path]::Combine($ReportDirectory, $script:SafeCom
 $script:JsonPath          = [IO.Path]::Combine($ReportDirectory, $script:ReportBaseName + '.json')
 $script:BaselinePath      = [IO.Path]::Combine($ReportDirectory, $script:SafeComputerName + '-IPU-Assessment.json')
 
-try { $script:NumberCulture = New-Object System.Globalization.CultureInfo($NumberCultureName) }
-catch { $script:NumberCulture = [System.Globalization.CultureInfo]::InvariantCulture }
+function Resolve-NumberCulture {
+    # An unknown name must not pass silently: .NET Framework builds a culture
+    # for any well-formed name, so the exception is not a reliable test. The
+    # name has to be one of the cultures this server knows (#139). Not known:
+    # the invariant culture, and Known = $false so the report can say so.
+    param([string]$Name)
+    $invariant = [System.Globalization.CultureInfo]::InvariantCulture
+    if (-not $Name) { return [pscustomobject]@{ Culture = $invariant; Known = $false } }
+    $known = @([System.Globalization.CultureInfo]::GetCultures([System.Globalization.CultureTypes]::AllCultures) | Where-Object { $_.Name -ieq $Name })
+    if ($known.Count -eq 0) { return [pscustomobject]@{ Culture = $invariant; Known = $false } }
+    try { return [pscustomobject]@{ Culture = (New-Object System.Globalization.CultureInfo($known[0].Name)); Known = $true } }
+    catch { return [pscustomobject]@{ Culture = $invariant; Known = $false } }
+}
+
+$script:NumberCultureResolved = Resolve-NumberCulture $NumberCultureName
+$script:NumberCulture = $script:NumberCultureResolved.Culture
 
 # SPECIAL (#152): not a standard IPU (cluster node, domain controller) - a
 # separate plan, extra time and coordination, more risk. Ranks above BLOCKER.
@@ -681,12 +695,33 @@ function Set-RestrictedFolderAcl {
     Set-Acl -LiteralPath $Path -AclObject (New-RestrictedDirectorySecurity) -ErrorAction Stop
 }
 
+function New-RestrictedFolder {
+    # Creates the folder together with its restricted access list. Windows
+    # PowerShell (.NET Framework) has Directory.CreateDirectory(path, security);
+    # PowerShell 7 (.NET) has it as an extension method. Throws when neither
+    # works, and Initialize-OutputFolder then falls back to create + Set-Acl.
+    param([string]$Path)
+    $security = New-RestrictedDirectorySecurity
+    try { [void][System.IO.Directory]::CreateDirectory($Path, $security) }
+    catch {
+        $ext = 'System.IO.FileSystemAclExtensions' -as [type]
+        if (-not $ext) { throw }
+        [void]$ext::CreateDirectory($security, $Path)
+    }
+}
+
 function Initialize-OutputFolder {
     # Creates a folder for the script's own output. Only a folder created by
     # this run is restricted; an existing folder keeps its permissions (it may
     # be shared, e.g. C:\Temp) and the report says whether it is too open.
     param([string]$Path, [bool]$Restrict = $RestrictOutputAcl)
     if (Test-Path -LiteralPath $Path -PathType Container) { return 'Existing' }
+    if ($Restrict) {
+        # Created with its access list in one call, so there is no moment
+        # when the folder exists with inherited permissions (#139).
+        try { New-RestrictedFolder $Path; return 'CreatedRestricted' }
+        catch { Write-Swallowed $_ }
+    }
     New-Item -ItemType Directory -Path $Path -Force -ErrorAction Stop | Out-Null
     if (-not $Restrict) { return 'Created' }
     try {
@@ -1210,6 +1245,34 @@ function ConvertFrom-NativeByteArray {
     return ($text -replace '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]','')
 }
 
+function ConvertTo-NativeArgument {
+    # Pure: one argument -> its text on a Windows command line, following the
+    # rules CommandLineToArgvW reads back (#136). A plain argument is left
+    # alone; one with white space or a quote is wrapped in quotes, with each
+    # embedded quote escaped and the backslashes in front of a quote (or of
+    # the closing quote) doubled, so C:\Install Media\ does not swallow the
+    # closing quote. An argument the caller already wrapped in quotes, with
+    # none inside, is kept as it is.
+    param([AllowEmptyString()][string]$Argument)
+    if ($Argument.Length -eq 0) { return '""' }
+    if ($Argument -match '^"[^"]*"$') { return $Argument }
+    if ($Argument -notmatch '[\s"]') { return $Argument }
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append('"')
+    $backslashes = 0
+    foreach ($ch in $Argument.ToCharArray()) {
+        if ($ch -eq [char]'\') { $backslashes++; continue }
+        if ($ch -eq [char]'"') {
+            [void]$sb.Append('\', ($backslashes * 2 + 1)).Append('"')
+        } else {
+            [void]$sb.Append('\', $backslashes).Append($ch)
+        }
+        $backslashes = 0
+    }
+    [void]$sb.Append('\', ($backslashes * 2)).Append('"')
+    return $sb.ToString()
+}
+
 function Invoke-NativeCapture {
     # Runs a native command with a timeout and captured output. Used for every
     # external tool so that stderr output never becomes a terminating
@@ -1226,10 +1289,7 @@ function Invoke-NativeCapture {
     $result = [pscustomobject]@{ ExitCode=$null; Output=''; Lines=@(); TimedOut=$false; Error='' }
     $process = $null
     try {
-        $quoted = @()
-        foreach ($arg in $ArgumentList) {
-            if ($arg -match '\s' -and $arg -notmatch '^".*"$') { $quoted += ('"' + $arg + '"') } else { $quoted += $arg }
-        }
+        $quoted = @($ArgumentList | ForEach-Object { ConvertTo-NativeArgument $_ })
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = $FilePath
         $psi.Arguments = ($quoted -join ' ')
@@ -1556,6 +1616,28 @@ function Resolve-ClusterFeatureState {
     if ($null -ne $FeatureState) { return [bool]$FeatureState }
     if ($ClusterService -and $ClusterKey) { return $true }
     return $null
+}
+
+function Format-UtcOffset {
+    # Pure: +02:00, -05:30, +00:00 (#252).
+    param([TimeSpan]$Offset)
+    $sign = '+'; if ($Offset -lt [TimeSpan]::Zero) { $sign = '-' }
+    $abs = $Offset.Duration()
+    return ('{0}{1:00}:{2:00}' -f $sign, [int]$abs.Hours, [int]$abs.Minutes)
+}
+
+function Get-JsonOutcomeText {
+    # Pure: what the SA result line says about the JSON file (#250). The fleet
+    # overview and the post-upgrade comparison depend on it, so a JSON that
+    # was not written is never reported as if it were.
+    #   Outcome: Written | Partial | Failed | Disabled
+    param([bool]$WriteJson, [string]$Outcome, [string]$Path)
+    if (-not $WriteJson) { return '' }
+    switch ($Outcome) {
+        'Written' { return ', JSON=' + $Path }
+        'Partial' { return ', JSON=PARTIAL (checkpoint only: ' + $Path + ')' }
+        default   { return ', JSON=FAILED (not written; the fleet overview and the post-upgrade comparison need it)' }
+    }
 }
 
 function Get-ActivationChannelKind {
@@ -3271,6 +3353,9 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
 
     if ($featureInventoryError) {
         Add-Result 'ASSESSMENT' 'FeatureInventory' 'MANUAL' 'Get-WindowsFeature failed' $featureInventoryError -Recommendation 'List the installed roles and features by hand (Server Manager, or Get-WindowsFeature in an elevated session). Until then the cluster, IIS and RDS rows are MANUAL, not "not installed".' -Source 'ServerManager'
+    }
+    if (-not $script:NumberCultureResolved.Known) {
+        Add-Result 'ASSESSMENT' 'NumberCulture' 'INFO' ('Number format ''' + $NumberCultureName + ''' is not a culture on this server') 'Numbers use the invariant format (1,234.5).' -Recommendation 'Give -NumberCultureName a culture name that exists, for example da-DK or en-US.' -Source 'NumberCultureName'
     }
     Add-Result 'ASSESSMENT' 'CollectorVersion' 'INFO' $script:CollectorVersion 'Restructured 4.x edition' -Source 'Script constant'
     Add-Result 'ASSESSMENT' 'Target' 'INFO' (Get-ReleaseDisplayName $TargetServerVersion) ('MediaLanguage=' + $(if ($TargetMediaLanguage) { $TargetMediaLanguage } else { 'not set' })) -Source 'SETTINGS'
@@ -5346,9 +5431,15 @@ function Write-AssessmentReport {
     Move-Item -LiteralPath $temp -Destination $script:ReportPath -Force -ErrorAction Stop
     $info = Get-Item -LiteralPath $script:ReportPath -ErrorAction Stop
     Write-AssessmentLog 'INFO' 'REPORT' ('Written. Partial={0} | Overall={1} | Bytes={2}' -f [bool]$Partial,$overall,$info.Length)
+    $jsonOutcome = 'Disabled'
     if ($WriteJson) {
-        try { Write-AssessmentJson -Results $results -Overall $overall -Completed $completed -Partial:$Partial }
-        catch { Write-AssessmentLog 'WARNING' 'JSON' ('JSON result could not be written: ' + $_.Exception.Message) }
+        try {
+            Write-AssessmentJson -Results $results -Overall $overall -Completed $completed -Partial:$Partial
+            $jsonOutcome = 'Written'; if ($Partial) { $jsonOutcome = 'Partial' }
+        } catch {
+            $jsonOutcome = 'Failed'
+            Write-AssessmentLog 'WARNING' 'JSON' ('JSON result could not be written: ' + $_.Exception.Message)
+        }
     }
     # The key to the placeholders (#211), after the HTML and the JSON so it
     # holds every placeholder they use.
@@ -5357,7 +5448,7 @@ function Write-AssessmentReport {
         try { $script:Data.RedactionKey = Write-RedactionKey (Get-RedactionContext) $keyPath }
         catch { Write-AssessmentLog 'WARNING' 'REDACTION' ('Redaction key could not be written: ' + $_.Exception.Message) }
     }
-    return [pscustomobject]@{ Overall=$overall; Completed=$completed; Bytes=$info.Length }
+    return [pscustomobject]@{ Overall=$overall; Completed=$completed; Bytes=$info.Length; JsonOutcome=$jsonOutcome }
 }
 
 function New-AssessmentJsonObject {
@@ -5376,6 +5467,7 @@ function New-AssessmentJsonObject {
         TargetServerVersion = $TargetServerVersion
         Started             = $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss')
         Completed           = $Completed.ToString('yyyy-MM-dd HH:mm:ss')
+        UtcOffset           = (Format-UtcOffset ([TimeZoneInfo]::Local.GetUtcOffset($Completed)))
         Partial             = [bool]$Partial
         Redacted            = $false
         Overall             = $Overall
@@ -5601,8 +5693,8 @@ function Import-SiteDataFile {
             }
             foreach ($k in @($decision.Ignored)) { $details += ($k + ': the argument given to the script was used') }
             if ($decision.Settings.Contains('NumberCultureName')) {
-                try { $script:NumberCulture = New-Object System.Globalization.CultureInfo($decision.Settings['NumberCultureName']) }
-                catch { $script:NumberCulture = [System.Globalization.CultureInfo]::InvariantCulture }
+                $script:NumberCultureResolved = Resolve-NumberCulture ([string]$decision.Settings['NumberCultureName'])
+                $script:NumberCulture = $script:NumberCultureResolved.Culture
             }
             Add-Result 'COLLECTOR' 'Profile file' 'INFO' ('Applied, ' + $decision.Settings.Count + ' setting(s)') ($details + @('SHA256=' + $hash)) -Source $ProfileFile
             Write-AssessmentLog 'INFO' 'SITEDATA' ('Profile file applied: ' + $ProfileFile + ' | ' + ($details -join '; '))
@@ -5662,10 +5754,25 @@ function Invoke-PostUpgradeComparison {
 # =============================================================================
 function Invoke-Assessment {
     $header = 'ComputerName;RunStatus;AssessmentStatus;ReportPath;LogPath;ReportSizeKB;Records;Started;Completed;Duration;CollectorVersion;Message'
+    # An output folder that cannot be written is found now, not after up to an
+    # hour of checks (#250): the log file is the first thing written.
+    $folderError = ''
     try {
         $script:OutputFolderState = Initialize-OutputFolder $ReportDirectory
         [IO.File]::WriteAllText($script:LogPath,('Timestamp;Level;Phase;Message' + [Environment]::NewLine),(New-Object System.Text.UTF8Encoding($false)))
-    } catch { Write-Swallowed $_ }
+    } catch { $folderError = $_.Exception.Message }
+    if ($folderError) {
+        $now = Get-Date
+        [Console]::Out.WriteLine($header)
+        [Console]::Out.WriteLine((@(
+            $script:ComputerName,'FAILED','MANUAL','','','',0,
+            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss'),$now.ToString('yyyy-MM-dd HH:mm:ss'),
+            (Format-Duration ($now - $script:CollectionStarted)),$script:CollectorVersion,
+            ('Nothing was assessed: the report folder cannot be written (' + $ReportDirectory + '): ' + $folderError + ' Give -ReportDirectory a folder the account can write to.')
+        ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
+        $script:ExitCode = 1
+        return
+    }
     Write-AssessmentLog 'INFO' 'START' ('Collector={0} | Mode={1} | Target={2} | PowerShell={3}' -f $script:CollectorVersion,$AssessmentMode,$TargetServerVersion,$PSVersionTable.PSVersion)
 
     # Prerequisites first (#94): stop with a clear message instead of failing
@@ -5743,9 +5850,11 @@ function Invoke-Assessment {
     $runStatus = 'SUCCEEDED'; if ($runFailure) { $runStatus = 'FAILED' }
     try {
         $final = Write-AssessmentReport
+        # A JSON that was asked for and not written is a failed run: the fleet overview and the Post baseline need that file.
+        if ($WriteJson -and $final.JsonOutcome -eq 'Failed') { $runStatus = 'FAILED' }
         $specialNote = ''
         if ($script:Data.Special) { $specialNote = 'SPECIAL server (' + $script:Data.Special.Title + '): short report, separate plan needed. ' }
-        $msg = $specialNote + 'Mode=' + $AssessmentMode + ', Checks=' + $script:CheckRuns.Count + ', NotCompleted=' + $failedChecks + $(if ($WriteJson) { ', JSON=' + $script:JsonPath } else { '' }) + '. Retrieve the HTML via the approved SA process.'
+        $msg = $specialNote + 'Mode=' + $AssessmentMode + ', Checks=' + $script:CheckRuns.Count + ', NotCompleted=' + $failedChecks + (Get-JsonOutcomeText $WriteJson $final.JsonOutcome $script:JsonPath) + '. Retrieve the HTML via the approved SA process.'
         if ($runFailure) { $msg = 'The run stopped early (' + $runFailure + '). ' + $msg }
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
@@ -5754,7 +5863,7 @@ function Invoke-Assessment {
             $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss'),$final.Completed.ToString('yyyy-MM-dd HH:mm:ss'),
             (Format-Duration ($final.Completed - $script:CollectionStarted)),$script:CollectorVersion,$msg
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
-        $script:ExitCode = $(if ($runFailure) { 1 } else { 0 })
+        $script:ExitCode = $(if ($runFailure -or $runStatus -eq 'FAILED') { 1 } else { 0 })
     } catch {
         $msg = $_.Exception.GetType().Name + ': ' + $_.Exception.Message
         Write-AssessmentLog 'ERROR' 'FAILED' $msg
