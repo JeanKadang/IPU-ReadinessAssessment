@@ -112,6 +112,18 @@ function Get-SupportLifecycleDecision {
     return [pscustomobject]@{ Status='INFO'; Ended=$false; EndDate=$endText; Value=($name + ': supported until ' + $endText + ' (' + $days + ' days)'); Text='' }
 }
 
+function Get-SpaceAfterPartition {
+    # Pure: bytes of unallocated space directly after a partition, up to the
+    # next partition or the end of the disk. Does not subtract the reserved
+    # GPT tail (about 1 MB). Offsets are those of every partition on the disk.
+    param([double]$PartitionOffset, [double]$PartitionSize, [double[]]$PartitionOffsets, [double]$DiskSize)
+    $end = $PartitionOffset + $PartitionSize
+    $limit = $DiskSize
+    foreach ($o in @($PartitionOffsets)) { if ($o -ge $end -and $o -lt $limit) { $limit = $o } }
+    if ($limit -le $end) { return [double]0 }
+    return [double]($limit - $end)
+}
+
 function Resolve-ClusterFeatureState {
     # Pure: the feature table says installed or not; when the inventory failed
     # ($null) the Cluster service together with HKLM:\Cluster is the evidence,
@@ -120,6 +132,20 @@ function Resolve-ClusterFeatureState {
     if ($null -ne $FeatureState) { return [bool]$FeatureState }
     if ($ClusterService -and $ClusterKey) { return $true }
     return $null
+}
+
+function Get-JsonOutcomeText {
+    # Pure: what the SA result line says about the JSON file (#250). The fleet
+    # overview and the post-upgrade comparison depend on it, so a JSON that
+    # was not written is never reported as if it were.
+    #   Outcome: Written | Partial | Failed | Disabled
+    param([bool]$WriteJson, [string]$Outcome, [string]$Path)
+    if (-not $WriteJson) { return '' }
+    switch ($Outcome) {
+        'Written' { return ', JSON=' + $Path }
+        'Partial' { return ', JSON=PARTIAL (checkpoint only: ' + $Path + ')' }
+        default   { return ', JSON=FAILED (not written; the fleet overview and the post-upgrade comparison need it)' }
+    }
 }
 
 function Get-ActivationChannelKind {
