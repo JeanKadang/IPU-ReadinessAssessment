@@ -4,6 +4,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [4.5.4] - 2026-10-23
+
+Fixes from the 4.5.3 script evaluation: failures that read as a clean result, time limits for the fast phase, a trustworthy post-upgrade comparison and clear SA result lines. It also lays the groundwork for end-of-life checks (ADR 0003, a separate script that is not wired into the assessment yet).
+
 ### Added
 - `Get-IPUEolStatus.ps1 -Update -SnapshotPath <file>` fetches the lifecycle data of all supported products into one dated JSON snapshot, to be copied to where the verdicts are made. The data is MIT-licensed (endoflife.date); the snapshot carries the copyright line and licence notice. A folder as -SnapshotPath gets `eol-snapshot.json` inside it, and a write that fails stops the script instead of reporting a snapshot. A snapshot older than `-MaxAgeMonths` (default 6) cannot confirm that a release is still supported (MANUAL); end-of-life verdicts still show (#283).
 - End-of-life status for products and Windows Server 2008 to 2025, evaluated off the server from an endoflife.date snapshot (ADR 0003, `src/Get-IPUEolStatus.ps1`, first part of #266). Not yet wired into the assessment or the merged report. Based on the proof of concept from pull request #271.
@@ -237,7 +241,8 @@ Restructure of the 3.x script (released as a script file only).
 
 Local Group Policy backup and RDP readiness. Superseded by 4.0.0.
 
-[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.5.3...HEAD
+[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.5.4...HEAD
+[4.5.4]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.5.4
 [4.5.3]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.5.3
 [4.5.2]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.5.2
 [4.5.1]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.5.1
