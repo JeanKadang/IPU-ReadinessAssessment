@@ -1107,18 +1107,20 @@ Describe 'Invoke-PostUpgradeComparison (#34)' {
             $script:Results.Clear(); $script:CheckRuns.Clear()
             $script:TargetServerVersion = '2025'
             $script:Data = @{ SourceRelease = $NowRelease }
-            $snap = @{ Services = @(); Ports = @('TCP:443'); Routes = @(); IPv4 = @('10.0.0.5'); Dns = @(); Hosts = @(); Apps = @(); Features = @(); Tasks = @() }
+            $snap = @{ Services = @(); Ports = @('TCP:443'); Routes = @(); IPv4 = @('10.0.0.5'); Dns = @(); Adapters = @(); Hosts = @(); Apps = @(); Features = @(); Tasks = @(); Shares = @(); Printers = @(); PrinterPorts = @(); PrinterDrivers = @() }
             foreach ($k in $Now.Keys) { $snap[$k] = $Now[$k] }
             $script:Data.Snapshot = $snap
             $script:BaselinePath = $BaselinePath
         }
         function Save-Baseline {
-            param([string]$Path, [bool]$Partial = $false, [hashtable]$Snapshot = @{})
-            $snap = @{ Services = @(); Ports = @('TCP:443'); Routes = @(); IPv4 = @('10.0.0.5'); Dns = @(); Hosts = @(); Apps = @(); Features = @(); Tasks = @() }
+            param([string]$Path, [bool]$Partial = $false, [hashtable]$Snapshot = @{}, [hashtable]$Extra = @{}, [string[]]$NotCompleted = @())
+            $snap = @{ Services = @(); Ports = @('TCP:443'); Routes = @(); IPv4 = @('10.0.0.5'); Dns = @(); Adapters = @(); Hosts = @(); Apps = @(); Features = @(); Tasks = @(); Shares = @(); Printers = @(); PrinterPorts = @(); PrinterDrivers = @() }
             foreach ($k in $Snapshot.Keys) { $snap[$k] = $Snapshot[$k] }
-            [pscustomobject]@{ Schema = 'IPU-Assessment/1'; CollectorVersion = '4.0.1'; Completed = '2026-10-01 10:00:00'; Overall = 'WARNING'; Partial = $Partial
-                Facts = [pscustomobject]@{ CurrentOS = 'Windows Server 2022 Standard' }; Snapshot = [pscustomobject]$snap } |
-                ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $Path -Encoding UTF8
+            $runs = @('baseline', 'ports', 'network', 'tasks', 'fileshares', 'printers') | ForEach-Object { [pscustomobject]@{ Id = $_; Outcome = $(if ($NotCompleted -contains $_) { 'Failed' } else { 'Completed' }) } }
+            $o = [ordered]@{ Schema = 'IPU-Assessment/1'; Mode = 'Pre'; ComputerName = $env:COMPUTERNAME; CollectorVersion = '4.0.1'; Completed = '2026-10-01 10:00:00'; Overall = 'WARNING'; Partial = $Partial
+                Facts = [pscustomobject]@{ CurrentOS = 'Windows Server 2022 Standard' }; CheckRuns = @($runs); Results = @(); Snapshot = [pscustomobject]$snap }
+            foreach ($k in $Extra.Keys) { $o[$k] = $Extra[$k] }
+            [pscustomobject]$o | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $Path -Encoding UTF8
         }
         function Get-Row([string]$Item) { @($script:Results | Where-Object { $_.Item -eq $Item }) }
     }
@@ -1159,6 +1161,52 @@ Describe 'Invoke-PostUpgradeComparison (#34)' {
         (Get-Row 'UpgradeReachedTarget')[0].Status | Should -Be 'OK'
         (Get-Row 'Comparison')[0].Status | Should -Be 'OK'
         @($script:Results | Where-Object { $_.Kind -eq 'Finding' -and $_.Status -ne 'OK' }).Count | Should -Be 0
+    }
+    It 'an empty baseline snapshot is MANUAL, never a clean comparison (#239)' {
+        $path = Join-Path $TestDrive 'empty-snapshot.json'
+        [pscustomobject]@{ Schema = 'IPU-Assessment/1'; Mode = 'Pre'; ComputerName = $env:COMPUTERNAME; Completed = '2026-10-01 10:00:00'; Partial = $false; Snapshot = [pscustomobject]@{} } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $path -Encoding UTF8
+        Set-PostScenario -BaselinePath $path
+        Invoke-PostUpgradeComparison
+        (Get-Row 'BaselineSnapshot')[0].Status | Should -Be 'MANUAL'
+        (Get-Row 'Comparison').Count | Should -Be 0
+    }
+    It 'a list whose check did not complete is not compared (#239)' {
+        $path = Join-Path $TestDrive 'network-failed.json'
+        Save-Baseline -Path $path -NotCompleted @('network')
+        Set-PostScenario -BaselinePath $path
+        Invoke-PostUpgradeComparison
+        $r = Get-Row 'BaselineCoverage'
+        $r[0].Status | Should -Be 'MANUAL'; $r[0].Kind | Should -Be 'Finding'
+        (@($r[0].Details) -join ' ') | Should -Match 'Routes \(the network check failed\)'
+        (@($r[0].Details) -join ' ') | Should -Not -Match 'Ports'
+        (Get-Row 'Comparison').Count | Should -Be 0
+    }
+    It 'a SPECIAL short report as baseline leaves out what it never collected (#239)' {
+        $path = Join-Path $TestDrive 'special.json'
+        Save-Baseline -Path $path -Extra @{ Special = [pscustomobject]@{ Kind = 'Cluster'; Title = 'Cluster node' } }
+        Set-PostScenario -BaselinePath $path
+        Invoke-PostUpgradeComparison
+        $text = (@((Get-Row 'BaselineCoverage')[0].Details) -join ' ')
+        $text | Should -Match 'Ports \(the Pre run was a SPECIAL short report\)'
+        $text | Should -Not -Match 'Services \('
+        (Get-Row 'Comparison').Count | Should -Be 0
+    }
+    It 'a baseline taken after the upgrade is MANUAL (#239)' {
+        $path = Join-Path $TestDrive 'after.json'
+        $row = [pscustomobject]@{ Area = 'UPGRADE_PATH'; Item = 'CurrentOS'; Details = @('Build=26100.1', 'Release=Windows Server 2025', 'Architecture=64-bit') }
+        Save-Baseline -Path $path -Extra @{ Results = @($row) }
+        Set-PostScenario -BaselinePath $path
+        Invoke-PostUpgradeComparison
+        (Get-Row 'BaselineAfterUpgrade')[0].Status | Should -Be 'MANUAL'
+        (Get-Row 'Comparison').Count | Should -Be 0
+    }
+    It 'a baseline from another server is MANUAL (#239)' {
+        $path = Join-Path $TestDrive 'other-server.json'
+        Save-Baseline -Path $path -Extra @{ ComputerName = 'SOME-OTHER-SERVER' }
+        Set-PostScenario -BaselinePath $path
+        Invoke-PostUpgradeComparison
+        (Get-Row 'BaselineValid')[0].Value | Should -Match 'another server'
+        (Get-Row 'Comparison').Count | Should -Be 0
     }
     It 'differences become findings in the comparison area' {
         $path = Join-Path $TestDrive 'diff.json'
@@ -2334,6 +2382,51 @@ Describe 'Output folder and JSON problems end in a clear SA line (#250)' {
         $out | Should -Match 'JSON=FAILED'
         $script:ExitCode | Should -Be 1
         Test-Path -LiteralPath $script:ReportPath | Should -BeTrue
+    }
+}
+
+Describe 'Test-BaselineKeepCopy (#239)' {
+    BeforeAll {
+        function New-ExistingBaseline([bool]$Partial, [string]$Release) {
+            $row = [pscustomobject]@{ Area = 'UPGRADE_PATH'; Item = 'CurrentOS'; Details = @('Build=1', ('Release=' + $Release), 'Architecture=64-bit') }
+            [pscustomobject]@{ Partial = $Partial; Snapshot = [pscustomobject]@{ Services = @() }; Results = @($row) }
+        }
+    }
+    It 'nothing to keep when there is no earlier file' { Test-BaselineKeepCopy $null $false 'Windows Server 2016' | Should -BeFalse }
+    It 'a complete baseline is kept before a checkpoint replaces it' { Test-BaselineKeepCopy (New-ExistingBaseline $false 'Windows Server 2016') $true 'Windows Server 2016' | Should -BeTrue }
+    It 'a complete baseline is kept when the new run is on another release' { Test-BaselineKeepCopy (New-ExistingBaseline $false 'Windows Server 2016') $false 'Windows Server 2025' | Should -BeTrue }
+    It 'a complete baseline of the same release is replaced by a complete run' { Test-BaselineKeepCopy (New-ExistingBaseline $false 'Windows Server 2016') $false 'Windows Server 2016' | Should -BeFalse }
+    It 'an earlier partial result is not worth keeping' { Test-BaselineKeepCopy (New-ExistingBaseline $true 'Windows Server 2016') $true 'Windows Server 2016' | Should -BeFalse }
+}
+
+Describe 'Write-AssessmentJson keeps the earlier baseline (#239)' {
+    BeforeEach {
+        $script:KeepDir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:KeepDir | Out-Null
+        $script:JsonPath = Join-Path $script:KeepDir 'SRV-IPU-Assessment.json'
+        $script:BaselinePath = $script:JsonPath
+        $script:BaselineKept = $null
+        $script:Data = @{ SourceRelease = '2016' }
+        $row = [pscustomobject]@{ Area = 'UPGRADE_PATH'; Item = 'CurrentOS'; Details = @('Build=1', 'Release=Windows Server 2016', 'Architecture=64-bit') }
+        [pscustomobject]@{ Partial = $false; Snapshot = [pscustomobject]@{ Services = @() }; Results = @($row); Marker = 'ORIGINAL' } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $script:JsonPath -Encoding UTF8
+        Mock New-AssessmentJsonObject { [pscustomobject]@{ Marker = 'NEW'; Redacted = $false } }
+    }
+    It 'a checkpoint keeps the complete baseline as a dated copy and replaces the file' {
+        Write-AssessmentJson -Results @() -Overall 'OK' -Completed (Get-Date) -Partial
+        @(Get-ChildItem -LiteralPath $script:KeepDir -Filter 'SRV-IPU-Assessment-*.json').Count | Should -Be 1
+        (Get-Content -LiteralPath $script:JsonPath -Raw | ConvertFrom-Json).Marker | Should -Be 'NEW'
+        $kept = Get-ChildItem -LiteralPath $script:KeepDir -Filter 'SRV-IPU-Assessment-*.json' | Select-Object -First 1
+        (Get-Content -LiteralPath $kept.FullName -Raw | ConvertFrom-Json).Marker | Should -Be 'ORIGINAL'
+    }
+    It 'only one copy per run, even though the final write follows the checkpoint' {
+        Write-AssessmentJson -Results @() -Overall 'OK' -Completed (Get-Date) -Partial
+        Write-AssessmentJson -Results @() -Overall 'OK' -Completed (Get-Date)
+        @(Get-ChildItem -LiteralPath $script:KeepDir -Filter 'SRV-IPU-Assessment-*.json').Count | Should -Be 1
+    }
+    It 'a Post run never touches the baseline' {
+        $AssessmentMode = 'Post'
+        Write-AssessmentJson -Results @() -Overall 'OK' -Completed (Get-Date) -Partial
+        @(Get-ChildItem -LiteralPath $script:KeepDir -Filter 'SRV-IPU-Assessment-*.json').Count | Should -Be 0
     }
 }
 
