@@ -112,6 +112,18 @@ function Get-SupportLifecycleDecision {
     return [pscustomobject]@{ Status='INFO'; Ended=$false; EndDate=$endText; Value=($name + ': supported until ' + $endText + ' (' + $days + ' days)'); Text='' }
 }
 
+function Get-SpaceAfterPartition {
+    # Pure: bytes of unallocated space directly after a partition, up to the
+    # next partition or the end of the disk. Does not subtract the reserved
+    # GPT tail (about 1 MB). Offsets are those of every partition on the disk.
+    param([double]$PartitionOffset, [double]$PartitionSize, [double[]]$PartitionOffsets, [double]$DiskSize)
+    $end = $PartitionOffset + $PartitionSize
+    $limit = $DiskSize
+    foreach ($o in @($PartitionOffsets)) { if ($o -ge $end -and $o -lt $limit) { $limit = $o } }
+    if ($limit -le $end) { return [double]0 }
+    return [double]($limit - $end)
+}
+
 function Get-ActivationChannelKind {
     # Pure: SoftwareLicensingProduct channel/description -> KMS, MAK, AVMA, OEM, Retail or Unknown.
     param([string]$Channel, [string]$Description)

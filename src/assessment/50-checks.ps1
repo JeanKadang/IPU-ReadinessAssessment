@@ -322,7 +322,15 @@ Register-Check -Id 'domain' -Name 'Domain role and access' -Script {
     if ($script:Data.Snapshot) { $script:Data.Snapshot.Uac = $uac.Text }
     Add-Result 'ACCESS' 'UAC' 'INFO' $uac.Text (@($uacValues.Keys | Sort-Object | ForEach-Object { $_ + '=' + $(if ($null -eq $uacValues[$_]) { '(default)' } else { [string]$uacValues[$_] }) }) -join ', ') -Source ($uacKey -replace '^HKLM:','HKLM')
 
-    $rid500 = @(Get-CimSafe 'Win32_UserAccount' 'LocalAccount=True') | Where-Object { $_.SID -match '-500$' } | Select-Object -First 1
+    # On a domain controller "local" accounts are the domain's accounts, and
+    # listing them can take minutes (#241): skip the lookup there. Elsewhere
+    # ask for the one account by SID instead of listing all of them.
+    $rid500 = $null
+    if ($script:Data.CS -and [int]$script:Data.CS.DomainRole -ge 4) {
+        Add-Result 'ACCESS' 'BuiltInAdministrator' 'INFO' 'Not looked up on a domain controller' 'Its accounts are the domain accounts; the domain Administrator account is the one to record.' -Source 'Win32_ComputerSystem'
+    } else {
+        $rid500 = @(Get-CimSafe 'Win32_UserAccount' "LocalAccount=True AND SID LIKE '%-500'") | Where-Object { $_.SID -match '-500$' } | Select-Object -First 1
+    }
     if ($rid500) {
         Add-Result 'ACCESS' 'BuiltInAdministrator' 'INFO' ('Name=' + $rid500.Name) @(('Disabled=' + $rid500.Disabled),('SID=' + $rid500.SID)) -Recommendation 'Record the (possibly renamed) built-in Administrator and confirm PAM/console fallback.' -Source 'Win32_UserAccount'
     }
@@ -591,8 +599,11 @@ Register-Check -Id 'storage' -Name 'Storage' -Script {
         Add-Result 'STORAGE' 'RecoveryPartitionAfterC' 'OK' $rd.Value -Source 'Get-Partition'
     }
     try {
-        $sup = Get-PartitionSupportedSize -DriveLetter C -ErrorAction Stop
-        Add-Result 'STORAGE' 'CExtendableNowGB' 'INFO' (Format-Number (($sup.SizeMax - $cp.Size)/1GB)) 'Currently available contiguous space only.' -Source 'Get-PartitionSupportedSize'
+        # Worked out from the partition layout: Get-PartitionSupportedSize
+        # computes the shrink size too and can take minutes on a large volume (#241).
+        $diskSize = [double](Get-Disk -Number $cp.DiskNumber -ErrorAction Stop).Size
+        $spaceAfterC = Get-SpaceAfterPartition ([double]$cp.Offset) ([double]$cp.Size) @($layout | ForEach-Object { $_.Offset }) $diskSize
+        Add-Result 'STORAGE' 'CExtendableNowGB' 'INFO' (Format-Number ($spaceAfterC / 1GB)) 'Currently available contiguous space only.' -Source 'Get-Partition, Get-Disk'
     } catch { Write-Swallowed $_ }
 
     $total = 0
