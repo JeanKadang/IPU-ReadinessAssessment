@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Post-upgrade comparison: only Windows' own per-user services (CDPUserSvc, OneSyncSvc and the other templates Microsoft lists) are treated as per-user. A service whose name only ends in a hex-like suffix, such as `AppSvc_DB01`, is no longer filed as "exists only while a user is signed in" when it is gone after the upgrade: it is reported as a missing service (#247).
+
 ## [4.5.3] - 2026-10-15
 
 A redaction key for the team, and fixes from a review of five real reports (Windows Server 2016, redacted with 4.5.2).

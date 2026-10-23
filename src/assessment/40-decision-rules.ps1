@@ -13,6 +13,7 @@ $script:FactSources = [ordered]@{
     ReleaseEndOfSupport    = @{ Verified = '2026-10-13'; Source = 'https://learn.microsoft.com/en-us/lifecycle/products/windows-server-2025' }
     # FeatureLifecycle: the page has one tab per release. SMTP Server, the IIS 6 console and PowerShell 2.0 are removed on the 2025 tab only; the 2022 tab removes iSNS and nothing else (#187).
     FeatureLifecycle       = @{ Verified = '2026-10-22'; Source = 'https://learn.microsoft.com/en-us/windows-server/get-started/removed-deprecated-features-windows-server-2025' }
+    PerUserServices        = @{ Verified = '2026-10-23'; Source = 'https://learn.microsoft.com/en-us/windows/application-management/per-user-services-in-windows' }
     VMwareToolsMinimum     = @{ Verified = '2026-10-13'; Source = 'https://blogs.vmware.com/cloud-foundation/2024/11/07/vmware-tools-12-5-0-is-ready-for-the-latest-windows-operating-systems/' }
     # ExpectedWindowsChanges: live runs (#158); AzureArcSetup per learn.microsoft.com/en-us/azure/azure-arc/servers/onboard-windows-server (#197).
     ExpectedWindowsChanges = @{ Verified = '2026-10-14'; Source = 'https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/158' }
@@ -415,11 +416,23 @@ $script:ExpectedRemovedFeatures = @('PowerShell-V2','PowerShell-ISE','Windows-De
 # without port owners (4.3.0 and older).
 $script:KnownPortServices = @{ 'UDP:500' = 'IKEEXT'; 'UDP:4500' = 'IKEEXT'; 'UDP:1900' = 'SSDPSRV'; 'TCP:2869' = 'SSDPSRV'; 'TCP:5357' = 'FDResPub'; 'UDP:3702' = 'FDResPub' }
 
+# Windows' per-user service templates; each signed-in user gets an instance
+# named <template>_<LUID>. Verified: see $script:FactSources.PerUserServices.
+$script:PerUserServiceTemplates = @(
+    'AarSvc','BluetoothUserService','CaptureService','cbdhsvc','CloudBackupRestoreSvc','CDPUserSvc','ConsentUxUserSvc',
+    'PimIndexMaintenanceSvc','CredentialEnrollmentManagerUserSvc','DeviceAssociationBrokerSvc','DevicePickerUserSvc',
+    'DevicesFlowUserSvc','BcastDVRUserService','MessagingService','NPSMSvc','P9RdrService','PenService','PrintWorkflowUserSvc',
+    'OneSyncSvc','UdkUserSvc','UserDataSvc','UnistoreSvc','webthreatdefusersvc','WpnUserService'
+)
+
 function ConvertTo-ServiceBaseName {
-    # Pure (#158): per-user services carry a random suffix that changes
-    # (CDPUserSvc_1a2b3c), so compare them by their base name.
+    # Pure (#158, #247): per-user services carry a random suffix that changes
+    # (CDPUserSvc_1a2b3c), so compare them by their base name. Only a name
+    # that starts with a known Windows template is a per-user service: a
+    # service such as AppSvc_DB01 or Backup_2016 keeps its full name.
     param([string]$Name)
-    return ($Name -replace '_[0-9a-fA-F]{4,}$', '')
+    if ($Name -match '^(.+)_[0-9a-fA-F]{4,}$' -and $script:PerUserServiceTemplates -contains $Matches[1]) { return $Matches[1] }
+    return $Name
 }
 
 function Test-WindowsPerUserTask {
