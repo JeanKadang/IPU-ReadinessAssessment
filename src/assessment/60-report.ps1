@@ -376,6 +376,7 @@ function New-AssessmentJsonObject {
         TargetServerVersion = $TargetServerVersion
         Started             = $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss')
         Completed           = $Completed.ToString('yyyy-MM-dd HH:mm:ss')
+        UtcOffset           = (Format-UtcOffset ([TimeZoneInfo]::Local.GetUtcOffset($Completed)))
         Partial             = [bool]$Partial
         Redacted            = $false
         Overall             = $Overall
@@ -601,8 +602,8 @@ function Import-SiteDataFile {
             }
             foreach ($k in @($decision.Ignored)) { $details += ($k + ': the argument given to the script was used') }
             if ($decision.Settings.Contains('NumberCultureName')) {
-                try { $script:NumberCulture = New-Object System.Globalization.CultureInfo($decision.Settings['NumberCultureName']) }
-                catch { $script:NumberCulture = [System.Globalization.CultureInfo]::InvariantCulture }
+                $script:NumberCultureResolved = Resolve-NumberCulture ([string]$decision.Settings['NumberCultureName'])
+                $script:NumberCulture = $script:NumberCultureResolved.Culture
             }
             Add-Result 'COLLECTOR' 'Profile file' 'INFO' ('Applied, ' + $decision.Settings.Count + ' setting(s)') ($details + @('SHA256=' + $hash)) -Source $ProfileFile
             Write-AssessmentLog 'INFO' 'SITEDATA' ('Profile file applied: ' + $ProfileFile + ' | ' + ($details -join '; '))

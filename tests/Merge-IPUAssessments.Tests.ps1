@@ -17,6 +17,7 @@ BeforeAll {
             Snapshot = [pscustomobject]@{}
         }
     }
+    function Set-FakeOffset($Result, [string]$UtcOffset) { if ($UtcOffset) { $Result | Add-Member -NotePropertyName UtcOffset -NotePropertyValue $UtcOffset }; return $Result }
     function New-FakeFinding([string]$Status, [string]$Item, [string]$Kind = 'Finding') {
         [pscustomobject]@{ CheckId = 'x'; Area = 'STORAGE'; Item = $Item; Status = $Status; Kind = $Kind; Value = 'v'; Details = 'd'; Recommendation = 'r'; Source = 's' }
     }
@@ -299,5 +300,41 @@ Describe 'Merge-IPUAssessments.ps1 - output folder permissions (#128)' {
         $null = & $script:MergeScript -InputFolder $script:AclIn -OutputFolder $out -WarningVariable w -WarningAction SilentlyContinue
         (@($w) -join ' ') | Should -Match 'can be read by Users'
         Get-AllowedSid $out | Should -Contain 'S-1-5-32-545'
+    }
+}
+
+Describe 'Merge-IPUAssessments.ps1 - CSV encoding and time zones (#252)' {
+    BeforeAll {
+        $script:In3 = Join-Path $TestDrive 'in3'
+        New-Item -ItemType Directory -Path $script:In3 | Out-Null
+        # Same server, two Pre results from different time zones. By the text, 09:30 is
+        # older than 10:00; by UTC, 09:30 +00:00 (09:30Z) is newer than 10:00 +02:00 (08:00Z).
+        Save-Result (Set-FakeOffset (New-FakeResult 'SRV-ZONE' -Overall 'ACTION' -Completed '2026-10-06 10:00:00' -Results @((New-FakeFinding 'ACTION' 'Seen from the east'))) '+02:00') $script:In3 'east-SRV-ZONE-IPU-Assessment.json'
+        Save-Result (Set-FakeOffset (New-FakeResult 'SRV-ZONE' -Overall 'WARNING' -Completed '2026-10-06 09:30:00' -Results @((New-FakeFinding 'WARNING' 'Seen from UTC'))) '+00:00') $script:In3 'utc-SRV-ZONE-IPU-Assessment.json'
+        $script:Nordic = [string]([char]0xC6) + [char]0xD8 + [char]0xC5
+        Save-Result (New-FakeResult ('SRV-' + $script:Nordic) -Overall 'OK') $script:In3 'SRV-AEOA-IPU-Assessment.json'
+        $script:Out3 = Join-Path $TestDrive 'out3'
+        $null = & $script:MergeScript -InputFolder $script:In3 -OutputFolder $script:Out3
+    }
+    It 'both CSV files start with a UTF-8 byte-order mark on every host' -ForEach @('IPU-Fleet-Servers.csv', 'IPU-Fleet-Findings.csv') {
+        $bytes = [IO.File]::ReadAllBytes((Join-Path $script:Out3 $_))
+        ($bytes[0..2] -join ',') | Should -Be '239,187,191'
+    }
+    It 'letters outside ASCII survive in the CSV' {
+        [IO.File]::ReadAllText((Join-Path $script:Out3 'IPU-Fleet-Servers.csv'), [Text.Encoding]::UTF8) | Should -Match ('SRV-' + $script:Nordic)
+    }
+    It 'the newest result is chosen by UTC, not by the text of the local time' {
+        $rows = @(Import-Csv -LiteralPath (Join-Path $script:Out3 'IPU-Fleet-Servers.csv') -Delimiter ';' | Where-Object { $_.ComputerName -eq 'SRV-ZONE' })
+        $rows.Count | Should -Be 1
+        $rows[0].Overall | Should -Be 'WARNING'
+    }
+    It 'files without an offset (before 4.5.4) are still compared by their local time' {
+        $dir = Join-Path $TestDrive 'in4'; New-Item -ItemType Directory -Path $dir | Out-Null
+        Save-Result (New-FakeResult 'SRV-OLD' -Overall 'ACTION' -Completed '2026-10-06 08:00:00') $dir 'a-SRV-OLD-IPU-Assessment.json'
+        Save-Result (New-FakeResult 'SRV-OLD' -Overall 'OK' -Completed '2026-10-06 12:00:00') $dir 'b-SRV-OLD-IPU-Assessment.json'
+        $o = Join-Path $TestDrive 'out4'
+        $null = & $script:MergeScript -InputFolder $dir -OutputFolder $o
+        $rows = @(Import-Csv -LiteralPath (Join-Path $o 'IPU-Fleet-Servers.csv') -Delimiter ';')
+        $rows[0].Overall | Should -Be 'OK'
     }
 }
