@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Removed and deprecated features follow Microsoft's page per target release (#232). A target 2022 no longer gets "no longer developed" notes for Network Load Balancing, WebDAV Redirector and Windows Internal Database: the page lists them for 2025 only. iSNS (removed in 2022) and WINS (no longer developed in 2022) are now reported.
+
 ## [4.5.3] - 2026-10-15
 
 A redaction key for the team, and fixes from a review of five real reports (Windows Server 2016, redacted with 4.5.2).
