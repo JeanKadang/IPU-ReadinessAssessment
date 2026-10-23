@@ -2201,6 +2201,67 @@ Describe 'A throw outside a check still gives a report and an SA line (#251)' {
     }
 }
 
+Describe 'Get-JsonOutcomeText (#250)' {
+    It 'JSON off says nothing' { Get-JsonOutcomeText $false 'Disabled' 'C:\r\x.json' | Should -Be '' }
+    It 'written names the file' { Get-JsonOutcomeText $true 'Written' 'C:\r\x.json' | Should -Be ', JSON=C:\r\x.json' }
+    It 'a checkpoint is called PARTIAL' {
+        $t = Get-JsonOutcomeText $true 'Partial' 'C:\r\x.json'
+        $t | Should -Match '^, JSON=PARTIAL'
+        $t.Contains('C:\r\x.json') | Should -BeTrue
+    }
+    It 'a failed write is called FAILED and never names the file as if it existed' {
+        $t = Get-JsonOutcomeText $true 'Failed' 'C:\r\x.json'
+        $t | Should -Match '^, JSON=FAILED'
+        $t | Should -Not -Match 'x\.json'
+    }
+}
+
+Describe 'Output folder and JSON problems end in a clear SA line (#250)' {
+    BeforeEach {
+        $script:Results.Clear(); $script:CheckRuns.Clear(); $script:Checks.Clear(); $script:Data = @{}
+        $script:Writer = New-Object IO.StringWriter
+        $script:OldOut = [Console]::Out
+    }
+    AfterEach { [Console]::SetOut($script:OldOut) }
+    It 'an unwritable report folder stops at once with FAILED, before any check' {
+        $blocker = Join-Path $TestDrive 'a-file'
+        Set-Content -LiteralPath $blocker -Value 'x'
+        $ReportDirectory = Join-Path $blocker 'sub'
+        $RestrictOutputAcl = $false
+        $script:LogPath = Join-Path $ReportDirectory 'x.log'
+        Mock Get-PrerequisiteState { throw 'must not get this far' }
+        [Console]::SetOut($script:Writer)
+        Invoke-Assessment
+        [Console]::SetOut($script:OldOut)
+        $out = $script:Writer.ToString()
+        $out | Should -Match ';FAILED;MANUAL;'
+        $out | Should -Match 'Nothing was assessed: the report folder cannot be written'
+        $script:ExitCode | Should -Be 1
+        $script:CheckRuns.Count | Should -Be 0
+    }
+    It 'a JSON that cannot be written makes the line FAILED and says JSON=FAILED' {
+        $dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $ReportDirectory = $dir
+        $RestrictOutputAcl = $false
+        $WriteJson = $true
+        $script:ReportPath = Join-Path $dir 'SRV-IPU-Assessment.html'
+        $script:JsonPath = Join-Path $dir 'SRV-IPU-Assessment.json'
+        $script:LogPath = Join-Path $dir 'SRV-IPU-Assessment.log'
+        Mock Get-PrerequisiteState { [pscustomobject]@{ PowerShellVersion = [Version]'5.1'; DotNetRelease = 528049; IsElevated = $true; MissingModules = @() } }
+        Mock Import-SiteDataFile { }
+        Mock Register-AssessmentCheck { }
+        Mock Write-AssessmentJson { throw 'disk full' }
+        [Console]::SetOut($script:Writer)
+        Invoke-Assessment
+        [Console]::SetOut($script:OldOut)
+        $out = $script:Writer.ToString()
+        $out | Should -Match ';FAILED;'
+        $out | Should -Match 'JSON=FAILED'
+        $script:ExitCode | Should -Be 1
+        Test-Path -LiteralPath $script:ReportPath | Should -BeTrue
+    }
+}
+
 Describe 'Redaction gaps from a live run (#100)' {
     BeforeAll {
         $script:Data = @{}
