@@ -636,6 +636,16 @@ Describe 'Resolve-ClusterFeatureState (#238)' {
     }
 }
 
+Describe 'Format-UtcOffset (#252)' {
+    It '<Hours>h<Minutes>m is <Expected>' -ForEach @(
+        @{ Hours = 2; Minutes = 0; Expected = '+02:00' }
+        @{ Hours = 0; Minutes = 0; Expected = '+00:00' }
+        @{ Hours = -5; Minutes = -30; Expected = '-05:30' }
+        @{ Hours = 5; Minutes = 45; Expected = '+05:45' }
+        @{ Hours = -8; Minutes = 0; Expected = '-08:00' }
+    ) { Format-UtcOffset (New-TimeSpan -Hours $Hours -Minutes $Minutes) | Should -Be $Expected }
+}
+
 Describe 'A MANUAL row counts towards the overall status (#240)' {
     BeforeEach { $script:Results.Clear() }
     It 'Add-Result refuses a MANUAL Observation' {
