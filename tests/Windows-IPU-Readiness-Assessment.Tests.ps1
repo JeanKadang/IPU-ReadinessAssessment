@@ -2720,6 +2720,19 @@ Describe 'Post-upgrade comparison: per-user services and on-demand ports (#173)'
         (Get-Row173 'Service changes made by Windows').Details | Should -Match 'OneSyncSvc'
         (Get-Row173 'Services no longer present').Details | Should -Be 'GoneSvc'
     }
+    It 'only Windows'' per-user service templates lose their suffix; a hex-like suffix on another service stays (#247)' {
+        foreach ($name in 'AppSvc_DB01', 'Backup_2016', 'Agent_CAFE', 'MSSQL_0001') { ConvertTo-ServiceBaseName $name | Should -Be $name }
+        ConvertTo-ServiceBaseName 'OneSyncSvc_443f50' | Should -Be 'OneSyncSvc'
+        ConvertTo-ServiceBaseName 'onesyncsvc_443F50' | Should -Be 'onesyncsvc'
+        ConvertTo-ServiceBaseName 'webthreatdefusersvc_a1b2c3' | Should -Be 'webthreatdefusersvc'
+    }
+    It 'a running Auto service with a hex-like suffix that is gone after the upgrade is WARNING, not INFO (#247)' {
+        $b = [pscustomobject]@{ Services = @((New-Svc 'AppSvc_DB01' 'Running' 'Auto')) }
+        $a = [pscustomobject]@{ Services = @() }
+        $d = Compare-IPUSnapshot $b $a
+        @($d | Where-Object { $_.Item -eq 'Services no longer present' })[0].Details | Should -Be 'AppSvc_DB01'
+        @($d | Where-Object { $_.Item -eq 'Service changes made by Windows' }).Count | Should -Be 0
+    }
     It 'a port whose service is no longer started automatically is INFO, even when the service was Manual before' {
         (Get-Row173 'Ports closed with their service').Details | Should -Be 'UDP:1900'
     }
@@ -3011,7 +3024,7 @@ Describe 'Save-NetworkEvidence (#149)' {
 
 Describe 'Dated facts have a source and a recent check (#132)' {
     It 'every fact table is listed with a date and an https source' {
-        foreach ($name in 'SupportedUpgradePaths', 'SqlSupportedOnTarget', 'ReleaseEndOfSupport', 'FeatureLifecycle', 'VMwareToolsMinimum', 'ExpectedWindowsChanges', 'WinReMinPartitionMB', 'DocLinks') {
+        foreach ($name in 'SupportedUpgradePaths', 'SqlSupportedOnTarget', 'ReleaseEndOfSupport', 'FeatureLifecycle', 'PerUserServices', 'VMwareToolsMinimum', 'ExpectedWindowsChanges', 'WinReMinPartitionMB', 'DocLinks') {
             $script:FactSources.Contains($name) | Should -BeTrue -Because $name
         }
         @(Get-StaleFactSource $script:FactSources ([datetime]'2026-10-13')) | Should -BeNullOrEmpty
