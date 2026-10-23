@@ -46,8 +46,26 @@ finished change.
 A newer push cancels the run still in progress on the same branch. Job names are stable, so the ruleset on `main` requires them by name: pester on both shells, smoke on both shells and both images, and lint. When GitHub retires or adds a Windows Server image, change
 the `smoke` matrix in `.github/workflows/ci.yml` and this table in the same pull request.
 
-## Conventions
+## Release checklist
 
+CI covers Windows PowerShell 5.1 and PowerShell 7 on Windows Server 2022 and 2025. It has **no PowerShell 4.0** (Windows
+Server 2012 R2), which the script supports. The PowerShell 4.0 lint profile (`PSScriptAnalyzerSettings.PS4.psd1`) finds
+commands, types and syntax that do not exist there, but not differences in behaviour (for example .NET 4.5 ZIP handling,
+`ConvertTo-Json` depth, CIM). A self-hosted 2012 R2 runner is not advisable on a public repository, so one step is manual:
+
+1. `CHANGELOG.md`, the script header version and the version you give the Release workflow agree.
+2. CI is green on `main` for the commit you release.
+3. **PowerShell 4.0 check, by hand, before every release that changes `src/`:** on a Windows Server 2012 R2 test VM
+   (`$PSVersionTable.PSVersion` shows 4.0), copy the repository or the release zip and run
+   `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build\Invoke-SmokeTest.ps1`. If the smoke script itself
+   does not run on 4.0 (it was written for CI), run the assessment directly instead:
+   `.\src\Windows-IPU-Readiness-Assessment.ps1 -AssessmentMode Pre -RunDISMScanHealth $false -RunSFCVerifyOnly $false`,
+   then check that the SA result line says `SUCCEEDED`, the HTML opens, and the log has no `ERROR` lines.
+4. Put the result in the release pull request: the PowerShell version, the Windows build, and either the smoke script's
+   summary line or the SA result line (no host names; use a test VM).
+5. Run the Release workflow with *dry_run* ticked first, then for real.
+
+## Conventions
 - Scripts live in `src/`, tests in `tests/`, docs in `docs/`.
 - **Edit the assessment in its parts**, `src/assessment/*.ps1`, then run `pwsh ./build/Build-Script.ps1` and commit both the parts and the rebuilt `src/Windows-IPU-Readiness-Assessment.ps1`. Never edit the built file by hand: CI fails when it does not match its parts. See [docs/build.md](docs/build.md).
 - Every new check needs a Pester test and a named recommendation.
