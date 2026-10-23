@@ -727,9 +727,10 @@ process).
 | `InputFolder` | required | Folder with the `*-IPU-Assessment.json` and `*-IPU-PostUpgrade.json` files |
 | `OutputFolder` | the input folder | Where the three output files are written. A folder the merge creates gets access for SYSTEM, Administrators and you only; an existing folder is not changed, but you get a warning when Everyone, Authenticated Users or Users can read it (#128) |
 | `Mode` | `All` | `Pre`, `Post` or `All`: which kind of result to include |
+| `IncludeRedacted` | off | Redacted copies (`REDACTED-...`) have placeholder names, so they cannot be matched to their originals and would show the same server twice. When the folder also holds original results, the redacted copies are skipped and the console says how many; this switch keeps them. A folder with only redacted results is used as it is |
 | `Delimiter` | `;` | CSV separator. `;` opens in columns in Excel where the list separator is `;` (common in European regional settings); use `,` where it is `,` |
 
-The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`) and the paths written.
+The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`), a second line when redacted copies were skipped, and the paths written.
 
 ### What it produces
 

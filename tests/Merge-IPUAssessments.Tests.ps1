@@ -226,6 +226,31 @@ Describe 'Merge-IPUAssessments.ps1 - redacted results (#30)' {
     }
 }
 
+Describe 'Merge-IPUAssessments.ps1 - an original and its redacted copy (#138)' {
+    BeforeAll {
+        $script:In5 = Join-Path $TestDrive 'dup-in'
+        New-Item -ItemType Directory -Path $script:In5 | Out-Null
+        Save-Result (New-FakeResult 'SRV01' -Overall 'ACTION' -Results @((New-FakeFinding 'ACTION' 'C: free space'))) $script:In5 'SRV01-IPU-Assessment.json'
+        $copy = New-FakeResult 'HOST-1' -Overall 'ACTION' -Results @((New-FakeFinding 'ACTION' 'C: free space'))
+        $copy | Add-Member -NotePropertyName Redacted -NotePropertyValue $true
+        Save-Result $copy $script:In5 'REDACTED-20261006-090000-IPU-Assessment.json'
+    }
+    It 'gives one row per server by default and says how many redacted files were skipped' {
+        $out = Join-Path $TestDrive 'dup-out1'
+        $lines = @(& $script:MergeScript -InputFolder $script:In5 -OutputFolder $out)
+        $rows = @(Import-Csv -LiteralPath (Join-Path $out 'IPU-Fleet-Servers.csv') -Delimiter ';')
+        $rows.Count | Should -Be 1
+        $rows[0].ComputerName | Should -Be 'SRV01'
+        @(Import-Csv -LiteralPath (Join-Path $out 'IPU-Fleet-Findings.csv') -Delimiter ';').Count | Should -Be 1
+        ($lines -join "`n") | Should -Match 'Redacted files skipped: 1'
+    }
+    It '-IncludeRedacted keeps the redacted copy as its own row' {
+        $out = Join-Path $TestDrive 'dup-out2'
+        $lines = @(& $script:MergeScript -InputFolder $script:In5 -OutputFolder $out -IncludeRedacted)
+        @(Import-Csv -LiteralPath (Join-Path $out 'IPU-Fleet-Servers.csv') -Delimiter ';').Count | Should -Be 2
+        ($lines -join "`n") | Should -Not -Match 'skipped'
+    }
+}
 Describe 'Merge-IPUAssessments.ps1 - RDP NLA column (#174)' {
     It 'shows NLA per server in the CSV and the overview, empty for older results' {
         $in = Join-Path $TestDrive 'nla-in'; $out = Join-Path $TestDrive 'nla-out'
