@@ -420,6 +420,9 @@ Describe 'Get-VMwareToolsDecision' {
         @{ Version='12.4.5.23787635'; Target='2025'; Expected='ACTION' }
         @{ Version='12.5.0.24276846'; Target='2025'; Expected='OK' }
         @{ Version='13.0.0';          Target='2025'; Expected='OK' }
+        @{ Version='12.5';            Target='2025'; Expected='OK' }
+        @{ Version='13.0';            Target='2025'; Expected='OK' }
+        @{ Version='12.4';            Target='2025'; Expected='ACTION' }
         @{ Version='11.3.5';          Target='2022'; Expected='OK' }
         @{ Version='';                Target='2025'; Expected='ACTION' }
         @{ Version='unknown';         Target='2025'; Expected='MANUAL' }
