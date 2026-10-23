@@ -31,7 +31,8 @@ param(
     [Parameter(Mandatory=$true)][string]$InputFolder,
     [string]$OutputFolder = '',
     [ValidateSet('Pre','Post','All')][string]$Mode = 'All',
-    [string]$Delimiter = ';'
+    [string]$Delimiter = ';',
+    [switch]$IncludeRedacted
 )
 
 $ErrorActionPreference = 'Stop'
@@ -177,6 +178,19 @@ foreach ($f in $files) {
     }
 }
 
+# A redacted copy (-RedactExisting, -RedactReport) carries placeholder names
+# (HOST-1), so it cannot be matched to the original it was made from, and
+# next to that original it would show the same server twice (#138). When the
+# folder has original results, redacted copies are skipped and counted;
+# -IncludeRedacted keeps them. A folder with only redacted results (copies sent
+# in by someone else) is used as it is.
+$skippedRedacted = 0
+$redactedResults = @($servers | Where-Object { $_.Redacted })
+if (-not $IncludeRedacted -and $redactedResults.Count -gt 0 -and $redactedResults.Count -lt $servers.Count) {
+    $skippedRedacted = $redactedResults.Count
+    $servers = New-Object System.Collections.Generic.List[object] (, @($servers | Where-Object { -not $_.Redacted }))
+}
+
 # If a server has several results for the same mode, keep the newest.
 # Redacted results all carry placeholder names (HOST-1), so each redacted
 # file is kept as its own row instead of being merged with others.
@@ -241,6 +255,7 @@ if ($common.Count -gt 0) {
 [IO.File]::WriteAllText($htmlPath, $sb.ToString(), (New-Object System.Text.UTF8Encoding($false)))
 
 'Servers: {0} | Findings: {1} | Unreadable files: {2}' -f $latest.Count, $fleetFindings.Count, $unreadable.Count
+if ($skippedRedacted -gt 0) { 'Redacted files skipped: {0} (the folder has the original results; use -IncludeRedacted to keep them)' -f $skippedRedacted }
 'Written: ' + $htmlPath
 'Written: ' + $serversCsv
 'Written: ' + $findingsCsv

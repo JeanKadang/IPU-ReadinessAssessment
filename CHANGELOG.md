@@ -14,6 +14,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `CONTRIBUTING.md` says how pull requests from outside are handled (#277).
 
 ### Fixed
+- The fleet overview no longer counts a server twice when its redacted copy (`REDACTED-...`) is in the same folder: redacted copies are skipped when original results are present, the console says how many, and `-IncludeRedacted` keeps them. A folder with only redacted results is used as before (#138).
 - A folder the script creates (report and evidence folders) is created together with its restricted access list, so it never exists with inherited permissions for a moment; where that is not possible it falls back to create-then-restrict as before. A `-NumberCultureName` that is not a culture on the server is now reported in the baseline (INFO) instead of silently using the invariant format (#139).
 - Arguments to native tools are escaped the way Windows reads them back: a path with a space and a trailing backslash (`C:\Install Media\`) no longer swallows its closing quote, and an embedded quote is escaped. Before, only white space triggered quoting (#136).
 - The fleet CSV files are written as UTF-8 with a byte-order mark on PowerShell 7 too (`Export-Csv -Encoding UTF8` only wrote one on 5.1), so Excel with Danish regional settings no longer garbles æ, ø and å. The result JSON has an optional `UtcOffset` (for example `+02:00`) next to `Started` and `Completed`, and the fleet merge picks the newest result per server by UTC instead of by the text of the local time (#252).
