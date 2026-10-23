@@ -36,8 +36,22 @@ $script:LogPath           = [IO.Path]::Combine($ReportDirectory, $script:SafeCom
 $script:JsonPath          = [IO.Path]::Combine($ReportDirectory, $script:ReportBaseName + '.json')
 $script:BaselinePath      = [IO.Path]::Combine($ReportDirectory, $script:SafeComputerName + '-IPU-Assessment.json')
 
-try { $script:NumberCulture = New-Object System.Globalization.CultureInfo($NumberCultureName) }
-catch { $script:NumberCulture = [System.Globalization.CultureInfo]::InvariantCulture }
+function Resolve-NumberCulture {
+    # An unknown name must not pass silently: .NET Framework builds a culture
+    # for any well-formed name, so the exception is not a reliable test. The
+    # name has to be one of the cultures this server knows (#139). Not known:
+    # the invariant culture, and Known = $false so the report can say so.
+    param([string]$Name)
+    $invariant = [System.Globalization.CultureInfo]::InvariantCulture
+    if (-not $Name) { return [pscustomobject]@{ Culture = $invariant; Known = $false } }
+    $known = @([System.Globalization.CultureInfo]::GetCultures([System.Globalization.CultureTypes]::AllCultures) | Where-Object { $_.Name -ieq $Name })
+    if ($known.Count -eq 0) { return [pscustomobject]@{ Culture = $invariant; Known = $false } }
+    try { return [pscustomobject]@{ Culture = (New-Object System.Globalization.CultureInfo($known[0].Name)); Known = $true } }
+    catch { return [pscustomobject]@{ Culture = $invariant; Known = $false } }
+}
+
+$script:NumberCultureResolved = Resolve-NumberCulture $NumberCultureName
+$script:NumberCulture = $script:NumberCultureResolved.Culture
 
 # SPECIAL (#152): not a standard IPU (cluster node, domain controller) - a
 # separate plan, extra time and coordination, more risk. Ranks above BLOCKER.
@@ -325,12 +339,33 @@ function Set-RestrictedFolderAcl {
     Set-Acl -LiteralPath $Path -AclObject (New-RestrictedDirectorySecurity) -ErrorAction Stop
 }
 
+function New-RestrictedFolder {
+    # Creates the folder together with its restricted access list. Windows
+    # PowerShell (.NET Framework) has Directory.CreateDirectory(path, security);
+    # PowerShell 7 (.NET) has it as an extension method. Throws when neither
+    # works, and Initialize-OutputFolder then falls back to create + Set-Acl.
+    param([string]$Path)
+    $security = New-RestrictedDirectorySecurity
+    try { [void][System.IO.Directory]::CreateDirectory($Path, $security) }
+    catch {
+        $ext = 'System.IO.FileSystemAclExtensions' -as [type]
+        if (-not $ext) { throw }
+        [void]$ext::CreateDirectory($security, $Path)
+    }
+}
+
 function Initialize-OutputFolder {
     # Creates a folder for the script's own output. Only a folder created by
     # this run is restricted; an existing folder keeps its permissions (it may
     # be shared, e.g. C:\Temp) and the report says whether it is too open.
     param([string]$Path, [bool]$Restrict = $RestrictOutputAcl)
     if (Test-Path -LiteralPath $Path -PathType Container) { return 'Existing' }
+    if ($Restrict) {
+        # Created with its access list in one call, so there is no moment
+        # when the folder exists with inherited permissions (#139).
+        try { New-RestrictedFolder $Path; return 'CreatedRestricted' }
+        catch { Write-Swallowed $_ }
+    }
     New-Item -ItemType Directory -Path $Path -Force -ErrorAction Stop | Out-Null
     if (-not $Restrict) { return 'Created' }
     try {
