@@ -854,6 +854,34 @@ function ConvertFrom-NativeByteArray {
     return ($text -replace '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]','')
 }
 
+function ConvertTo-NativeArgument {
+    # Pure: one argument -> its text on a Windows command line, following the
+    # rules CommandLineToArgvW reads back (#136). A plain argument is left
+    # alone; one with white space or a quote is wrapped in quotes, with each
+    # embedded quote escaped and the backslashes in front of a quote (or of
+    # the closing quote) doubled, so C:\Install Media\ does not swallow the
+    # closing quote. An argument the caller already wrapped in quotes, with
+    # none inside, is kept as it is.
+    param([AllowEmptyString()][string]$Argument)
+    if ($Argument.Length -eq 0) { return '""' }
+    if ($Argument -match '^"[^"]*"$') { return $Argument }
+    if ($Argument -notmatch '[\s"]') { return $Argument }
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append('"')
+    $backslashes = 0
+    foreach ($ch in $Argument.ToCharArray()) {
+        if ($ch -eq [char]'\') { $backslashes++; continue }
+        if ($ch -eq [char]'"') {
+            [void]$sb.Append('\', ($backslashes * 2 + 1)).Append('"')
+        } else {
+            [void]$sb.Append('\', $backslashes).Append($ch)
+        }
+        $backslashes = 0
+    }
+    [void]$sb.Append('\', ($backslashes * 2)).Append('"')
+    return $sb.ToString()
+}
+
 function Invoke-NativeCapture {
     # Runs a native command with a timeout and captured output. Used for every
     # external tool so that stderr output never becomes a terminating
@@ -870,10 +898,7 @@ function Invoke-NativeCapture {
     $result = [pscustomobject]@{ ExitCode=$null; Output=''; Lines=@(); TimedOut=$false; Error='' }
     $process = $null
     try {
-        $quoted = @()
-        foreach ($arg in $ArgumentList) {
-            if ($arg -match '\s' -and $arg -notmatch '^".*"$') { $quoted += ('"' + $arg + '"') } else { $quoted += $arg }
-        }
+        $quoted = @($ArgumentList | ForEach-Object { ConvertTo-NativeArgument $_ })
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = $FilePath
         $psi.Arguments = ($quoted -join ' ')
