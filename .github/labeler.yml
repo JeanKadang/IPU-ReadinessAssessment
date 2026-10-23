@@ -10,6 +10,7 @@ bug:
   - head-branch: ['^fix/']
 
 documentation:
+  - head-branch: ['^docs/']
   - changed-files:
       - any-glob-to-any-file:
           - 'docs/**'
@@ -19,6 +20,7 @@ documentation:
           - 'AGENTS.md'
 
 testing:
+  - head-branch: ['^test/']
   - changed-files:
       - any-glob-to-any-file:
           - 'tests/**'
@@ -26,10 +28,12 @@ testing:
           - 'build/Invoke-SmokeTest.ps1'
 
 tooling:
+  - head-branch: ['^ci/']
   - changed-files:
       - any-glob-to-any-file:
           - '.github/**'
           - 'build/**'
           - 'PSScriptAnalyzerSettings.psd1'
+          - 'PSScriptAnalyzerSettings.PS4.psd1'
           - '.editorconfig'
           - '.gitattributes'
