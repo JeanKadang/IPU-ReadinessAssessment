@@ -162,7 +162,8 @@ Describe 'Get-EolOnlineRelease' {
 Describe 'New-EolSnapshotObject' {
     It 'holds the date, the source, the licence, the attribution and the releases by product' {
         $s = New-EolSnapshotObject -Products @{ php = @((New-Cycle '8.4' '2028-12-31')); nginx = @((New-Cycle '1.30' $false)) } -AsOf '2026-10-23'
-        $s.asOf | Should -Be '2026-10-23'; $s.license | Should -Be 'CC BY 4.0'; $s.attribution | Should -Match 'endoflife.date'
+        $s.asOf | Should -Be '2026-10-23'; $s.license | Should -Be 'MIT'; $s.attribution | Should -Match 'endoflife.date'
+        $s.licenseNotice | Should -Match 'Copyright 2020 endoflife.date contributors'; $s.licenseNotice | Should -Match 'Permission is hereby granted'
         @($s.products.Keys) -join ',' | Should -Be 'nginx,php'
     }
 }
@@ -227,6 +228,27 @@ Describe 'Save-EolSnapshot' {
         Mock Get-EolOnlineRelease { [pscustomobject]@{ Cycles = @([pscustomobject]@{ cycle = '1'; eol = $false }); Source = 'endoflife.date'; AsOf = '2026-10-23' } }
         [void](Save-EolSnapshot -Path $script:OutPath -Today ([datetime]'2026-10-23'))
         [IO.File]::ReadAllBytes($script:OutPath)[0] | Should -Be 123
+    }
+    It 'a folder as the path gets eol-snapshot.json inside it' {
+        Mock Get-EolOnlineRelease { [pscustomobject]@{ Cycles = @([pscustomobject]@{ cycle = '1'; eol = $false }); Source = 'endoflife.date'; AsOf = '2026-10-23' } }
+        $dir = Join-Path ([IO.Path]::GetTempPath()) ('eol-dir-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $dir | Out-Null
+        try {
+            $r = Save-EolSnapshot -Path $dir -Today ([datetime]'2026-10-23')
+            $r.Path | Should -Be (Join-Path $dir 'eol-snapshot.json')
+            Test-Path -LiteralPath (Join-Path $dir 'eol-snapshot.json') | Should -BeTrue
+        } finally { Remove-Item -LiteralPath $dir -Recurse -ErrorAction SilentlyContinue }
+    }
+    It 'a folder that does not exist is an error, not a result' {
+        Mock Get-EolOnlineRelease { [pscustomobject]@{ Cycles = @(); Source = 'endoflife.date'; AsOf = '2026-10-23' } }
+        { Save-EolSnapshot -Path (Join-Path ([IO.Path]::GetTempPath()) ('no-such-' + [guid]::NewGuid().ToString('N') + '\x.json')) -Today ([datetime]'2026-10-23') } | Should -Throw '*does not exist*'
+    }
+    It 'a write that fails is an error, never a result' {
+        Mock Get-EolOnlineRelease { [pscustomobject]@{ Cycles = @([pscustomobject]@{ cycle = '1'; eol = $false }); Source = 'endoflife.date'; AsOf = '2026-10-23' } }
+        $locked = Join-Path ([IO.Path]::GetTempPath()) ('eol-lock-' + [guid]::NewGuid().ToString('N') + '.json')
+        $fs = [IO.File]::Open($locked, 'Create', 'ReadWrite', 'None')
+        try { { Save-EolSnapshot -Path $locked -Today ([datetime]'2026-10-23') } | Should -Throw '*Could not write the snapshot*' }
+        finally { $fs.Dispose(); Remove-Item -LiteralPath $locked -ErrorAction SilentlyContinue }
     }
     It 'no product at all is an error and writes nothing' {
         Mock Get-EolOnlineRelease { throw 'offline' }

@@ -14,8 +14,9 @@
 
     Based on the proof of concept from pull request #271 (ayushkrsingh946).
 
-    End-of-life data sourced from endoflife.date under CC BY 4.0
-    (https://creativecommons.org/licenses/by/4.0/).
+    The data comes from endoflife.date, which is released under the MIT
+    License (Copyright 2020 endoflife.date contributors). The notice is kept in
+    the snapshot file.
 .PARAMETER Product
     endoflife.date product identifier, for example mssqlserver or php.
     See $script:EolProducts for the supported list.
@@ -53,7 +54,14 @@ param(
     [int]$MaxAgeMonths = 6
 )
 
-$script:EolAttribution = 'End-of-life data sourced from endoflife.date under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).'
+$script:EolAttribution = 'End-of-life data from endoflife.date (https://endoflife.date), MIT License, Copyright 2020 endoflife.date contributors.'
+# The MIT licence asks that its notice travels with copies of the data, so it is written into every snapshot.
+$script:EolLicenseNotice = @(
+    'Copyright 2020 endoflife.date contributors'
+    'Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:'
+    'The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.'
+    'THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.'
+) -join "`n`n"
 
 # endoflife.date identifiers (checked against https://endoflife.date/api/all.json,
 # 2026-10-23) and the name shown in a report. Add a product here only after
@@ -204,14 +212,15 @@ function Get-EolDecision {
 
 function New-EolSnapshotObject {
     # Pure: product -> releases and a date -> the snapshot document. The
-    # attribution travels with the data (CC BY 4.0, ADR 0003).
+    # attribution and the MIT notice travel with the data (ADR 0003).
     param([hashtable]$Products, [string]$AsOf)
     $byProduct = [ordered]@{}
     foreach ($k in ($Products.Keys | Sort-Object)) { $byProduct[$k] = @($Products[$k]) }
     return [ordered]@{
         asOf        = $AsOf
         source      = 'https://endoflife.date'
-        license     = 'CC BY 4.0'
+        license     = 'MIT'
+        licenseNotice = $script:EolLicenseNotice
         attribution = $script:EolAttribution
         products    = $byProduct
     }
@@ -278,6 +287,10 @@ function Save-EolSnapshot {
     # be fetched is named and left out; the rest is written. A verdict for
     # a missing product is MANUAL.
     param([string]$Path, [datetime]$Today)
+    # A folder is accepted: the snapshot goes into it under a fixed name.
+    if (Test-Path -LiteralPath $Path -PathType Container) { $Path = Join-Path $Path 'eol-snapshot.json' }
+    $parent = Split-Path -Parent ([IO.Path]::GetFullPath($Path))
+    if (-not (Test-Path -LiteralPath $parent -PathType Container)) { throw ('The folder does not exist: ' + $parent) }
     $products = @{}; $failed = @()
     foreach ($slug in $script:EolProducts.Keys) {
         try { $products[$slug] = @((Get-EolOnlineRelease -Product $slug).Cycles) }
@@ -286,7 +299,9 @@ function Save-EolSnapshot {
     if ($products.Count -eq 0) { throw 'No product could be fetched from endoflife.date; no snapshot was written.' }
     $snapshot = New-EolSnapshotObject -Products $products -AsOf $Today.ToString('yyyy-MM-dd')
     $json = ConvertTo-Json -InputObject $snapshot -Depth 6
-    [IO.File]::WriteAllText($Path, $json, (New-Object Text.UTF8Encoding($false)))
+    # A failed write must stop the script: never report a snapshot that is not there.
+    try { [IO.File]::WriteAllText($Path, $json, (New-Object Text.UTF8Encoding($false))) }
+    catch { throw ('Could not write the snapshot to ' + $Path + ': ' + $_.Exception.Message) }
     return [pscustomobject]@{ Path = $Path; Written = @($products.Keys | Sort-Object); Failed = $failed; AsOf = $snapshot.asOf }
 }
 
