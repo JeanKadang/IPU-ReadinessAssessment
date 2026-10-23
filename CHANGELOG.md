@@ -6,6 +6,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Post-upgrade comparison: only Windows' own per-user services (CDPUserSvc, OneSyncSvc and the other templates Microsoft lists) are treated as per-user. A service whose name only ends in a hex-like suffix, such as `AppSvc_DB01`, is no longer filed as "exists only while a user is signed in" when it is gone after the upgrade: it is reported as a missing service (#247).
+- A two-part VMware Tools version such as `12.5` is compared as `12.5.0`, so it no longer counts as older than the 12.5.0 minimum for a Windows Server 2025 target (#253).
+- Removed and deprecated features follow Microsoft's page per target release (#232). A target 2022 no longer gets "no longer developed" notes for Network Load Balancing, WebDAV Redirector and Windows Internal Database: the page lists them for 2025 only. iSNS (removed in 2022) and WINS (no longer developed in 2022) are now reported.
 
 ## [4.5.3] - 2026-10-15
 

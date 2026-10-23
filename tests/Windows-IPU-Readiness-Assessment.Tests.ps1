@@ -420,6 +420,9 @@ Describe 'Get-VMwareToolsDecision' {
         @{ Version='12.4.5.23787635'; Target='2025'; Expected='ACTION' }
         @{ Version='12.5.0.24276846'; Target='2025'; Expected='OK' }
         @{ Version='13.0.0';          Target='2025'; Expected='OK' }
+        @{ Version='12.5';            Target='2025'; Expected='OK' }
+        @{ Version='13.0';            Target='2025'; Expected='OK' }
+        @{ Version='12.4';            Target='2025'; Expected='ACTION' }
         @{ Version='11.3.5';          Target='2022'; Expected='OK' }
         @{ Version='';                Target='2025'; Expected='ACTION' }
         @{ Version='unknown';         Target='2025'; Expected='MANUAL' }
@@ -443,7 +446,24 @@ Describe 'Get-FeatureLifecycleFinding' {
         (Get-FeatureLifecycleFinding @('Web-Lgcy-Mgmt-Console','PowerShell-V2') '2025').Count | Should -Be 2
     }
     It 'deprecated features are observations' {
-        $f = Get-FeatureLifecycleFinding @('NLB') '2022'
+        $f = Get-FeatureLifecycleFinding @('NLB') '2025'
+        $f[0].Kind | Should -Be 'Observation'
+    }
+    It 'NLB, WebDAV Redirector and WID are listed on the 2025 tab only, not for a 2022 target (#232)' {
+        (Get-FeatureLifecycleFinding @('NLB','WebDAV-Redirector','Windows-Internal-Database') '2022').Count | Should -Be 0
+        (Get-FeatureLifecycleFinding @('NLB','WebDAV-Redirector','Windows-Internal-Database') '2025').Count | Should -Be 3
+    }
+    It 'iSNS is removed for a 2022 target and stays removed for 2025 (#232)' {
+        foreach ($t in '2022','2025') {
+            $f = Get-FeatureLifecycleFinding @('ISNS') $t
+            $f.Count | Should -Be 1
+            $f[0].Status | Should -Be 'ACTION'
+            $f[0].Kind | Should -Be 'Finding'
+        }
+    }
+    It 'WINS is an observation for a 2022 target (#232)' {
+        $f = Get-FeatureLifecycleFinding @('WINS') '2022'
+        $f.Count | Should -Be 1
         $f[0].Kind | Should -Be 'Observation'
     }
 }

@@ -345,10 +345,12 @@ $script:FeatureLifecycle = @(
     @{ Feature='SMTP-Server';              Name='SMTP Server';                     State='Removed';    Targets=@('2025') }
     @{ Feature='Web-Lgcy-Mgmt-Console';    Name='IIS 6 Management Console';        State='Removed';    Targets=@('2025') }
     @{ Feature='PowerShell-V2';            Name='Windows PowerShell 2.0 engine';   State='Removed';    Targets=@('2025') }
-    @{ Feature='WebDAV-Redirector';        Name='WebDAV Redirector';               State='Deprecated'; Targets=@('2022','2025') }
-    @{ Feature='NLB';                      Name='Network Load Balancing';          State='Deprecated'; Targets=@('2022','2025') }
-    @{ Feature='Windows-Internal-Database';Name='Windows Internal Database (WID)'; State='Deprecated'; Targets=@('2022','2025') }
+    @{ Feature='WebDAV-Redirector';        Name='WebDAV Redirector';               State='Deprecated'; Targets=@('2025') }
+    @{ Feature='NLB';                      Name='Network Load Balancing';          State='Deprecated'; Targets=@('2025') }
+    @{ Feature='Windows-Internal-Database';Name='Windows Internal Database (WID)'; State='Deprecated'; Targets=@('2025') }
     @{ Feature='UpdateServices';           Name='WSUS';                            State='Deprecated'; Targets=@('2025') }
+    @{ Feature='ISNS';                     Name='iSNS Server service';             State='Removed';    Targets=@('2022','2025') }
+    @{ Feature='WINS';                     Name='Windows Internet Name Service (WINS)'; State='Deprecated'; Targets=@('2022') }
 )
 
 
@@ -1386,7 +1388,7 @@ $script:FactSources = [ordered]@{
     SupportedUpgradePaths  = @{ Verified = '2026-10-13'; Source = 'https://learn.microsoft.com/en-us/windows-server/get-started/install-upgrade-migrate' }
     SqlSupportedOnTarget   = @{ Verified = '2026-10-13'; Source = 'https://learn.microsoft.com/en-us/troubleshoot/sql/general/use-sql-server-in-windows' }
     ReleaseEndOfSupport    = @{ Verified = '2026-10-13'; Source = 'https://learn.microsoft.com/en-us/lifecycle/products/windows-server-2025' }
-    # FeatureLifecycle: the page has one tab per release. SMTP Server, the IIS 6 console and PowerShell 2.0 are removed on the 2025 tab only; the 2022 tab removes iSNS and nothing else (#187).
+    # FeatureLifecycle: the page has one tab per release. SMTP Server, the IIS 6 console and PowerShell 2.0 are removed on the 2025 tab only; the 2022 tab removes iSNS and nothing else (#187). A row lists only the targets whose tab names it (#232).
     FeatureLifecycle       = @{ Verified = '2026-10-22'; Source = 'https://learn.microsoft.com/en-us/windows-server/get-started/removed-deprecated-features-windows-server-2025' }
     PerUserServices        = @{ Verified = '2026-10-23'; Source = 'https://learn.microsoft.com/en-us/windows/application-management/per-user-services-in-windows' }
     VMwareToolsMinimum     = @{ Verified = '2026-10-13'; Source = 'https://blogs.vmware.com/cloud-foundation/2024/11/07/vmware-tools-12-5-0-is-ready-for-the-latest-windows-operating-systems/' }
@@ -1710,6 +1712,8 @@ function Get-VMwareToolsDecision {
     if (-not $clean -or -not [version]::TryParse($clean, [ref]$parsed)) {
         return [pscustomobject]@{ Status='MANUAL'; Text=("VMware Tools version '" + $Version + "' could not be parsed. Confirm it is current.") }
     }
+    # [version]'12.5' has no build part (-1) and so sorts below '12.5.0'; compare with three parts (#253).
+    if ($parsed.Build -lt 0) { $parsed = New-Object System.Version $parsed.Major, $parsed.Minor, 0 }
     if ($Target -eq '2025' -and $parsed -lt [version]'12.5.0') {
         return [pscustomobject]@{ Status='ACTION'; Text=('VMware Tools ' + $clean + ' predates 12.5.0, the first release with drivers certified for Windows Server 2025. Update VMware Tools before IPU.') }
     }
