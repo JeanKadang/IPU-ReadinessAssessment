@@ -9,6 +9,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - End-of-life status for products and Windows Server 2008 to 2025, evaluated off the server from an endoflife.date snapshot (ADR 0003, `src/Get-IPUEolStatus.ps1`, first part of #266). Not yet wired into the assessment or the merged report. Based on the proof of concept from pull request #271.
 
 ### Changed
+- The README has a short licence FAQ (GPL-3.0): running the scripts internally or on managed customer servers is fine, handing on a copy keeps the GPL terms, and reports are not covered by the GPL's conditions (#236).
 - `docs/roadmap.md` lists the open issues by milestone, with a link to the project board (#280).
 - ADR 0003 (still Proposed): the assessment may read a local end-of-life snapshot file at the end of a run, the EOL functions become one shared source part, and the detected products are recorded in the result JSON (#287).
 - `CONTRIBUTING.md` has a release checklist with the manual PowerShell 4.0 check on a Windows Server 2012 R2 test VM, because CI has no PowerShell 4.0 (#130).
