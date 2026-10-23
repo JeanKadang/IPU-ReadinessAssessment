@@ -28,10 +28,11 @@ Constraints:
 
 ## Decision
 
-**Offline snapshot, evaluated off the server.**
+**Offline snapshot. The assessed server never calls the network; it may read a local snapshot file.**
 
-1. **The assessment script on the server makes no EOL lookup and no network call.** It collects product names
-   and versions as it does today.
+1. **The assessment script on the server makes no network call and fetches nothing.** It detects the products in
+   scope and records them and their versions in the result JSON as EolCandidates (#286). It may *read* a snapshot
+   file that is already on the server (decision 6): reading a file is no network access and leaks nothing.
 2. **The operating system's own end-of-support date stays on the server** as the small verified fact table
    `$script:ReleaseEndOfSupport` (`Get-SupportLifecycleDecision`, #232). It is the one date that matters on
    every run, it needs no data file, and it changes about once a year.
@@ -47,6 +48,14 @@ Constraints:
    script never calls it.
 5. **The verdict is a pure function** (`Get-EolDecision`: releases, version and today's date in, verdict out)
    with Pester tests, as the hard rules require.
+6. **The assessment looks for a local snapshot at the end of a run** (decided by the maintainers on 2026-10-23, #287)
+   in this order: `-EolSnapshotPath`, the folder the script is in, the report folder. It compares the
+   `EolCandidates` with it and adds EOL rows, with the same age limit and the same MANUAL-when-too-old rule as
+   decision 4. No snapshot found is one INFO row saying where it looked, never a clean result. SA may deploy only
+   the `.ps1`, so the user guide tells operators to copy the snapshot next to it (#285).
+7. **The EOL functions are one shared source part**, built into both the assessment (a single file for SA, ADR
+   0002) and `Get-IPUEolStatus.ps1`, so the two cannot drift apart. The merge step reads the snapshot too and
+   gives the fleet view (#275).
 
 **Verdicts.** `Supported` (OK), `SecurityOnly` (INFO: active support is over, end of life is later),
 `EndingSoon` (INFO: end of life within 180 days), `EndOfLife` (WARNING), `Unknown` (MANUAL). A product or
@@ -89,6 +98,7 @@ endoflife.date contributors.` The snapshot file also records the date it was tak
   report cannot say a server has no such software, only that none was found.
 - The assessment script itself does not yet recognise 2008 and 2008 R2 as a source release (its release table
   starts at 2012), so on those servers the upgrade-path and support rows fall back to MANUAL. Teaching it the two
-  releases is a separate change, because it touches the upgrade-path rules.
-- Follow-up work, tracked on #266: detection of PHP and Apache HTTP Server, a result
-  field for the product versions the script already collects, and showing the verdicts in the merged report.
+  releases (#276) is a separate change, because it touches the upgrade-path rules.
+- Follow-up work: the shared source part and the build change for it (#275), the shipped snapshot and its monthly
+  refresh (#285), detection of the products and the `EolCandidates` field in the result JSON (#286), the verdicts in
+  the merged report (#275), and recognising 2008 and 2008 R2 as a source release (#276). Tracked on #266.
