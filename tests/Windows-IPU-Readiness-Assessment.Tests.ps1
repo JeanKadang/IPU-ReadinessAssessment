@@ -636,6 +636,45 @@ Describe 'Resolve-ClusterFeatureState (#238)' {
     }
 }
 
+Describe 'Resolve-NumberCulture (#139)' {
+    It 'a culture this server knows is used' {
+        $r = Resolve-NumberCulture 'da-DK'
+        $r.Known | Should -BeTrue; $r.Culture.Name | Should -Be 'da-DK'
+    }
+    It 'the case of the name does not matter' { (Resolve-NumberCulture 'DA-dk').Known | Should -BeTrue }
+    It '<Name> is not known: invariant culture and Known = false' -ForEach @(
+        @{ Name = 'xx-INVALID' }, @{ Name = 'not a culture' }, @{ Name = '' }, @{ Name = 'da_DK' }
+    ) {
+        $r = Resolve-NumberCulture $Name
+        $r.Known | Should -BeFalse
+        $r.Culture.Name | Should -Be ''
+    }
+}
+
+Describe 'New-RestrictedFolder (#139)' -Skip:($env:OS -ne 'Windows_NT') {
+    It 'creates the folder with an access list that leaves out Users from the start' {
+        $p = Join-Path $TestDrive ('restricted-' + [guid]::NewGuid().ToString('N'))
+        New-RestrictedFolder $p
+        $p | Should -Exist
+        $sids = @((Get-Acl -LiteralPath $p).GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { $_.IdentityReference.Value })
+        $sids | Should -Contain 'S-1-5-18'
+        $sids | Should -Contain 'S-1-5-32-544'
+        $sids | Should -Not -Contain 'S-1-5-32-545'
+        $sids | Should -Not -Contain 'S-1-1-0'
+        $sids | Should -Not -Contain 'S-1-5-11'
+    }
+}
+
+Describe 'Format-UtcOffset (#252)' {
+    It '<Hours>h<Minutes>m is <Expected>' -ForEach @(
+        @{ Hours = 2; Minutes = 0; Expected = '+02:00' }
+        @{ Hours = 0; Minutes = 0; Expected = '+00:00' }
+        @{ Hours = -5; Minutes = -30; Expected = '-05:30' }
+        @{ Hours = 5; Minutes = 45; Expected = '+05:45' }
+        @{ Hours = -8; Minutes = 0; Expected = '-08:00' }
+    ) { Format-UtcOffset (New-TimeSpan -Hours $Hours -Minutes $Minutes) | Should -Be $Expected }
+}
+
 Describe 'A MANUAL row counts towards the overall status (#240)' {
     BeforeEach { $script:Results.Clear() }
     It 'Add-Result refuses a MANUAL Observation' {
@@ -682,10 +721,21 @@ Describe 'Output folder access (#12)' {
     }
 
     Context 'Initialize-OutputFolder' {
-        BeforeEach { Mock Set-RestrictedFolderAcl { } }
+        BeforeEach {
+            Mock Set-RestrictedFolderAcl { }
+            Mock New-RestrictedFolder { New-Item -ItemType Directory -Path $Path -Force | Out-Null }
+        }
 
-        It 'restricts a folder it creates' {
+        It 'creates a restricted folder in one step, with no later Set-Acl (#139)' {
             $p = Join-Path $TestDrive 'new-restricted'
+            Initialize-OutputFolder $p $true | Should -Be 'CreatedRestricted'
+            $p | Should -Exist
+            Should -Invoke New-RestrictedFolder -Times 1 -Exactly
+            Should -Invoke Set-RestrictedFolderAcl -Times 0 -Exactly
+        }
+        It 'falls back to create + restrict when the one-step create is not possible (#139)' {
+            Mock New-RestrictedFolder { throw 'no such overload' }
+            $p = Join-Path $TestDrive 'fallback'
             Initialize-OutputFolder $p $true | Should -Be 'CreatedRestricted'
             $p | Should -Exist
             Should -Invoke Set-RestrictedFolderAcl -Times 1 -Exactly
@@ -702,6 +752,7 @@ Describe 'Output folder access (#12)' {
             Should -Invoke Set-RestrictedFolderAcl -Times 0 -Exactly
         }
         It 'reports, rather than fails, when the ACL cannot be set' {
+            Mock New-RestrictedFolder { throw 'no such overload' }
             Mock Set-RestrictedFolderAcl { throw 'access denied' }
             $p = Join-Path $TestDrive 'acl-fails'
             Initialize-OutputFolder $p $true | Should -Be 'CreatedUnrestricted'
@@ -1200,6 +1251,20 @@ Describe 'Report and JSON writers (#36)' {
     }
 }
 
+Describe 'ConvertTo-NativeArgument (#136)' {
+    It '<Name>' -ForEach @(
+        @{ Name = 'a plain argument is left alone'; In = '/replsummary'; Out = '/replsummary' }
+        @{ Name = 'a path with a space is quoted'; In = 'C:\Install Media\x.iso'; Out = '"C:\Install Media\x.iso"' }
+        @{ Name = 'a trailing backslash is doubled so it cannot escape the closing quote'; In = 'C:\a b\'; Out = '"C:\a b\\"' }
+        @{ Name = 'an embedded quote is escaped'; In = 'a"b'; Out = '"a\"b"' }
+        @{ Name = 'backslashes before an embedded quote are doubled'; In = 'a\"b'; Out = '"a\\\"b"' }
+        @{ Name = 'backslashes inside a path stay single'; In = 'C:\Program Files\x'; Out = '"C:\Program Files\x"' }
+        @{ Name = 'an empty argument stays an argument'; In = ''; Out = '""' }
+        @{ Name = 'an argument the caller already quoted is kept'; In = '"C:\a b"'; Out = '"C:\a b"' }
+        @{ Name = 'a path without a space or quote is left alone, even with a trailing backslash'; In = 'C:\Temp\'; Out = 'C:\Temp\' }
+    ) { ConvertTo-NativeArgument $In | Should -Be $Out }
+}
+
 Describe 'Invoke-NativeCapture (#37)' -Tag 'Integration' {
     BeforeAll {
         # -Skip is evaluated during discovery, before this block runs, so the
@@ -1208,6 +1273,16 @@ Describe 'Invoke-NativeCapture (#37)' -Tag 'Integration' {
         function Get-CaptureTempFile { @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Filter 'IPU-*' -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^IPU-[0-9a-f]{32}\.(out|err)$' }) }
     }
 
+    It 'passes C:\a b\, a"b and a plain argument to a real process unchanged (#136)' -Skip:($env:OS -ne 'Windows_NT') {
+        $script = Join-Path $TestDrive 'echo-args.ps1'
+        'foreach ($a in $args) { Write-Output ("ARG<" + $a + ">") }' | Set-Content -LiteralPath $script -Encoding ASCII
+        $ps = Join-Path $env:windir 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $r = Invoke-NativeCapture $ps @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $script, 'C:\a b\', 'a"b', 'plain') 60
+        $r.ExitCode | Should -Be 0
+        $r.Lines | Should -Contain 'ARG<C:\a b\>'
+        $r.Lines | Should -Contain 'ARG<a"b>'
+        $r.Lines | Should -Contain 'ARG<plain>'
+    }
     It 'returns exit code 0' -Skip:($env:OS -ne 'Windows_NT') {
         $r = Invoke-NativeCapture $script:Cmd @('/c', 'exit 0') 30
         $r.ExitCode | Should -Be 0
