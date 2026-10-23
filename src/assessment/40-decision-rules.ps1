@@ -134,6 +134,20 @@ function Resolve-ClusterFeatureState {
     return $null
 }
 
+function Get-JsonOutcomeText {
+    # Pure: what the SA result line says about the JSON file (#250). The fleet
+    # overview and the post-upgrade comparison depend on it, so a JSON that
+    # was not written is never reported as if it were.
+    #   Outcome: Written | Partial | Failed | Disabled
+    param([bool]$WriteJson, [string]$Outcome, [string]$Path)
+    if (-not $WriteJson) { return '' }
+    switch ($Outcome) {
+        'Written' { return ', JSON=' + $Path }
+        'Partial' { return ', JSON=PARTIAL (checkpoint only: ' + $Path + ')' }
+        default   { return ', JSON=FAILED (not written; the fleet overview and the post-upgrade comparison need it)' }
+    }
+}
+
 function Get-ActivationChannelKind {
     # Pure: SoftwareLicensingProduct channel/description -> KMS, MAK, AVMA, OEM, Retail or Unknown.
     param([string]$Channel, [string]$Description)
