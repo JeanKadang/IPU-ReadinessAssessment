@@ -270,7 +270,15 @@ function Invoke-Check {
         # -ErrorAction SilentlyContinue or try/catch explicitly, so an
         # unexpected failure is visible instead of looking like a clean result.
         $ErrorActionPreference = 'Stop'
-        $null = & $Check.Script
+        # try/catch does not catch break or continue: left alone, one inside a
+        # check would end the caller's loop and drop the rest of the phase.
+        # The do/while is the loop they end instead (#251).
+        $ranToEnd = $false
+        do {
+            $null = & $Check.Script
+            $ranToEnd = $true
+        } while ($false)
+        if (-not $ranToEnd) { throw 'The check left the runner with break or continue before it finished; its remaining rows are missing' }
         if ($script:CurrentCheckOutcome) { $outcome = $script:CurrentCheckOutcome }
         if ($script:CurrentCheckMessage) { $message = $script:CurrentCheckMessage }
     } catch {
