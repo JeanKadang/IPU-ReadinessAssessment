@@ -1654,7 +1654,7 @@ function Get-SfcVerdict {
     if ($OutputText -match 'did not find any integrity violations') { return [pscustomobject]@{ Status='OK'; Basis='SFC output' } }
     if ($OutputText -match 'found integrity violations|found corrupt files|could not perform the requested operation') { return [pscustomobject]@{ Status='ACTION'; Basis='SFC output' } }
     $sr = @($CbsLines | Where-Object { $_ -match '\[SR\]|CSI' })
-    if (@($sr | Where-Object { $_ -match 'corrupt|do not match actual file|Cannot repair' }).Count -gt 0) {
+    if (@($sr | Where-Object { $_ -match 'corrupt|do not match actual file|Cannot repair|Cannot verify|manifest is damaged' }).Count -gt 0) {
         return [pscustomobject]@{ Status='ACTION'; Basis='CBS.log' }
     }
     if (@($sr | Where-Object { $_ -match '\[SR\] Verify complete' }).Count -gt 0) {
