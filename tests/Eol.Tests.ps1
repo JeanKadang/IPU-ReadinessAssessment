@@ -130,3 +130,31 @@ Describe 'Product list' {
         foreach ($p in 'windows-server', 'mssqlserver', 'postgresql', 'apache-http-server', 'php', 'dotnet', 'eclipse-temurin') { $script:EolProducts.Contains($p) | Should -BeTrue }
     }
 }
+
+Describe 'Get-EolSnapshotRelease' {
+    BeforeAll {
+        $script:SnapPath = Join-Path ([IO.Path]::GetTempPath()) ('eol-snapshot-' + [guid]::NewGuid().ToString('N') + '.json')
+        '{"asOf":"2026-10-23","source":"endoflife.date","products":{"php":[{"cycle":"8.4","eol":"2028-12-31","support":"2026-12-31"}]}}' | Set-Content -LiteralPath $script:SnapPath -Encoding UTF8
+    }
+    AfterAll { Remove-Item -LiteralPath $script:SnapPath -ErrorAction SilentlyContinue }
+    It 'reads the releases and the snapshot date' {
+        $r = Get-EolSnapshotRelease -Product 'php' -SnapshotPath $script:SnapPath
+        $r.Source | Should -Be 'snapshot'; $r.AsOf | Should -Be '2026-10-23'; @($r.Cycles).Count | Should -Be 1
+    }
+    It 'releases read from the file give a verdict whatever the JSON parser does with the dates' {
+        $r = Get-EolSnapshotRelease -Product 'php' -SnapshotPath $script:SnapPath
+        (Get-EolDecision 'php' '8.4.2' $r.Cycles ([datetime]'2026-10-23')).State | Should -Be 'Supported'
+    }
+    It 'a product that is not in the snapshot gives nothing' { Get-EolSnapshotRelease -Product 'nginx' -SnapshotPath $script:SnapPath | Should -BeNullOrEmpty }
+    It 'a missing file gives nothing' { Get-EolSnapshotRelease -Product 'php' -SnapshotPath (Join-Path ([IO.Path]::GetTempPath()) 'no-such-eol-file.json') | Should -BeNullOrEmpty }
+    It 'no path gives nothing' { Get-EolSnapshotRelease -Product 'php' -SnapshotPath '' | Should -BeNullOrEmpty }
+}
+
+Describe 'Get-EolOnlineRelease' {
+    It 'asks endoflife.date for the product and returns its releases' {
+        Mock Invoke-RestMethod { @([pscustomobject]@{ cycle = '8.4'; eol = '2028-12-31' }) } -ParameterFilter { $Uri -eq 'https://endoflife.date/api/php.json' }
+        $r = Get-EolOnlineRelease -Product 'php'
+        $r.Source | Should -Be 'endoflife.date'; @($r.Cycles).Count | Should -Be 1
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly
+    }
+}
