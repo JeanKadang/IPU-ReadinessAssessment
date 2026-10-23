@@ -328,7 +328,7 @@ Register-Check -Id 'domain' -Name 'Domain role and access' -Script {
     }
     $admins = Get-LocalGroupMembersBySid 'S-1-5-32-544'
     foreach ($member in $admins) { Add-Result 'ACCESS' 'LocalAdministratorsMember' 'INFO' $member -Source 'Local group S-1-5-32-544' }
-    if ($admins.Count -eq 0) { Add-Result 'ACCESS' 'LocalAdministratorsMember' 'MANUAL' 'No members returned' -Recommendation 'Enumerate local Administrators manually.' -Kind 'Observation' -Source 'Local group S-1-5-32-544' }
+    if ($admins.Count -eq 0) { Add-Result 'ACCESS' 'LocalAdministratorsMember' 'MANUAL' 'No members returned' -Recommendation 'Enumerate local Administrators manually.' -Kind 'Finding' -Source 'Local group S-1-5-32-544' }
 }
 
 # ---------------------------------------------------------------------------
@@ -420,7 +420,7 @@ Register-Check -Id 'grouppolicy' -Name 'Group Policy and AD groups' -Script {
         }
     } elseif (-not $domainMember) {
         # Workgroup server and gpresult failed: still only local policy.
-        Add-Result 'GROUP_POLICY' 'LocalPolicy' 'MANUAL' 'Could not list the local policy (gpresult)' $gpError -Recommendation (Get-LocalPolicyAdvice (Test-LgpoAvailable) $EnableRDPPolicyEvidence) -Kind 'Observation' -Source 'gpresult'
+        Add-Result 'GROUP_POLICY' 'LocalPolicy' 'MANUAL' 'Could not list the local policy (gpresult)' $gpError -Recommendation (Get-LocalPolicyAdvice (Test-LgpoAvailable) $EnableRDPPolicyEvidence) -Kind 'Finding' -Source 'gpresult'
     }
     # The AD groups come from AD, not gpresult: list them even when no GPO
     # list could be read (#160).
@@ -569,7 +569,7 @@ Register-Check -Id 'storage' -Name 'Storage' -Script {
     $winRe = $null
     $ra = Invoke-NativeCapture (Join-Path $env:windir 'System32\reagentc.exe') @('/info') 60
     if ($ra.TimedOut -or $ra.Error -or ($null -ne $ra.ExitCode -and [int]$ra.ExitCode -ne 0)) {
-        Add-Result 'STORAGE' 'WinREStatus' 'MANUAL' 'reagentc /info failed' ([string]$ra.Error + ' ExitCode=' + $ra.ExitCode) -Recommendation 'Run "reagentc /info" as administrator to see where WinRE is before changing partitions.' -Kind 'Observation' -Source 'reagentc /info'
+        Add-Result 'STORAGE' 'WinREStatus' 'MANUAL' 'reagentc /info failed' ([string]$ra.Error + ' ExitCode=' + $ra.ExitCode) -Recommendation 'Run "reagentc /info" as administrator to see where WinRE is before changing partitions.' -Kind 'Finding' -Source 'reagentc /info'
     } else {
         $winRe = ConvertFrom-ReagentcInfo $ra.Output
         if ($null -ne $winRe.Partition -or $null -ne $winRe.Enabled) {
@@ -803,7 +803,7 @@ Register-Check -Id 'sql' -Name 'SQL Server' -Script {
 # ---------------------------------------------------------------------------
 Register-Check -Id 'workloads' -Name 'Roles and workloads' -Script {
     if ($null -eq $script:Data.Features) {
-        Add-Result 'ROLES' 'Inventory' 'MANUAL' 'Get-WindowsFeature unavailable' -Recommendation 'List installed roles/features manually.' -Kind 'Observation' -Source 'ServerManager'
+        Add-Result 'ROLES' 'Inventory' 'MANUAL' 'Get-WindowsFeature unavailable' -Recommendation 'List installed roles/features manually.' -Kind 'Finding' -Source 'ServerManager'
     } else {
         foreach ($name in @($script:Data.Features.Keys | Where-Object { $script:Data.Features[$_] } | Sort-Object)) {
             Add-Result 'ROLES' $name 'INFO' 'Installed' -Source 'Get-WindowsFeature'
@@ -853,7 +853,7 @@ Register-Check -Id 'fileshares' -Name 'File shares' -Script {
     # test, and the post-upgrade run can report a share that is gone.
     $role = Get-FeatureState 'FS-FileServer'
     if (-not (Test-CommandAvailable 'Get-SmbShare')) {
-        if ($role -eq $true) { Add-Result 'FILE_SHARES' 'FileShares' 'MANUAL' 'Get-SmbShare is not available' -Recommendation 'List the shares manually (net share) and record their share permissions before the change.' -Kind 'Observation' -Source 'SmbShare module' }
+        if ($role -eq $true) { Add-Result 'FILE_SHARES' 'FileShares' 'MANUAL' 'Get-SmbShare is not available' -Recommendation 'List the shares manually (net share) and record their share permissions before the change.' -Kind 'Finding' -Source 'SmbShare module' }
         return
     }
     $printing = (Get-FeatureState 'Print-Server') -eq $true
@@ -1062,7 +1062,7 @@ Register-Check -Id 'pki' -Name 'PKI, certificates and TLS bindings' -Script {
             $st = 'OK'; if ($c.NotAfter -lt (Get-Date)) { $st = 'WARNING' }
             Add-Result 'CERTIFICATES' 'RDP-Tcp certificate' $st ('Thumbprint=' + $thumb) @(('Subject=' + $c.Subject),('NotAfter=' + $c.NotAfter.ToString('yyyy-MM-dd'))) -Recommendation 'Verify RDP connects after IPU.' -Kind 'Observation' -Source 'Win32_TSGeneralSetting'
         } elseif ($thumb) {
-            Add-Result 'CERTIFICATES' 'RDP-Tcp certificate' 'MANUAL' ('Thumbprint=' + $thumb) 'Not found in My, Remote Desktop or WebHosting' -Recommendation 'Verify the RDP certificate configuration.' -Kind 'Observation' -Source 'Win32_TSGeneralSetting'
+            Add-Result 'CERTIFICATES' 'RDP-Tcp certificate' 'MANUAL' ('Thumbprint=' + $thumb) 'Not found in My, Remote Desktop or WebHosting' -Recommendation 'Verify the RDP certificate configuration.' -Kind 'Finding' -Source 'Win32_TSGeneralSetting'
         }
     }
 
@@ -1210,7 +1210,7 @@ Register-Check -Id 'backup' -Name 'Backup and VSS' -Script {
     $vss = Invoke-NativeCapture (Join-Path $env:windir 'System32\vssadmin.exe') @('list','writers') 120
     $writers = ConvertFrom-VssWriterOutput $vss.Lines
     if ($vss.TimedOut -or $writers.Count -eq 0) {
-        Add-Result 'BACKUP' 'VSSWriters' 'MANUAL' 'VSS writer state could not be read' @(('TimedOut=' + $vss.TimedOut),$vss.Error) -Recommendation 'Run "vssadmin list writers" manually; failed writers break application-consistent backups and snapshots.' -Kind 'Observation' -Source 'vssadmin list writers'
+        Add-Result 'BACKUP' 'VSSWriters' 'MANUAL' 'VSS writer state could not be read' @(('TimedOut=' + $vss.TimedOut),$vss.Error) -Recommendation 'Run "vssadmin list writers" manually; failed writers break application-consistent backups and snapshots.' -Kind 'Finding' -Source 'vssadmin list writers'
     }
     $failed = 0
     foreach ($w in $writers) {
@@ -1602,7 +1602,7 @@ function Invoke-RdpPolicyAssessment {
         $null = Initialize-OutputFolder $root
         New-Item -ItemType Directory -Path $lgpoRoot -Force | Out-Null
     }
-    catch { $folderOk = $false; $review.Add('Evidence folder could not be created'); Add-Result 'POLICY_EVIDENCE' 'EvidenceFolder' 'MANUAL' $root $_.Exception.Message -Recommendation 'Make the evidence folder writable and re-run.' -Kind 'Observation' }
+    catch { $folderOk = $false; $review.Add('Evidence folder could not be created'); Add-Result 'POLICY_EVIDENCE' 'EvidenceFolder' 'MANUAL' $root $_.Exception.Message -Recommendation 'Make the evidence folder writable and re-run.' -Kind 'Finding' }
 
     if ($folderOk) {
         # LGPO backup (local policy only; never imports).
@@ -1614,7 +1614,7 @@ function Invoke-RdpPolicyAssessment {
             $r = Invoke-NativeCapture $LgpoExe @('/b',$lgpoRoot,'/n',('Pre-IPU-' + $stamp)) 120
             $r.Output | Out-File -LiteralPath (Join-Path $root 'LGPO-Backup-Output.txt') -Encoding UTF8
             if ($r.ExitCode -eq 0) { Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'OK' $lgpoRoot -Source 'LGPO.exe /b' }
-            else { Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'MANUAL' ('ExitCode=' + $r.ExitCode) $r.Error -Recommendation 'Review the LGPO output if a restorable local-policy copy is required.' -Kind 'Observation' -Source 'LGPO.exe /b' }
+            else { Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'MANUAL' ('ExitCode=' + $r.ExitCode) $r.Error -Recommendation 'Review the LGPO output if a restorable local-policy copy is required.' -Kind 'Finding' -Source 'LGPO.exe /b' }
             foreach ($pol in @(
                 @{ Scope='Machine'; Mode='/m'; Path=(Join-Path $env:windir 'System32\GroupPolicy\Machine\Registry.pol') },
                 @{ Scope='User'; Mode='/u'; Path=(Join-Path $env:windir 'System32\GroupPolicy\User\Registry.pol') })) {
@@ -1634,7 +1634,7 @@ function Invoke-RdpPolicyAssessment {
         $gpText.Output | Out-File -LiteralPath (Join-Path $root 'GPResult-Computer.txt') -Encoding UTF8
         $gpHtml = Invoke-NativeCapture $gpresult @('/Scope','Computer','/H',(Join-Path $root 'GPResult-Computer.html'),'/F') 180
         if ($gpText.ExitCode -eq 0 -or $gpHtml.ExitCode -eq 0) { Add-Result 'POLICY_EVIDENCE' 'ComputerRSoP' 'OK' (Join-Path $root 'GPResult-Computer.html') -Source 'gpresult' }
-        else { $review.Add('gpresult did not return computer policy'); Add-Result 'POLICY_EVIDENCE' 'ComputerRSoP' 'MANUAL' ('Exit=' + $gpText.ExitCode + '/' + $gpHtml.ExitCode) -Recommendation 'Collect RSoP manually.' -Kind 'Observation' -Source 'gpresult' }
+        else { $review.Add('gpresult did not return computer policy'); Add-Result 'POLICY_EVIDENCE' 'ComputerRSoP' 'MANUAL' ('Exit=' + $gpText.ExitCode + '/' + $gpHtml.ExitCode) -Recommendation 'Collect RSoP manually.' -Kind 'Finding' -Source 'gpresult' }
     }
 
     $policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
@@ -1747,7 +1747,7 @@ function Invoke-RdpPolicyAssessment {
                 if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
                 New-ZipFromFolder $root $zip
                 $script:Data.PolicyEvidence = $zip
-            } catch { Add-Result 'POLICY_EVIDENCE' 'EvidenceArchive' 'MANUAL' 'ZIP creation failed' $_.Exception.Message -Recommendation 'Retrieve the folder directly.' -Kind 'Observation' }
+            } catch { Add-Result 'POLICY_EVIDENCE' 'EvidenceArchive' 'MANUAL' 'ZIP creation failed' $_.Exception.Message -Recommendation 'Retrieve the folder directly.' -Kind 'Finding' }
         }
         Add-Result 'POLICY_EVIDENCE' 'EvidenceLocation' 'INFO' $script:Data.PolicyEvidence $root -Source 'Local filesystem'
     }

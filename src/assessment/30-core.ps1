@@ -44,6 +44,10 @@ catch { $script:NumberCulture = [System.Globalization.CultureInfo]::InvariantCul
 $script:StatusOrder  = @('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL','OK','INFO')
 $script:FindingStatuses = @('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL')
 $script:ValidKinds   = @('Finding','Observation','Evidence','Checklist')
+# Get-OverallStatus counts Findings only. A MANUAL row that is an Observation or Evidence would be left out of the overall status, so a failed read could still end in OK (#240). Add-Result refuses that combination unless the area is listed here with the reason.
+$script:ManualNotCounted = @{
+    AGENTS = 'A management agent that is not found may simply not be expected on this server; the row asks the operator to confirm in the backend and must not turn every such server MANUAL.'
+}
 
 # The single definition of report areas. Name = what readers see, Chapter =
 # which collapsible chapter the area belongs to.
@@ -217,6 +221,9 @@ function Add-Result {
         if ($script:FindingStatuses -contains $Status) { $Kind = 'Finding' } else { $Kind = 'Evidence' }
     }
     if ($script:ValidKinds -notcontains $Kind) { throw ("Unknown result kind '{0}'." -f $Kind) }
+    if ($Status -eq 'MANUAL' -and (@('Observation','Evidence') -contains $Kind) -and -not $script:ManualNotCounted.ContainsKey($Area)) {
+        throw ("Add-Result: a MANUAL row in {0} ('{1}') must be a Finding so it counts towards the overall status. Use -Kind Finding, or add the area to $script:ManualNotCounted with the reason." -f $Area, $Item)
+    }
     $detailParts = @()
     foreach ($part in @($Details)) {
         $clean = ConvertTo-CleanText $part

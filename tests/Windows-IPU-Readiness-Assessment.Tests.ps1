@@ -567,6 +567,33 @@ Describe 'Add-Result requires a named Recommendation' {
     }
 }
 
+Describe 'A MANUAL row counts towards the overall status (#240)' {
+    BeforeEach { $script:Results.Clear() }
+    It 'Add-Result refuses a MANUAL Observation' {
+        { Add-Result 'ROLES' 'Inventory' 'MANUAL' 'x' -Recommendation 'r' -Kind 'Observation' } | Should -Throw '*must be a Finding*'
+    }
+    It 'Add-Result refuses a MANUAL Evidence row' {
+        { Add-Result 'BACKUP' 'VSSWriters' 'MANUAL' 'x' -Recommendation 'r' -Kind 'Evidence' } | Should -Throw '*must be a Finding*'
+    }
+    It 'a MANUAL row without a Kind is a Finding and makes the overall status MANUAL' {
+        Add-Result 'ROLES' 'Inventory' 'MANUAL' 'Get-WindowsFeature unavailable' -Recommendation 'List the roles by hand.'
+        Add-Result 'ROLES' 'Other' 'OK' 'fine'
+        $script:Results[0].Kind | Should -Be 'Finding'
+        Get-OverallStatus $script:Results | Should -Be 'MANUAL'
+    }
+    It 'a listed area keeps its MANUAL Observation, with the reason on record' {
+        { Add-Result 'AGENTS' 'Some agent' 'MANUAL' 'Not identified' -Recommendation 'Confirm in the backend.' -Kind 'Observation' } | Should -Not -Throw
+        $script:ManualNotCounted['AGENTS'] | Should -Not -BeNullOrEmpty
+    }
+    It 'Checklist rows stay MANUAL by design' {
+        { Add-Result 'CHECKLIST' 'Backup and fallback' 'MANUAL' 'x' -Recommendation 'r' -Kind 'Checklist' } | Should -Not -Throw
+    }
+    It 'no MANUAL call in the checks hides a failure as an Observation or Evidence row' {
+        $src = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\src\assessment\50-checks.ps1') -Raw
+        $bad = @([regex]::Matches($src, "Add-Result '(\w+)'[^\r\n]*'MANUAL'[^\r\n]*-Kind '(Observation|Evidence)'") | Where-Object { -not $script:ManualNotCounted.ContainsKey($_.Groups[1].Value) })
+        $bad.Count | Should -Be 0 -Because (($bad | ForEach-Object { $_.Value.Substring(0, [math]::Min(80, $_.Value.Length)) }) -join '; ')
+    }
+}
 Describe 'Output folder access (#12)' {
     It 'state <State> with readers <Readers> is <Expected>' -TestCases @(
         @{ State='CreatedRestricted';   Readers=@();          Expected='OK' }
