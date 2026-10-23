@@ -134,6 +134,14 @@ function Resolve-ClusterFeatureState {
     return $null
 }
 
+function Format-UtcOffset {
+    # Pure: +02:00, -05:30, +00:00 (#252).
+    param([TimeSpan]$Offset)
+    $sign = '+'; if ($Offset -lt [TimeSpan]::Zero) { $sign = '-' }
+    $abs = $Offset.Duration()
+    return ('{0}{1:00}:{2:00}' -f $sign, [int]$abs.Hours, [int]$abs.Minutes)
+}
+
 function Get-JsonOutcomeText {
     # Pure: what the SA result line says about the JSON file (#250). The fleet
     # overview and the post-upgrade comparison depend on it, so a JSON that
@@ -777,6 +785,87 @@ function Compare-PrinterDriver {
         if ($now.ContainsKey($p) -and $now[$p] -ne [string]$b.Driver) { $changed += ($p + ': ' + $b.Driver + ' -> ' + $now[$p]) }
     }
     return ,$changed
+}
+
+# Which check collects which list of the snapshot (#239). A list whose check
+# did not complete (or was never run: a SPECIAL short report) cannot be
+# compared, and an empty list must not read as "nothing lost".
+$script:SnapshotListSources = [ordered]@{
+    Services = 'baseline'; Apps = 'baseline'; Features = 'baseline'
+    Ports = 'ports'
+    IPv4 = 'network'; Dns = 'network'; Adapters = 'network'; Hosts = 'network'; Routes = 'network'
+    Tasks = 'tasks'
+    Shares = 'fileshares'
+    Printers = 'printers'; PrinterPorts = 'printers'; PrinterDrivers = 'printers'
+}
+
+function Get-BaselineReleaseText {
+    # Pure: the release a pre-upgrade result was taken on, from its CurrentOS
+    # row ("Release=Windows Server 2016"). Empty when it cannot be read.
+    param($Baseline)
+    $row = @($Baseline.Results | Where-Object { $_.Area -eq 'UPGRADE_PATH' -and $_.Item -eq 'CurrentOS' }) | Select-Object -First 1
+    if ($row -and (@($row.Details) -join ' ') -match 'Release=([^;|]+?)(?:\s*(?:\||;|$)|\s+Architecture=)') { return $Matches[1].Trim() }
+    return ''
+}
+
+function Get-BaselineCoverageRow {
+    # Pure (#239): what the post-upgrade comparison could NOT compare, as rows
+    # to report. No rows means every list was compared against a baseline that
+    # collected it. Never reads the machine.
+    param($Baseline, [string]$ComputerName, [string]$TargetDisplayName)
+    $rows = New-Object System.Collections.Generic.List[object]
+    $add = { param($item, $value, $details, $rec) $rows.Add([pscustomobject]@{ Status='MANUAL'; Item=$item; Value=$value; Details=$details; Recommendation=$rec }) }
+    if ($Baseline.PSObject.Properties['Schema'] -and $Baseline.Schema -ne 'IPU-Assessment/1') {
+        & $add 'BaselineValid' 'The pre-upgrade file is not an assessment result this script reads' ('Schema=' + $Baseline.Schema) 'Use the *-IPU-Assessment.json written by a Pre run on this server.'
+    }
+    if ($Baseline.PSObject.Properties['Mode'] -and $Baseline.Mode -ne 'Pre') {
+        & $add 'BaselineValid' 'The pre-upgrade file was not written by a Pre run' ('Mode=' + $Baseline.Mode) 'Use the *-IPU-Assessment.json written by a Pre run before the upgrade.'
+    }
+    if ($ComputerName -and $Baseline.PSObject.Properties['ComputerName'] -and $Baseline.ComputerName -and ([string]$Baseline.ComputerName -ine $ComputerName)) {
+        & $add 'BaselineValid' 'The pre-upgrade file is from another server' ('Baseline=' + $Baseline.ComputerName + ', this server=' + $ComputerName) 'Compare against the Pre result of this server.'
+    }
+    $before = $Baseline.Snapshot
+    $snapshotProps = @(); if ($before) { $snapshotProps = @($before.PSObject.Properties | ForEach-Object { $_.Name }) }
+    if ($snapshotProps.Count -eq 0) {
+        & $add 'BaselineSnapshot' 'The pre-upgrade result has no snapshot to compare with' '' 'The Pre run did not collect its baseline. Compare with the pre-upgrade report by hand.'
+        return $rows.ToArray()
+    }
+    $runs = @(); if ($Baseline.PSObject.Properties['CheckRuns']) { $runs = @($Baseline.CheckRuns) }
+    $short = $false; if ($Baseline.PSObject.Properties['Special'] -and $Baseline.Special) { $short = $true }
+    $notCompared = New-Object System.Collections.Generic.List[string]
+    foreach ($list in $script:SnapshotListSources.Keys) {
+        $source = $script:SnapshotListSources[$list]
+        $why = ''
+        $run = @($runs | Where-Object { $_.Id -eq $source }) | Select-Object -First 1
+        if ($snapshotProps -notcontains $list) { $why = 'the baseline has no ' + $list + ' list' }
+        elseif ($short -and $source -ne 'baseline') { $why = 'the Pre run was a SPECIAL short report' }
+        elseif ($runs.Count -gt 0 -and -not $run) { $why = 'the ' + $source + ' check did not run' }
+        elseif ($run -and $run.Outcome -ne 'Completed') { $why = 'the ' + $source + ' check ' + ([string]$run.Outcome).ToLower() }
+        if ($why) { $notCompared.Add($list + ' (' + $why + ')') }
+    }
+    if ($notCompared.Count -gt 0) {
+        & $add 'BaselineCoverage' ($notCompared.Count.ToString() + ' list(s) could not be compared') $notCompared.ToArray() 'A list the Pre run did not collect cannot show what was lost. Compare these by hand with the pre-upgrade report, or take a new baseline on a comparable server.'
+    }
+    $then = Get-BaselineReleaseText $Baseline
+    if ($then -and $TargetDisplayName -and $then -ieq $TargetDisplayName) {
+        & $add 'BaselineAfterUpgrade' ('The pre-upgrade result was taken on ' + $then + ', the target release') '' 'The baseline looks like it was written after the upgrade (a Pre run was repeated). Comparing post with post shows no change. Use the baseline from before the upgrade.'
+    }
+    return $rows.ToArray()
+}
+
+function Test-BaselineKeepCopy {
+    # Pure (#239): should the existing pre-upgrade file be kept as a dated copy
+    # before this run replaces it? Yes when it is a complete result and the
+    # new write is a checkpoint (the run may be stopped) or describes another
+    # release (the server was upgraded since).
+    param($Existing, [bool]$NewIsPartial, [string]$NewReleaseText)
+    if (-not $Existing) { return $false }
+    if ($Existing.PSObject.Properties['Partial'] -and $Existing.Partial) { return $false }
+    if (-not ($Existing.PSObject.Properties['Snapshot'] -and $Existing.Snapshot)) { return $false }
+    if ($NewIsPartial) { return $true }
+    $was = Get-BaselineReleaseText $Existing
+    if ($was -and $NewReleaseText -and $was -ine $NewReleaseText) { return $true }
+    return $false
 }
 
 function Compare-IPUSnapshot {

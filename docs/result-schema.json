@@ -13,6 +13,7 @@
     "TargetServerVersion": { "enum": ["2025", "2022"] },
     "Started": { "$ref": "#/definitions/timestamp" },
     "Completed": { "$ref": "#/definitions/timestamp" },
+    "UtcOffset": { "type": "string", "pattern": "^[+-]\\d{2}:\\d{2}$", "description": "The server's offset from UTC when it finished, for example +02:00. Optional: files from before 4.5.4 have none." },
     "Partial": { "type": "boolean", "description": "True for the checkpoint written before the slow checks finished." },
     "Redacted": { "type": "boolean", "description": "True when the run used -RedactReport: names, addresses, accounts, SIDs and certificate details are placeholders (HOST-1, IP-2, ...). Optional; absent in files from 4.0.1 and earlier." },
     "Overall": { "$ref": "#/definitions/overall" },

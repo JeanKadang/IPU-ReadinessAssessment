@@ -376,6 +376,7 @@ function New-AssessmentJsonObject {
         TargetServerVersion = $TargetServerVersion
         Started             = $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss')
         Completed           = $Completed.ToString('yyyy-MM-dd HH:mm:ss')
+        UtcOffset           = (Format-UtcOffset ([TimeZoneInfo]::Local.GetUtcOffset($Completed)))
         Partial             = [bool]$Partial
         Redacted            = $false
         Overall             = $Overall
@@ -556,6 +557,20 @@ function Write-AssessmentJson {
         $obj.Redacted = $true
     }
     $json = $obj | ConvertTo-Json -Depth 6
+    # A Pre run writes the file the Post run compares against. Re-running Pre
+    # (after the upgrade, or stopped after a checkpoint) must not silently
+    # replace a complete baseline: keep it as a dated copy first (#239).
+    if ($AssessmentMode -eq 'Pre' -and $script:JsonPath -eq $script:BaselinePath -and $null -eq $script:BaselineKept -and (Test-Path -LiteralPath $script:JsonPath)) {
+        try {
+            $existing = Get-Content -LiteralPath $script:JsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if (Test-BaselineKeepCopy $existing ([bool]$Partial) (Get-ReleaseDisplayName $script:Data.SourceRelease)) {
+                $kept = $script:JsonPath -replace '\.json$', ('-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.json')
+                Copy-Item -LiteralPath $script:JsonPath -Destination $kept -ErrorAction Stop
+                $script:BaselineKept = $kept
+                Write-AssessmentLog 'INFO' 'BASELINE' ('Kept the earlier pre-upgrade result as ' + $kept)
+            }
+        } catch { Write-AssessmentLog 'WARNING' 'BASELINE' ('Could not keep the earlier pre-upgrade result: ' + $_.Exception.Message) }
+    }
     $temp = $script:JsonPath + '.writing'
     [IO.File]::WriteAllText($temp,$json,(New-Object System.Text.UTF8Encoding($false)))
     Move-Item -LiteralPath $temp -Destination $script:JsonPath -Force -ErrorAction Stop
@@ -601,8 +616,8 @@ function Import-SiteDataFile {
             }
             foreach ($k in @($decision.Ignored)) { $details += ($k + ': the argument given to the script was used') }
             if ($decision.Settings.Contains('NumberCultureName')) {
-                try { $script:NumberCulture = New-Object System.Globalization.CultureInfo($decision.Settings['NumberCultureName']) }
-                catch { $script:NumberCulture = [System.Globalization.CultureInfo]::InvariantCulture }
+                $script:NumberCultureResolved = Resolve-NumberCulture ([string]$decision.Settings['NumberCultureName'])
+                $script:NumberCulture = $script:NumberCultureResolved.Culture
             }
             Add-Result 'COLLECTOR' 'Profile file' 'INFO' ('Applied, ' + $decision.Settings.Count + ' setting(s)') ($details + @('SHA256=' + $hash)) -Source $ProfileFile
             Write-AssessmentLog 'INFO' 'SITEDATA' ('Profile file applied: ' + $ProfileFile + ' | ' + ($details -join '; '))
@@ -643,9 +658,14 @@ function Invoke-PostUpgradeComparison {
             if ($listener -and (@($listener.Details) -join ' ') -match 'NLA=(\d)') { $before | Add-Member -NotePropertyName Nla -NotePropertyValue $(if ($Matches[1] -eq '0') { 'Off' } else { 'On' }) -Force }
         }
         if ($before -and $before.PSObject.Properties['Nla']) { $script:Data.NlaBefore = [string]$before.Nla }
+        # What the comparison cannot cover (#239): an empty or partial baseline,
+        # a SPECIAL short report, a check that did not complete, a baseline
+        # taken after the upgrade. "Comparison OK" only when nothing is left out.
+        $coverage = @(Get-BaselineCoverageRow $baseline $script:ComputerName (Get-ReleaseDisplayName $TargetServerVersion))
+        foreach ($c in $coverage) { Add-Result 'POST_UPGRADE' $c.Item $c.Status $c.Value $c.Details -Recommendation $c.Recommendation -Kind 'Finding' -Source 'Pre-upgrade result' }
         $diffs = Compare-IPUSnapshot $before ([pscustomobject]$script:Data.Snapshot)
         foreach ($d in $diffs) { Add-Result 'POST_UPGRADE' $d.Item $d.Status $d.Value $d.Details -Recommendation $d.Recommendation -Source 'Pre-upgrade snapshot vs now' }
-        if ($diffs.Count -eq 0) { Add-Result 'POST_UPGRADE' 'Comparison' 'OK' 'No lost services, ports, routes, IP/DNS settings, hosts entries, applications, features or tasks' -Source 'Pre-upgrade snapshot vs now' }
+        if ($diffs.Count -eq 0 -and $coverage.Count -eq 0) { Add-Result 'POST_UPGRADE' 'Comparison' 'OK' 'No lost services, ports, routes, IP/DNS settings, hosts entries, applications, features or tasks' -Source 'Pre-upgrade snapshot vs now' }
     } catch {
         $outcome = 'Failed'; $message = $_.Exception.Message
         Add-Result 'COLLECTOR' 'Post-upgrade comparison' 'MANUAL' 'Check did not complete' $message -Recommendation 'Compare manually with the pre-upgrade report.' -Kind 'Finding'

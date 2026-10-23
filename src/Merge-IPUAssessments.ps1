@@ -31,7 +31,8 @@ param(
     [Parameter(Mandatory=$true)][string]$InputFolder,
     [string]$OutputFolder = '',
     [ValidateSet('Pre','Post','All')][string]$Mode = 'All',
-    [string]$Delimiter = ';'
+    [string]$Delimiter = ';',
+    [switch]$IncludeRedacted
 )
 
 $ErrorActionPreference = 'Stop'
@@ -84,6 +85,33 @@ function Encode([object]$v) { if ($null -eq $v) { return '' }; return [System.Ne
 # CSV cells are opened in Excel. A value taken from a server (application
 # name, task, hostname) that starts with = + - @ or a tab/CR would be run as
 # a formula, so it is prefixed with an apostrophe (OWASP CSV injection).
+function Get-CompletedUtc {
+    # Completed is local time on the server. With the UtcOffset the collector
+    # writes (+02:00) it becomes UTC, so results from servers in different time
+    # zones sort as dates. Older files have no offset: their local time is
+    # compared as it is, as before. An unreadable time sorts oldest.
+    param([string]$Completed, [string]$UtcOffset)
+    $dt = [datetime]::MinValue
+    if (-not [datetime]::TryParseExact($Completed, 'yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$dt)) { return [datetime]::MinValue }
+    if ($UtcOffset -match '^[+-]\d{2}:\d{2}$') {
+        $offset = [TimeSpan]::Parse($UtcOffset.TrimStart('+'))
+        return (New-Object DateTimeOffset($dt, $offset)).UtcDateTime
+    }
+    return $dt
+}
+
+function Save-CsvFile {
+    # UTF-8 with a byte-order mark on every host: Export-Csv -Encoding UTF8
+    # writes one on Windows PowerShell 5.1 but not on PowerShell 7, and Excel
+    # then reads the file as ANSI and garbles the Danish letters (#252).
+    param($Rows, [string]$Path, [string]$Delimiter)
+    # No rows (for example no findings) gives an empty file, as Export-Csv did.
+    $lines = @()
+    $list = @($Rows | Where-Object { $null -ne $_ })
+    if ($list.Count -gt 0) { $lines = @($list | ConvertTo-Csv -Delimiter $Delimiter -NoTypeInformation) }
+    [IO.File]::WriteAllLines($Path, $lines, (New-Object System.Text.UTF8Encoding($true)))
+}
+
 function ConvertTo-CsvSafeValue {
     param([object]$Value)
     if ($Value -is [string] -and $Value -match '^[=+\-@\t\r]') { return "'" + $Value }
@@ -138,6 +166,7 @@ foreach ($f in $files) {
         Partial          = [bool]$r.Partial
         Redacted         = [bool]$r.Redacted
         Completed        = $r.Completed
+        UtcOffset        = $(if ($r.PSObject.Properties['UtcOffset']) { [string]$r.UtcOffset } else { '' })
         CollectorVersion = $r.CollectorVersion
         SourceFile       = $f.Name
     })
@@ -149,10 +178,23 @@ foreach ($f in $files) {
     }
 }
 
+# A redacted copy (-RedactExisting, -RedactReport) carries placeholder names
+# (HOST-1), so it cannot be matched to the original it was made from, and
+# next to that original it would show the same server twice (#138). When the
+# folder has original results, redacted copies are skipped and counted;
+# -IncludeRedacted keeps them. A folder with only redacted results (copies sent
+# in by someone else) is used as it is.
+$skippedRedacted = 0
+$redactedResults = @($servers | Where-Object { $_.Redacted })
+if (-not $IncludeRedacted -and $redactedResults.Count -gt 0 -and $redactedResults.Count -lt $servers.Count) {
+    $skippedRedacted = $redactedResults.Count
+    $servers = New-Object System.Collections.Generic.List[object] (, @($servers | Where-Object { -not $_.Redacted }))
+}
+
 # If a server has several results for the same mode, keep the newest.
 # Redacted results all carry placeholder names (HOST-1), so each redacted
 # file is kept as its own row instead of being merged with others.
-$latest = @($servers | Group-Object { if ($_.Redacted) { 'redacted|' + $_.SourceFile } else { $_.ComputerName + '|' + $_.Mode } } | ForEach-Object { $_.Group | Sort-Object Completed -Descending | Select-Object -First 1 })
+$latest = @($servers | Group-Object { if ($_.Redacted) { 'redacted|' + $_.SourceFile } else { $_.ComputerName + '|' + $_.Mode } } | ForEach-Object { $_.Group | Sort-Object @{Expression={ Get-CompletedUtc $_.Completed $_.UtcOffset }} -Descending | Select-Object -First 1 })
 $latest = @($latest | Sort-Object @{Expression={ $rank[[string]$_.Overall] }},ComputerName)
 # Findings come only from the result each server/mode row was taken from,
 # never from an older, superseded result for the same server.
@@ -162,8 +204,9 @@ $fleetFindings = @($findings | Where-Object { $keep.ContainsKey($_.SourceFile) }
 $serversCsv = Join-Path $OutputFolder 'IPU-Fleet-Servers.csv'
 $findingsCsv = Join-Path $OutputFolder 'IPU-Fleet-Findings.csv'
 $htmlPath = Join-Path $OutputFolder 'IPU-Fleet-Overview.html'
-$latest | ConvertTo-CsvSafeRow | Export-Csv -LiteralPath $serversCsv -Delimiter $Delimiter -NoTypeInformation -Encoding UTF8
-$fleetFindings | ConvertTo-CsvSafeRow | Export-Csv -LiteralPath $findingsCsv -Delimiter $Delimiter -NoTypeInformation -Encoding UTF8
+# UtcOffset is for sorting only; a leading + would be shown as an apostrophe-prefixed cell.
+Save-CsvFile ($latest | Select-Object -Property * -ExcludeProperty UtcOffset | ConvertTo-CsvSafeRow) $serversCsv $Delimiter
+Save-CsvFile ($fleetFindings | ConvertTo-CsvSafeRow) $findingsCsv $Delimiter
 
 # Most common blocking/action items across the fleet.
 $common = @($fleetFindings | Where-Object { $_.Status -in @('SPECIAL','BLOCKER','ACTION') } | Group-Object Status,Item | Sort-Object @{Expression={ $rank[[string]$_.Group[0].Status] }},@{Expression='Count';Descending=$true} | Select-Object -First 15)
@@ -212,6 +255,7 @@ if ($common.Count -gt 0) {
 [IO.File]::WriteAllText($htmlPath, $sb.ToString(), (New-Object System.Text.UTF8Encoding($false)))
 
 'Servers: {0} | Findings: {1} | Unreadable files: {2}' -f $latest.Count, $fleetFindings.Count, $unreadable.Count
+if ($skippedRedacted -gt 0) { 'Redacted files skipped: {0} (the folder has the original results; use -IncludeRedacted to keep them)' -f $skippedRedacted }
 'Written: ' + $htmlPath
 'Written: ' + $serversCsv
 'Written: ' + $findingsCsv

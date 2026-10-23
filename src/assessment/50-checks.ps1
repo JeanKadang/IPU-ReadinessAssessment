@@ -47,6 +47,9 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
     if ($featureInventoryError) {
         Add-Result 'ASSESSMENT' 'FeatureInventory' 'MANUAL' 'Get-WindowsFeature failed' $featureInventoryError -Recommendation 'List the installed roles and features by hand (Server Manager, or Get-WindowsFeature in an elevated session). Until then the cluster, IIS and RDS rows are MANUAL, not "not installed".' -Source 'ServerManager'
     }
+    if (-not $script:NumberCultureResolved.Known) {
+        Add-Result 'ASSESSMENT' 'NumberCulture' 'INFO' ('Number format ''' + $NumberCultureName + ''' is not a culture on this server') 'Numbers use the invariant format (1,234.5).' -Recommendation 'Give -NumberCultureName a culture name that exists, for example da-DK or en-US.' -Source 'NumberCultureName'
+    }
     Add-Result 'ASSESSMENT' 'CollectorVersion' 'INFO' $script:CollectorVersion 'Restructured 4.x edition' -Source 'Script constant'
     Add-Result 'ASSESSMENT' 'Target' 'INFO' (Get-ReleaseDisplayName $TargetServerVersion) ('MediaLanguage=' + $(if ($TargetMediaLanguage) { $TargetMediaLanguage } else { 'not set' })) -Source 'SETTINGS'
     Add-Result 'ASSESSMENT' 'ExecutionContext' 'INFO' ('Identity=' + [Security.Principal.WindowsIdentity]::GetCurrent().Name) @(('PowerShell=' + $PSVersionTable.PSVersion),('LanguageMode=' + $ExecutionContext.SessionState.LanguageMode)) -Source 'Runtime'

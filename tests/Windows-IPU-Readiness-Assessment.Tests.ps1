@@ -636,6 +636,45 @@ Describe 'Resolve-ClusterFeatureState (#238)' {
     }
 }
 
+Describe 'Resolve-NumberCulture (#139)' {
+    It 'a culture this server knows is used' {
+        $r = Resolve-NumberCulture 'da-DK'
+        $r.Known | Should -BeTrue; $r.Culture.Name | Should -Be 'da-DK'
+    }
+    It 'the case of the name does not matter' { (Resolve-NumberCulture 'DA-dk').Known | Should -BeTrue }
+    It '<Name> is not known: invariant culture and Known = false' -ForEach @(
+        @{ Name = 'xx-INVALID' }, @{ Name = 'not a culture' }, @{ Name = '' }, @{ Name = 'da_DK' }
+    ) {
+        $r = Resolve-NumberCulture $Name
+        $r.Known | Should -BeFalse
+        $r.Culture.Name | Should -Be ''
+    }
+}
+
+Describe 'New-RestrictedFolder (#139)' -Skip:($env:OS -ne 'Windows_NT') {
+    It 'creates the folder with an access list that leaves out Users from the start' {
+        $p = Join-Path $TestDrive ('restricted-' + [guid]::NewGuid().ToString('N'))
+        New-RestrictedFolder $p
+        $p | Should -Exist
+        $sids = @((Get-Acl -LiteralPath $p).GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { $_.IdentityReference.Value })
+        $sids | Should -Contain 'S-1-5-18'
+        $sids | Should -Contain 'S-1-5-32-544'
+        $sids | Should -Not -Contain 'S-1-5-32-545'
+        $sids | Should -Not -Contain 'S-1-1-0'
+        $sids | Should -Not -Contain 'S-1-5-11'
+    }
+}
+
+Describe 'Format-UtcOffset (#252)' {
+    It '<Hours>h<Minutes>m is <Expected>' -ForEach @(
+        @{ Hours = 2; Minutes = 0; Expected = '+02:00' }
+        @{ Hours = 0; Minutes = 0; Expected = '+00:00' }
+        @{ Hours = -5; Minutes = -30; Expected = '-05:30' }
+        @{ Hours = 5; Minutes = 45; Expected = '+05:45' }
+        @{ Hours = -8; Minutes = 0; Expected = '-08:00' }
+    ) { Format-UtcOffset (New-TimeSpan -Hours $Hours -Minutes $Minutes) | Should -Be $Expected }
+}
+
 Describe 'A MANUAL row counts towards the overall status (#240)' {
     BeforeEach { $script:Results.Clear() }
     It 'Add-Result refuses a MANUAL Observation' {
@@ -682,10 +721,21 @@ Describe 'Output folder access (#12)' {
     }
 
     Context 'Initialize-OutputFolder' {
-        BeforeEach { Mock Set-RestrictedFolderAcl { } }
+        BeforeEach {
+            Mock Set-RestrictedFolderAcl { }
+            Mock New-RestrictedFolder { New-Item -ItemType Directory -Path $Path -Force | Out-Null }
+        }
 
-        It 'restricts a folder it creates' {
+        It 'creates a restricted folder in one step, with no later Set-Acl (#139)' {
             $p = Join-Path $TestDrive 'new-restricted'
+            Initialize-OutputFolder $p $true | Should -Be 'CreatedRestricted'
+            $p | Should -Exist
+            Should -Invoke New-RestrictedFolder -Times 1 -Exactly
+            Should -Invoke Set-RestrictedFolderAcl -Times 0 -Exactly
+        }
+        It 'falls back to create + restrict when the one-step create is not possible (#139)' {
+            Mock New-RestrictedFolder { throw 'no such overload' }
+            $p = Join-Path $TestDrive 'fallback'
             Initialize-OutputFolder $p $true | Should -Be 'CreatedRestricted'
             $p | Should -Exist
             Should -Invoke Set-RestrictedFolderAcl -Times 1 -Exactly
@@ -702,6 +752,7 @@ Describe 'Output folder access (#12)' {
             Should -Invoke Set-RestrictedFolderAcl -Times 0 -Exactly
         }
         It 'reports, rather than fails, when the ACL cannot be set' {
+            Mock New-RestrictedFolder { throw 'no such overload' }
             Mock Set-RestrictedFolderAcl { throw 'access denied' }
             $p = Join-Path $TestDrive 'acl-fails'
             Initialize-OutputFolder $p $true | Should -Be 'CreatedUnrestricted'
@@ -1056,18 +1107,20 @@ Describe 'Invoke-PostUpgradeComparison (#34)' {
             $script:Results.Clear(); $script:CheckRuns.Clear()
             $script:TargetServerVersion = '2025'
             $script:Data = @{ SourceRelease = $NowRelease }
-            $snap = @{ Services = @(); Ports = @('TCP:443'); Routes = @(); IPv4 = @('10.0.0.5'); Dns = @(); Hosts = @(); Apps = @(); Features = @(); Tasks = @() }
+            $snap = @{ Services = @(); Ports = @('TCP:443'); Routes = @(); IPv4 = @('10.0.0.5'); Dns = @(); Adapters = @(); Hosts = @(); Apps = @(); Features = @(); Tasks = @(); Shares = @(); Printers = @(); PrinterPorts = @(); PrinterDrivers = @() }
             foreach ($k in $Now.Keys) { $snap[$k] = $Now[$k] }
             $script:Data.Snapshot = $snap
             $script:BaselinePath = $BaselinePath
         }
         function Save-Baseline {
-            param([string]$Path, [bool]$Partial = $false, [hashtable]$Snapshot = @{})
-            $snap = @{ Services = @(); Ports = @('TCP:443'); Routes = @(); IPv4 = @('10.0.0.5'); Dns = @(); Hosts = @(); Apps = @(); Features = @(); Tasks = @() }
+            param([string]$Path, [bool]$Partial = $false, [hashtable]$Snapshot = @{}, [hashtable]$Extra = @{}, [string[]]$NotCompleted = @())
+            $snap = @{ Services = @(); Ports = @('TCP:443'); Routes = @(); IPv4 = @('10.0.0.5'); Dns = @(); Adapters = @(); Hosts = @(); Apps = @(); Features = @(); Tasks = @(); Shares = @(); Printers = @(); PrinterPorts = @(); PrinterDrivers = @() }
             foreach ($k in $Snapshot.Keys) { $snap[$k] = $Snapshot[$k] }
-            [pscustomobject]@{ Schema = 'IPU-Assessment/1'; CollectorVersion = '4.0.1'; Completed = '2026-10-01 10:00:00'; Overall = 'WARNING'; Partial = $Partial
-                Facts = [pscustomobject]@{ CurrentOS = 'Windows Server 2022 Standard' }; Snapshot = [pscustomobject]$snap } |
-                ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $Path -Encoding UTF8
+            $runs = @('baseline', 'ports', 'network', 'tasks', 'fileshares', 'printers') | ForEach-Object { [pscustomobject]@{ Id = $_; Outcome = $(if ($NotCompleted -contains $_) { 'Failed' } else { 'Completed' }) } }
+            $o = [ordered]@{ Schema = 'IPU-Assessment/1'; Mode = 'Pre'; ComputerName = $env:COMPUTERNAME; CollectorVersion = '4.0.1'; Completed = '2026-10-01 10:00:00'; Overall = 'WARNING'; Partial = $Partial
+                Facts = [pscustomobject]@{ CurrentOS = 'Windows Server 2022 Standard' }; CheckRuns = @($runs); Results = @(); Snapshot = [pscustomobject]$snap }
+            foreach ($k in $Extra.Keys) { $o[$k] = $Extra[$k] }
+            [pscustomobject]$o | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $Path -Encoding UTF8
         }
         function Get-Row([string]$Item) { @($script:Results | Where-Object { $_.Item -eq $Item }) }
     }
@@ -1108,6 +1161,52 @@ Describe 'Invoke-PostUpgradeComparison (#34)' {
         (Get-Row 'UpgradeReachedTarget')[0].Status | Should -Be 'OK'
         (Get-Row 'Comparison')[0].Status | Should -Be 'OK'
         @($script:Results | Where-Object { $_.Kind -eq 'Finding' -and $_.Status -ne 'OK' }).Count | Should -Be 0
+    }
+    It 'an empty baseline snapshot is MANUAL, never a clean comparison (#239)' {
+        $path = Join-Path $TestDrive 'empty-snapshot.json'
+        [pscustomobject]@{ Schema = 'IPU-Assessment/1'; Mode = 'Pre'; ComputerName = $env:COMPUTERNAME; Completed = '2026-10-01 10:00:00'; Partial = $false; Snapshot = [pscustomobject]@{} } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $path -Encoding UTF8
+        Set-PostScenario -BaselinePath $path
+        Invoke-PostUpgradeComparison
+        (Get-Row 'BaselineSnapshot')[0].Status | Should -Be 'MANUAL'
+        (Get-Row 'Comparison').Count | Should -Be 0
+    }
+    It 'a list whose check did not complete is not compared (#239)' {
+        $path = Join-Path $TestDrive 'network-failed.json'
+        Save-Baseline -Path $path -NotCompleted @('network')
+        Set-PostScenario -BaselinePath $path
+        Invoke-PostUpgradeComparison
+        $r = Get-Row 'BaselineCoverage'
+        $r[0].Status | Should -Be 'MANUAL'; $r[0].Kind | Should -Be 'Finding'
+        (@($r[0].Details) -join ' ') | Should -Match 'Routes \(the network check failed\)'
+        (@($r[0].Details) -join ' ') | Should -Not -Match 'Ports'
+        (Get-Row 'Comparison').Count | Should -Be 0
+    }
+    It 'a SPECIAL short report as baseline leaves out what it never collected (#239)' {
+        $path = Join-Path $TestDrive 'special.json'
+        Save-Baseline -Path $path -Extra @{ Special = [pscustomobject]@{ Kind = 'Cluster'; Title = 'Cluster node' } }
+        Set-PostScenario -BaselinePath $path
+        Invoke-PostUpgradeComparison
+        $text = (@((Get-Row 'BaselineCoverage')[0].Details) -join ' ')
+        $text | Should -Match 'Ports \(the Pre run was a SPECIAL short report\)'
+        $text | Should -Not -Match 'Services \('
+        (Get-Row 'Comparison').Count | Should -Be 0
+    }
+    It 'a baseline taken after the upgrade is MANUAL (#239)' {
+        $path = Join-Path $TestDrive 'after.json'
+        $row = [pscustomobject]@{ Area = 'UPGRADE_PATH'; Item = 'CurrentOS'; Details = @('Build=26100.1', 'Release=Windows Server 2025', 'Architecture=64-bit') }
+        Save-Baseline -Path $path -Extra @{ Results = @($row) }
+        Set-PostScenario -BaselinePath $path
+        Invoke-PostUpgradeComparison
+        (Get-Row 'BaselineAfterUpgrade')[0].Status | Should -Be 'MANUAL'
+        (Get-Row 'Comparison').Count | Should -Be 0
+    }
+    It 'a baseline from another server is MANUAL (#239)' {
+        $path = Join-Path $TestDrive 'other-server.json'
+        Save-Baseline -Path $path -Extra @{ ComputerName = 'SOME-OTHER-SERVER' }
+        Set-PostScenario -BaselinePath $path
+        Invoke-PostUpgradeComparison
+        (Get-Row 'BaselineValid')[0].Value | Should -Match 'another server'
+        (Get-Row 'Comparison').Count | Should -Be 0
     }
     It 'differences become findings in the comparison area' {
         $path = Join-Path $TestDrive 'diff.json'
@@ -1200,6 +1299,20 @@ Describe 'Report and JSON writers (#36)' {
     }
 }
 
+Describe 'ConvertTo-NativeArgument (#136)' {
+    It '<Name>' -ForEach @(
+        @{ Name = 'a plain argument is left alone'; In = '/replsummary'; Out = '/replsummary' }
+        @{ Name = 'a path with a space is quoted'; In = 'C:\Install Media\x.iso'; Out = '"C:\Install Media\x.iso"' }
+        @{ Name = 'a trailing backslash is doubled so it cannot escape the closing quote'; In = 'C:\a b\'; Out = '"C:\a b\\"' }
+        @{ Name = 'an embedded quote is escaped'; In = 'a"b'; Out = '"a\"b"' }
+        @{ Name = 'backslashes before an embedded quote are doubled'; In = 'a\"b'; Out = '"a\\\"b"' }
+        @{ Name = 'backslashes inside a path stay single'; In = 'C:\Program Files\x'; Out = '"C:\Program Files\x"' }
+        @{ Name = 'an empty argument stays an argument'; In = ''; Out = '""' }
+        @{ Name = 'an argument the caller already quoted is kept'; In = '"C:\a b"'; Out = '"C:\a b"' }
+        @{ Name = 'a path without a space or quote is left alone, even with a trailing backslash'; In = 'C:\Temp\'; Out = 'C:\Temp\' }
+    ) { ConvertTo-NativeArgument $In | Should -Be $Out }
+}
+
 Describe 'Invoke-NativeCapture (#37)' -Tag 'Integration' {
     BeforeAll {
         # -Skip is evaluated during discovery, before this block runs, so the
@@ -1208,6 +1321,16 @@ Describe 'Invoke-NativeCapture (#37)' -Tag 'Integration' {
         function Get-CaptureTempFile { @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Filter 'IPU-*' -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^IPU-[0-9a-f]{32}\.(out|err)$' }) }
     }
 
+    It 'passes C:\a b\, a"b and a plain argument to a real process unchanged (#136)' -Skip:($env:OS -ne 'Windows_NT') {
+        $script = Join-Path $TestDrive 'echo-args.ps1'
+        'foreach ($a in $args) { Write-Output ("ARG<" + $a + ">") }' | Set-Content -LiteralPath $script -Encoding ASCII
+        $ps = Join-Path $env:windir 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $r = Invoke-NativeCapture $ps @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $script, 'C:\a b\', 'a"b', 'plain') 60
+        $r.ExitCode | Should -Be 0
+        $r.Lines | Should -Contain 'ARG<C:\a b\>'
+        $r.Lines | Should -Contain 'ARG<a"b>'
+        $r.Lines | Should -Contain 'ARG<plain>'
+    }
     It 'returns exit code 0' -Skip:($env:OS -ne 'Windows_NT') {
         $r = Invoke-NativeCapture $script:Cmd @('/c', 'exit 0') 30
         $r.ExitCode | Should -Be 0
@@ -2259,6 +2382,51 @@ Describe 'Output folder and JSON problems end in a clear SA line (#250)' {
         $out | Should -Match 'JSON=FAILED'
         $script:ExitCode | Should -Be 1
         Test-Path -LiteralPath $script:ReportPath | Should -BeTrue
+    }
+}
+
+Describe 'Test-BaselineKeepCopy (#239)' {
+    BeforeAll {
+        function New-ExistingBaseline([bool]$Partial, [string]$Release) {
+            $row = [pscustomobject]@{ Area = 'UPGRADE_PATH'; Item = 'CurrentOS'; Details = @('Build=1', ('Release=' + $Release), 'Architecture=64-bit') }
+            [pscustomobject]@{ Partial = $Partial; Snapshot = [pscustomobject]@{ Services = @() }; Results = @($row) }
+        }
+    }
+    It 'nothing to keep when there is no earlier file' { Test-BaselineKeepCopy $null $false 'Windows Server 2016' | Should -BeFalse }
+    It 'a complete baseline is kept before a checkpoint replaces it' { Test-BaselineKeepCopy (New-ExistingBaseline $false 'Windows Server 2016') $true 'Windows Server 2016' | Should -BeTrue }
+    It 'a complete baseline is kept when the new run is on another release' { Test-BaselineKeepCopy (New-ExistingBaseline $false 'Windows Server 2016') $false 'Windows Server 2025' | Should -BeTrue }
+    It 'a complete baseline of the same release is replaced by a complete run' { Test-BaselineKeepCopy (New-ExistingBaseline $false 'Windows Server 2016') $false 'Windows Server 2016' | Should -BeFalse }
+    It 'an earlier partial result is not worth keeping' { Test-BaselineKeepCopy (New-ExistingBaseline $true 'Windows Server 2016') $true 'Windows Server 2016' | Should -BeFalse }
+}
+
+Describe 'Write-AssessmentJson keeps the earlier baseline (#239)' {
+    BeforeEach {
+        $script:KeepDir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:KeepDir | Out-Null
+        $script:JsonPath = Join-Path $script:KeepDir 'SRV-IPU-Assessment.json'
+        $script:BaselinePath = $script:JsonPath
+        $script:BaselineKept = $null
+        $script:Data = @{ SourceRelease = '2016' }
+        $row = [pscustomobject]@{ Area = 'UPGRADE_PATH'; Item = 'CurrentOS'; Details = @('Build=1', 'Release=Windows Server 2016', 'Architecture=64-bit') }
+        [pscustomobject]@{ Partial = $false; Snapshot = [pscustomobject]@{ Services = @() }; Results = @($row); Marker = 'ORIGINAL' } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $script:JsonPath -Encoding UTF8
+        Mock New-AssessmentJsonObject { [pscustomobject]@{ Marker = 'NEW'; Redacted = $false } }
+    }
+    It 'a checkpoint keeps the complete baseline as a dated copy and replaces the file' {
+        Write-AssessmentJson -Results @() -Overall 'OK' -Completed (Get-Date) -Partial
+        @(Get-ChildItem -LiteralPath $script:KeepDir -Filter 'SRV-IPU-Assessment-*.json').Count | Should -Be 1
+        (Get-Content -LiteralPath $script:JsonPath -Raw | ConvertFrom-Json).Marker | Should -Be 'NEW'
+        $kept = Get-ChildItem -LiteralPath $script:KeepDir -Filter 'SRV-IPU-Assessment-*.json' | Select-Object -First 1
+        (Get-Content -LiteralPath $kept.FullName -Raw | ConvertFrom-Json).Marker | Should -Be 'ORIGINAL'
+    }
+    It 'only one copy per run, even though the final write follows the checkpoint' {
+        Write-AssessmentJson -Results @() -Overall 'OK' -Completed (Get-Date) -Partial
+        Write-AssessmentJson -Results @() -Overall 'OK' -Completed (Get-Date)
+        @(Get-ChildItem -LiteralPath $script:KeepDir -Filter 'SRV-IPU-Assessment-*.json').Count | Should -Be 1
+    }
+    It 'a Post run never touches the baseline' {
+        $AssessmentMode = 'Post'
+        Write-AssessmentJson -Results @() -Overall 'OK' -Completed (Get-Date) -Partial
+        @(Get-ChildItem -LiteralPath $script:KeepDir -Filter 'SRV-IPU-Assessment-*.json').Count | Should -Be 0
     }
 }
 

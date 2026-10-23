@@ -392,8 +392,22 @@ $script:LogPath           = [IO.Path]::Combine($ReportDirectory, $script:SafeCom
 $script:JsonPath          = [IO.Path]::Combine($ReportDirectory, $script:ReportBaseName + '.json')
 $script:BaselinePath      = [IO.Path]::Combine($ReportDirectory, $script:SafeComputerName + '-IPU-Assessment.json')
 
-try { $script:NumberCulture = New-Object System.Globalization.CultureInfo($NumberCultureName) }
-catch { $script:NumberCulture = [System.Globalization.CultureInfo]::InvariantCulture }
+function Resolve-NumberCulture {
+    # An unknown name must not pass silently: .NET Framework builds a culture
+    # for any well-formed name, so the exception is not a reliable test. The
+    # name has to be one of the cultures this server knows (#139). Not known:
+    # the invariant culture, and Known = $false so the report can say so.
+    param([string]$Name)
+    $invariant = [System.Globalization.CultureInfo]::InvariantCulture
+    if (-not $Name) { return [pscustomobject]@{ Culture = $invariant; Known = $false } }
+    $known = @([System.Globalization.CultureInfo]::GetCultures([System.Globalization.CultureTypes]::AllCultures) | Where-Object { $_.Name -ieq $Name })
+    if ($known.Count -eq 0) { return [pscustomobject]@{ Culture = $invariant; Known = $false } }
+    try { return [pscustomobject]@{ Culture = (New-Object System.Globalization.CultureInfo($known[0].Name)); Known = $true } }
+    catch { return [pscustomobject]@{ Culture = $invariant; Known = $false } }
+}
+
+$script:NumberCultureResolved = Resolve-NumberCulture $NumberCultureName
+$script:NumberCulture = $script:NumberCultureResolved.Culture
 
 # SPECIAL (#152): not a standard IPU (cluster node, domain controller) - a
 # separate plan, extra time and coordination, more risk. Ranks above BLOCKER.
@@ -681,12 +695,33 @@ function Set-RestrictedFolderAcl {
     Set-Acl -LiteralPath $Path -AclObject (New-RestrictedDirectorySecurity) -ErrorAction Stop
 }
 
+function New-RestrictedFolder {
+    # Creates the folder together with its restricted access list. Windows
+    # PowerShell (.NET Framework) has Directory.CreateDirectory(path, security);
+    # PowerShell 7 (.NET) has it as an extension method. Throws when neither
+    # works, and Initialize-OutputFolder then falls back to create + Set-Acl.
+    param([string]$Path)
+    $security = New-RestrictedDirectorySecurity
+    try { [void][System.IO.Directory]::CreateDirectory($Path, $security) }
+    catch {
+        $ext = 'System.IO.FileSystemAclExtensions' -as [type]
+        if (-not $ext) { throw }
+        [void]$ext::CreateDirectory($security, $Path)
+    }
+}
+
 function Initialize-OutputFolder {
     # Creates a folder for the script's own output. Only a folder created by
     # this run is restricted; an existing folder keeps its permissions (it may
     # be shared, e.g. C:\Temp) and the report says whether it is too open.
     param([string]$Path, [bool]$Restrict = $RestrictOutputAcl)
     if (Test-Path -LiteralPath $Path -PathType Container) { return 'Existing' }
+    if ($Restrict) {
+        # Created with its access list in one call, so there is no moment
+        # when the folder exists with inherited permissions (#139).
+        try { New-RestrictedFolder $Path; return 'CreatedRestricted' }
+        catch { Write-Swallowed $_ }
+    }
     New-Item -ItemType Directory -Path $Path -Force -ErrorAction Stop | Out-Null
     if (-not $Restrict) { return 'Created' }
     try {
@@ -1210,6 +1245,34 @@ function ConvertFrom-NativeByteArray {
     return ($text -replace '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]','')
 }
 
+function ConvertTo-NativeArgument {
+    # Pure: one argument -> its text on a Windows command line, following the
+    # rules CommandLineToArgvW reads back (#136). A plain argument is left
+    # alone; one with white space or a quote is wrapped in quotes, with each
+    # embedded quote escaped and the backslashes in front of a quote (or of
+    # the closing quote) doubled, so C:\Install Media\ does not swallow the
+    # closing quote. An argument the caller already wrapped in quotes, with
+    # none inside, is kept as it is.
+    param([AllowEmptyString()][string]$Argument)
+    if ($Argument.Length -eq 0) { return '""' }
+    if ($Argument -match '^"[^"]*"$') { return $Argument }
+    if ($Argument -notmatch '[\s"]') { return $Argument }
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append('"')
+    $backslashes = 0
+    foreach ($ch in $Argument.ToCharArray()) {
+        if ($ch -eq [char]'\') { $backslashes++; continue }
+        if ($ch -eq [char]'"') {
+            [void]$sb.Append('\', ($backslashes * 2 + 1)).Append('"')
+        } else {
+            [void]$sb.Append('\', $backslashes).Append($ch)
+        }
+        $backslashes = 0
+    }
+    [void]$sb.Append('\', ($backslashes * 2)).Append('"')
+    return $sb.ToString()
+}
+
 function Invoke-NativeCapture {
     # Runs a native command with a timeout and captured output. Used for every
     # external tool so that stderr output never becomes a terminating
@@ -1226,10 +1289,7 @@ function Invoke-NativeCapture {
     $result = [pscustomobject]@{ ExitCode=$null; Output=''; Lines=@(); TimedOut=$false; Error='' }
     $process = $null
     try {
-        $quoted = @()
-        foreach ($arg in $ArgumentList) {
-            if ($arg -match '\s' -and $arg -notmatch '^".*"$') { $quoted += ('"' + $arg + '"') } else { $quoted += $arg }
-        }
+        $quoted = @($ArgumentList | ForEach-Object { ConvertTo-NativeArgument $_ })
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = $FilePath
         $psi.Arguments = ($quoted -join ' ')
@@ -1556,6 +1616,14 @@ function Resolve-ClusterFeatureState {
     if ($null -ne $FeatureState) { return [bool]$FeatureState }
     if ($ClusterService -and $ClusterKey) { return $true }
     return $null
+}
+
+function Format-UtcOffset {
+    # Pure: +02:00, -05:30, +00:00 (#252).
+    param([TimeSpan]$Offset)
+    $sign = '+'; if ($Offset -lt [TimeSpan]::Zero) { $sign = '-' }
+    $abs = $Offset.Duration()
+    return ('{0}{1:00}:{2:00}' -f $sign, [int]$abs.Hours, [int]$abs.Minutes)
 }
 
 function Get-JsonOutcomeText {
@@ -2201,6 +2269,87 @@ function Compare-PrinterDriver {
         if ($now.ContainsKey($p) -and $now[$p] -ne [string]$b.Driver) { $changed += ($p + ': ' + $b.Driver + ' -> ' + $now[$p]) }
     }
     return ,$changed
+}
+
+# Which check collects which list of the snapshot (#239). A list whose check
+# did not complete (or was never run: a SPECIAL short report) cannot be
+# compared, and an empty list must not read as "nothing lost".
+$script:SnapshotListSources = [ordered]@{
+    Services = 'baseline'; Apps = 'baseline'; Features = 'baseline'
+    Ports = 'ports'
+    IPv4 = 'network'; Dns = 'network'; Adapters = 'network'; Hosts = 'network'; Routes = 'network'
+    Tasks = 'tasks'
+    Shares = 'fileshares'
+    Printers = 'printers'; PrinterPorts = 'printers'; PrinterDrivers = 'printers'
+}
+
+function Get-BaselineReleaseText {
+    # Pure: the release a pre-upgrade result was taken on, from its CurrentOS
+    # row ("Release=Windows Server 2016"). Empty when it cannot be read.
+    param($Baseline)
+    $row = @($Baseline.Results | Where-Object { $_.Area -eq 'UPGRADE_PATH' -and $_.Item -eq 'CurrentOS' }) | Select-Object -First 1
+    if ($row -and (@($row.Details) -join ' ') -match 'Release=([^;|]+?)(?:\s*(?:\||;|$)|\s+Architecture=)') { return $Matches[1].Trim() }
+    return ''
+}
+
+function Get-BaselineCoverageRow {
+    # Pure (#239): what the post-upgrade comparison could NOT compare, as rows
+    # to report. No rows means every list was compared against a baseline that
+    # collected it. Never reads the machine.
+    param($Baseline, [string]$ComputerName, [string]$TargetDisplayName)
+    $rows = New-Object System.Collections.Generic.List[object]
+    $add = { param($item, $value, $details, $rec) $rows.Add([pscustomobject]@{ Status='MANUAL'; Item=$item; Value=$value; Details=$details; Recommendation=$rec }) }
+    if ($Baseline.PSObject.Properties['Schema'] -and $Baseline.Schema -ne 'IPU-Assessment/1') {
+        & $add 'BaselineValid' 'The pre-upgrade file is not an assessment result this script reads' ('Schema=' + $Baseline.Schema) 'Use the *-IPU-Assessment.json written by a Pre run on this server.'
+    }
+    if ($Baseline.PSObject.Properties['Mode'] -and $Baseline.Mode -ne 'Pre') {
+        & $add 'BaselineValid' 'The pre-upgrade file was not written by a Pre run' ('Mode=' + $Baseline.Mode) 'Use the *-IPU-Assessment.json written by a Pre run before the upgrade.'
+    }
+    if ($ComputerName -and $Baseline.PSObject.Properties['ComputerName'] -and $Baseline.ComputerName -and ([string]$Baseline.ComputerName -ine $ComputerName)) {
+        & $add 'BaselineValid' 'The pre-upgrade file is from another server' ('Baseline=' + $Baseline.ComputerName + ', this server=' + $ComputerName) 'Compare against the Pre result of this server.'
+    }
+    $before = $Baseline.Snapshot
+    $snapshotProps = @(); if ($before) { $snapshotProps = @($before.PSObject.Properties | ForEach-Object { $_.Name }) }
+    if ($snapshotProps.Count -eq 0) {
+        & $add 'BaselineSnapshot' 'The pre-upgrade result has no snapshot to compare with' '' 'The Pre run did not collect its baseline. Compare with the pre-upgrade report by hand.'
+        return $rows.ToArray()
+    }
+    $runs = @(); if ($Baseline.PSObject.Properties['CheckRuns']) { $runs = @($Baseline.CheckRuns) }
+    $short = $false; if ($Baseline.PSObject.Properties['Special'] -and $Baseline.Special) { $short = $true }
+    $notCompared = New-Object System.Collections.Generic.List[string]
+    foreach ($list in $script:SnapshotListSources.Keys) {
+        $source = $script:SnapshotListSources[$list]
+        $why = ''
+        $run = @($runs | Where-Object { $_.Id -eq $source }) | Select-Object -First 1
+        if ($snapshotProps -notcontains $list) { $why = 'the baseline has no ' + $list + ' list' }
+        elseif ($short -and $source -ne 'baseline') { $why = 'the Pre run was a SPECIAL short report' }
+        elseif ($runs.Count -gt 0 -and -not $run) { $why = 'the ' + $source + ' check did not run' }
+        elseif ($run -and $run.Outcome -ne 'Completed') { $why = 'the ' + $source + ' check ' + ([string]$run.Outcome).ToLower() }
+        if ($why) { $notCompared.Add($list + ' (' + $why + ')') }
+    }
+    if ($notCompared.Count -gt 0) {
+        & $add 'BaselineCoverage' ($notCompared.Count.ToString() + ' list(s) could not be compared') $notCompared.ToArray() 'A list the Pre run did not collect cannot show what was lost. Compare these by hand with the pre-upgrade report, or take a new baseline on a comparable server.'
+    }
+    $then = Get-BaselineReleaseText $Baseline
+    if ($then -and $TargetDisplayName -and $then -ieq $TargetDisplayName) {
+        & $add 'BaselineAfterUpgrade' ('The pre-upgrade result was taken on ' + $then + ', the target release') '' 'The baseline looks like it was written after the upgrade (a Pre run was repeated). Comparing post with post shows no change. Use the baseline from before the upgrade.'
+    }
+    return $rows.ToArray()
+}
+
+function Test-BaselineKeepCopy {
+    # Pure (#239): should the existing pre-upgrade file be kept as a dated copy
+    # before this run replaces it? Yes when it is a complete result and the
+    # new write is a checkpoint (the run may be stopped) or describes another
+    # release (the server was upgraded since).
+    param($Existing, [bool]$NewIsPartial, [string]$NewReleaseText)
+    if (-not $Existing) { return $false }
+    if ($Existing.PSObject.Properties['Partial'] -and $Existing.Partial) { return $false }
+    if (-not ($Existing.PSObject.Properties['Snapshot'] -and $Existing.Snapshot)) { return $false }
+    if ($NewIsPartial) { return $true }
+    $was = Get-BaselineReleaseText $Existing
+    if ($was -and $NewReleaseText -and $was -ine $NewReleaseText) { return $true }
+    return $false
 }
 
 function Compare-IPUSnapshot {
@@ -3285,6 +3434,9 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
 
     if ($featureInventoryError) {
         Add-Result 'ASSESSMENT' 'FeatureInventory' 'MANUAL' 'Get-WindowsFeature failed' $featureInventoryError -Recommendation 'List the installed roles and features by hand (Server Manager, or Get-WindowsFeature in an elevated session). Until then the cluster, IIS and RDS rows are MANUAL, not "not installed".' -Source 'ServerManager'
+    }
+    if (-not $script:NumberCultureResolved.Known) {
+        Add-Result 'ASSESSMENT' 'NumberCulture' 'INFO' ('Number format ''' + $NumberCultureName + ''' is not a culture on this server') 'Numbers use the invariant format (1,234.5).' -Recommendation 'Give -NumberCultureName a culture name that exists, for example da-DK or en-US.' -Source 'NumberCultureName'
     }
     Add-Result 'ASSESSMENT' 'CollectorVersion' 'INFO' $script:CollectorVersion 'Restructured 4.x edition' -Source 'Script constant'
     Add-Result 'ASSESSMENT' 'Target' 'INFO' (Get-ReleaseDisplayName $TargetServerVersion) ('MediaLanguage=' + $(if ($TargetMediaLanguage) { $TargetMediaLanguage } else { 'not set' })) -Source 'SETTINGS'
@@ -5396,6 +5548,7 @@ function New-AssessmentJsonObject {
         TargetServerVersion = $TargetServerVersion
         Started             = $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss')
         Completed           = $Completed.ToString('yyyy-MM-dd HH:mm:ss')
+        UtcOffset           = (Format-UtcOffset ([TimeZoneInfo]::Local.GetUtcOffset($Completed)))
         Partial             = [bool]$Partial
         Redacted            = $false
         Overall             = $Overall
@@ -5576,6 +5729,20 @@ function Write-AssessmentJson {
         $obj.Redacted = $true
     }
     $json = $obj | ConvertTo-Json -Depth 6
+    # A Pre run writes the file the Post run compares against. Re-running Pre
+    # (after the upgrade, or stopped after a checkpoint) must not silently
+    # replace a complete baseline: keep it as a dated copy first (#239).
+    if ($AssessmentMode -eq 'Pre' -and $script:JsonPath -eq $script:BaselinePath -and $null -eq $script:BaselineKept -and (Test-Path -LiteralPath $script:JsonPath)) {
+        try {
+            $existing = Get-Content -LiteralPath $script:JsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if (Test-BaselineKeepCopy $existing ([bool]$Partial) (Get-ReleaseDisplayName $script:Data.SourceRelease)) {
+                $kept = $script:JsonPath -replace '\.json$', ('-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.json')
+                Copy-Item -LiteralPath $script:JsonPath -Destination $kept -ErrorAction Stop
+                $script:BaselineKept = $kept
+                Write-AssessmentLog 'INFO' 'BASELINE' ('Kept the earlier pre-upgrade result as ' + $kept)
+            }
+        } catch { Write-AssessmentLog 'WARNING' 'BASELINE' ('Could not keep the earlier pre-upgrade result: ' + $_.Exception.Message) }
+    }
     $temp = $script:JsonPath + '.writing'
     [IO.File]::WriteAllText($temp,$json,(New-Object System.Text.UTF8Encoding($false)))
     Move-Item -LiteralPath $temp -Destination $script:JsonPath -Force -ErrorAction Stop
@@ -5621,8 +5788,8 @@ function Import-SiteDataFile {
             }
             foreach ($k in @($decision.Ignored)) { $details += ($k + ': the argument given to the script was used') }
             if ($decision.Settings.Contains('NumberCultureName')) {
-                try { $script:NumberCulture = New-Object System.Globalization.CultureInfo($decision.Settings['NumberCultureName']) }
-                catch { $script:NumberCulture = [System.Globalization.CultureInfo]::InvariantCulture }
+                $script:NumberCultureResolved = Resolve-NumberCulture ([string]$decision.Settings['NumberCultureName'])
+                $script:NumberCulture = $script:NumberCultureResolved.Culture
             }
             Add-Result 'COLLECTOR' 'Profile file' 'INFO' ('Applied, ' + $decision.Settings.Count + ' setting(s)') ($details + @('SHA256=' + $hash)) -Source $ProfileFile
             Write-AssessmentLog 'INFO' 'SITEDATA' ('Profile file applied: ' + $ProfileFile + ' | ' + ($details -join '; '))
@@ -5663,9 +5830,14 @@ function Invoke-PostUpgradeComparison {
             if ($listener -and (@($listener.Details) -join ' ') -match 'NLA=(\d)') { $before | Add-Member -NotePropertyName Nla -NotePropertyValue $(if ($Matches[1] -eq '0') { 'Off' } else { 'On' }) -Force }
         }
         if ($before -and $before.PSObject.Properties['Nla']) { $script:Data.NlaBefore = [string]$before.Nla }
+        # What the comparison cannot cover (#239): an empty or partial baseline,
+        # a SPECIAL short report, a check that did not complete, a baseline
+        # taken after the upgrade. "Comparison OK" only when nothing is left out.
+        $coverage = @(Get-BaselineCoverageRow $baseline $script:ComputerName (Get-ReleaseDisplayName $TargetServerVersion))
+        foreach ($c in $coverage) { Add-Result 'POST_UPGRADE' $c.Item $c.Status $c.Value $c.Details -Recommendation $c.Recommendation -Kind 'Finding' -Source 'Pre-upgrade result' }
         $diffs = Compare-IPUSnapshot $before ([pscustomobject]$script:Data.Snapshot)
         foreach ($d in $diffs) { Add-Result 'POST_UPGRADE' $d.Item $d.Status $d.Value $d.Details -Recommendation $d.Recommendation -Source 'Pre-upgrade snapshot vs now' }
-        if ($diffs.Count -eq 0) { Add-Result 'POST_UPGRADE' 'Comparison' 'OK' 'No lost services, ports, routes, IP/DNS settings, hosts entries, applications, features or tasks' -Source 'Pre-upgrade snapshot vs now' }
+        if ($diffs.Count -eq 0 -and $coverage.Count -eq 0) { Add-Result 'POST_UPGRADE' 'Comparison' 'OK' 'No lost services, ports, routes, IP/DNS settings, hosts entries, applications, features or tasks' -Source 'Pre-upgrade snapshot vs now' }
     } catch {
         $outcome = 'Failed'; $message = $_.Exception.Message
         Add-Result 'COLLECTOR' 'Post-upgrade comparison' 'MANUAL' 'Check did not complete' $message -Recommendation 'Compare manually with the pre-upgrade report.' -Kind 'Finding'
