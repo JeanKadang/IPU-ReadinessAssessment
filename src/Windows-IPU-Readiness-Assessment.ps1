@@ -1558,6 +1558,20 @@ function Resolve-ClusterFeatureState {
     return $null
 }
 
+function Get-JsonOutcomeText {
+    # Pure: what the SA result line says about the JSON file (#250). The fleet
+    # overview and the post-upgrade comparison depend on it, so a JSON that
+    # was not written is never reported as if it were.
+    #   Outcome: Written | Partial | Failed | Disabled
+    param([bool]$WriteJson, [string]$Outcome, [string]$Path)
+    if (-not $WriteJson) { return '' }
+    switch ($Outcome) {
+        'Written' { return ', JSON=' + $Path }
+        'Partial' { return ', JSON=PARTIAL (checkpoint only: ' + $Path + ')' }
+        default   { return ', JSON=FAILED (not written; the fleet overview and the post-upgrade comparison need it)' }
+    }
+}
+
 function Get-ActivationChannelKind {
     # Pure: SoftwareLicensingProduct channel/description -> KMS, MAK, AVMA, OEM, Retail or Unknown.
     param([string]$Channel, [string]$Description)
@@ -5346,9 +5360,15 @@ function Write-AssessmentReport {
     Move-Item -LiteralPath $temp -Destination $script:ReportPath -Force -ErrorAction Stop
     $info = Get-Item -LiteralPath $script:ReportPath -ErrorAction Stop
     Write-AssessmentLog 'INFO' 'REPORT' ('Written. Partial={0} | Overall={1} | Bytes={2}' -f [bool]$Partial,$overall,$info.Length)
+    $jsonOutcome = 'Disabled'
     if ($WriteJson) {
-        try { Write-AssessmentJson -Results $results -Overall $overall -Completed $completed -Partial:$Partial }
-        catch { Write-AssessmentLog 'WARNING' 'JSON' ('JSON result could not be written: ' + $_.Exception.Message) }
+        try {
+            Write-AssessmentJson -Results $results -Overall $overall -Completed $completed -Partial:$Partial
+            $jsonOutcome = 'Written'; if ($Partial) { $jsonOutcome = 'Partial' }
+        } catch {
+            $jsonOutcome = 'Failed'
+            Write-AssessmentLog 'WARNING' 'JSON' ('JSON result could not be written: ' + $_.Exception.Message)
+        }
     }
     # The key to the placeholders (#211), after the HTML and the JSON so it
     # holds every placeholder they use.
@@ -5357,7 +5377,7 @@ function Write-AssessmentReport {
         try { $script:Data.RedactionKey = Write-RedactionKey (Get-RedactionContext) $keyPath }
         catch { Write-AssessmentLog 'WARNING' 'REDACTION' ('Redaction key could not be written: ' + $_.Exception.Message) }
     }
-    return [pscustomobject]@{ Overall=$overall; Completed=$completed; Bytes=$info.Length }
+    return [pscustomobject]@{ Overall=$overall; Completed=$completed; Bytes=$info.Length; JsonOutcome=$jsonOutcome }
 }
 
 function New-AssessmentJsonObject {
@@ -5662,10 +5682,25 @@ function Invoke-PostUpgradeComparison {
 # =============================================================================
 function Invoke-Assessment {
     $header = 'ComputerName;RunStatus;AssessmentStatus;ReportPath;LogPath;ReportSizeKB;Records;Started;Completed;Duration;CollectorVersion;Message'
+    # An output folder that cannot be written is found now, not after up to an
+    # hour of checks (#250): the log file is the first thing written.
+    $folderError = ''
     try {
         $script:OutputFolderState = Initialize-OutputFolder $ReportDirectory
         [IO.File]::WriteAllText($script:LogPath,('Timestamp;Level;Phase;Message' + [Environment]::NewLine),(New-Object System.Text.UTF8Encoding($false)))
-    } catch { Write-Swallowed $_ }
+    } catch { $folderError = $_.Exception.Message }
+    if ($folderError) {
+        $now = Get-Date
+        [Console]::Out.WriteLine($header)
+        [Console]::Out.WriteLine((@(
+            $script:ComputerName,'FAILED','MANUAL','','','',0,
+            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss'),$now.ToString('yyyy-MM-dd HH:mm:ss'),
+            (Format-Duration ($now - $script:CollectionStarted)),$script:CollectorVersion,
+            ('Nothing was assessed: the report folder cannot be written (' + $ReportDirectory + '): ' + $folderError + ' Give -ReportDirectory a folder the account can write to.')
+        ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
+        $script:ExitCode = 1
+        return
+    }
     Write-AssessmentLog 'INFO' 'START' ('Collector={0} | Mode={1} | Target={2} | PowerShell={3}' -f $script:CollectorVersion,$AssessmentMode,$TargetServerVersion,$PSVersionTable.PSVersion)
 
     # Prerequisites first (#94): stop with a clear message instead of failing
@@ -5743,9 +5778,11 @@ function Invoke-Assessment {
     $runStatus = 'SUCCEEDED'; if ($runFailure) { $runStatus = 'FAILED' }
     try {
         $final = Write-AssessmentReport
+        # A JSON that was asked for and not written is a failed run: the fleet overview and the Post baseline need that file.
+        if ($WriteJson -and $final.JsonOutcome -eq 'Failed') { $runStatus = 'FAILED' }
         $specialNote = ''
         if ($script:Data.Special) { $specialNote = 'SPECIAL server (' + $script:Data.Special.Title + '): short report, separate plan needed. ' }
-        $msg = $specialNote + 'Mode=' + $AssessmentMode + ', Checks=' + $script:CheckRuns.Count + ', NotCompleted=' + $failedChecks + $(if ($WriteJson) { ', JSON=' + $script:JsonPath } else { '' }) + '. Retrieve the HTML via the approved SA process.'
+        $msg = $specialNote + 'Mode=' + $AssessmentMode + ', Checks=' + $script:CheckRuns.Count + ', NotCompleted=' + $failedChecks + (Get-JsonOutcomeText $WriteJson $final.JsonOutcome $script:JsonPath) + '. Retrieve the HTML via the approved SA process.'
         if ($runFailure) { $msg = 'The run stopped early (' + $runFailure + '). ' + $msg }
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
@@ -5754,7 +5791,7 @@ function Invoke-Assessment {
             $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss'),$final.Completed.ToString('yyyy-MM-dd HH:mm:ss'),
             (Format-Duration ($final.Completed - $script:CollectionStarted)),$script:CollectorVersion,$msg
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
-        $script:ExitCode = $(if ($runFailure) { 1 } else { 0 })
+        $script:ExitCode = $(if ($runFailure -or $runStatus -eq 'FAILED') { 1 } else { 0 })
     } catch {
         $msg = $_.Exception.GetType().Name + ': ' + $_.Exception.Message
         Write-AssessmentLog 'ERROR' 'FAILED' $msg
