@@ -1,8 +1,9 @@
 # Roadmap
 
 Snapshot of the open issues by milestone, written 2026-10-23. The live view, with status, is the
-[Roadmap project board](https://github.com/users/JeanKadang/projects/4). Priorities: P0 breaks a run, P1 gives a wrong or
-silent result, P2 correctness or maintainability, P3 polish. Refresh this page when milestones change.
+[Roadmap project board](https://github.com/users/JeanKadang/projects/4). Priorities: P0 critical bug or
+security risk, P1 important quality, reliability or user-facing improvement, P2 valuable enhancement, cleanup or testing,
+P3 nice-to-have. Refresh this page when milestones change.
 
 ## 4.5.4
 
