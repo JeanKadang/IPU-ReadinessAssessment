@@ -969,9 +969,9 @@ function Read-FileTail {
 # special check. Defined here (script scope), not inside Register-AssessmentCheck.
 function Get-SpecialServerState {
     # What decides SPECIAL (#152), read once after the baseline. Read-only.
-    $clusterFeature = (Get-FeatureState 'Failover-Clustering') -eq $true
     $clusSvc = @($script:Data.Services | Where-Object { $_.Name -eq 'ClusSvc' -and $_.StartMode -ne 'Disabled' }).Count -gt 0
     $clusterKey = [bool](Test-Path 'HKLM:\Cluster')
+    $clusterFeature = (Resolve-ClusterFeatureState (Get-FeatureState 'Failover-Clustering') $clusSvc $clusterKey) -eq $true
     $role = 0; if ($script:Data.CS) { $role = [int]$script:Data.CS.DomainRole }
     return (Get-SpecialServerDecision $role $clusterFeature $clusSvc $clusterKey $BlockDomainControllerIPU)
 }
