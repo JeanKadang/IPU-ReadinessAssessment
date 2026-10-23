@@ -567,6 +567,38 @@ Describe 'Add-Result requires a named Recommendation' {
     }
 }
 
+Describe 'Get-SpaceAfterPartition (#241)' {
+    It 'unallocated space after the partition, up to the end of the disk' {
+        Get-SpaceAfterPartition 1MB 60GB @(1MB) 100GB | Should -Be (100GB - 1MB - 60GB)
+    }
+    It 'stops at the next partition' {
+        Get-SpaceAfterPartition 1MB 60GB @(1MB, 70GB) 100GB | Should -Be (70GB - 1MB - 60GB)
+    }
+    It 'a partition directly followed by another has none' { Get-SpaceAfterPartition 1MB 60GB @(1MB, (1MB + 60GB)) 100GB | Should -Be 0 }
+    It 'a partition that fills the disk has none' { Get-SpaceAfterPartition 1MB 99GB @(1MB) (1MB + 99GB) | Should -Be 0 }
+    It 'never negative' { Get-SpaceAfterPartition 1MB 120GB @(1MB) 100GB | Should -Be 0 }
+}
+
+Describe 'Invoke-WithTimeout (#241)' {
+    It 'returns what the block returns' { @(Invoke-WithTimeout -TimeoutSec 20 -ScriptBlock { 'a'; 'b' }) -join ',' | Should -Be 'a,b' }
+    It 'gives up after the time limit' {
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        { Invoke-WithTimeout -TimeoutSec 1 -ScriptBlock { Start-Sleep -Seconds 30 } } | Should -Throw '*Timed out after 1 seconds*'
+        $sw.Elapsed.TotalSeconds | Should -BeLessThan 15
+    }
+    It 'throws an error raised inside the block' {
+        { Invoke-WithTimeout -TimeoutSec 20 -ScriptBlock { throw 'boom inside' } } | Should -Throw '*boom inside*'
+    }
+}
+
+Describe 'Get-CimRequired has a time limit (#241)' -Skip:($env:OS -ne 'Windows_NT') {
+    It 'passes OperationTimeoutSec to Get-CimInstance' {
+        Mock Get-CimInstance { @() } -ParameterFilter { $OperationTimeoutSec -eq 120 }
+        $null = Get-CimRequired 'Win32_BIOS'
+        Should -Invoke Get-CimInstance -Times 1 -Exactly -ParameterFilter { $OperationTimeoutSec -eq 120 }
+    }
+}
+
 Describe 'Resolve-ClusterFeatureState (#238)' {
     It 'a known feature state is used as it is' {
         Resolve-ClusterFeatureState $true $false $false | Should -BeTrue
