@@ -152,6 +152,16 @@ Describe 'Get-SfcVerdict' {
                  '2026-10-06 09:05:01, Info  CSI  00000099 [SR] Verify complete')
         (Get-SfcVerdict 'lokaliseret tekst' $cbs).Status | Should -Be 'ACTION'
     }
+    It 'localized output with a damaged manifest in CBS.log is not OK (#249)' {
+        $cbs = @('2026-10-06 09:02:01, Info  CSI  0000001 [SR] Cannot verify component files for Microsoft-Windows-Foo, Version = 10.0.1.0, pa = 9 (x64), manifest is damaged (TRUE)',
+                 '2026-10-06 09:05:01, Info  CSI  00000099 [SR] Verify complete')
+        (Get-SfcVerdict 'lokaliseret tekst' $cbs).Status | Should -Be 'ACTION'
+    }
+    It 'localized output where SFC could not verify a component is not OK (#249)' {
+        $cbs = @('2026-10-06 09:02:01, Info  CSI  0000001 [SR] Cannot verify component files for Microsoft-Windows-Foo',
+                 '2026-10-06 09:05:01, Info  CSI  00000099 [SR] Verify complete')
+        (Get-SfcVerdict 'lokaliseret tekst' $cbs).Status | Should -Be 'ACTION'
+    }
     It 'nothing usable' { (Get-SfcVerdict '' @()).Status | Should -Be 'MANUAL' }
 }
 
