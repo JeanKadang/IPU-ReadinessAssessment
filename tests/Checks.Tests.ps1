@@ -224,7 +224,7 @@ BeforeAll {
     function Import-Module { [CmdletBinding()] param([Parameter(Position = 0)][string]$Name) }
 
     # ------------------------------------------- Windows feature cmdlets
-    function Get-WindowsFeature { [CmdletBinding()] param() foreach ($k in @($script:Fake.Features.Keys)) { [pscustomobject]@{ Name = $k; Installed = [bool]$script:Fake.Features[$k] } } }
+    function Get-WindowsFeature { [CmdletBinding()] param() if ($script:Fake.FeaturesThrow) { throw 'Simulated: ServerManager provider failed' } foreach ($k in @($script:Fake.Features.Keys)) { [pscustomobject]@{ Name = $k; Installed = [bool]$script:Fake.Features[$k] } } }
     function Get-WinSystemLocale { [CmdletBinding()] param() [pscustomobject]@{ Name = $script:Fake.SystemLocale } }
     function Get-HotFix { [CmdletBinding()] param() return @($script:Fake.HotFixes) }
     function Test-ComputerSecureChannel { [CmdletBinding()] param() if ($null -eq $script:Fake.SecureChannel) { throw 'Simulated: domain unreachable' } return $script:Fake.SecureChannel }
@@ -307,7 +307,7 @@ BeforeAll {
         $hosts = 'C:\Windows\System32\drivers\etc\hosts'
         if ($env:SystemRoot) { $hosts = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts' }
         $f = @{
-            NativeCalls = @(); CimThrow = @(); MissingCommands = @('Get-Cluster', 'Get-VMSwitch')
+            NativeCalls = @(); CimThrow = @(); FeaturesThrow = $false; MissingCommands = @('Get-Cluster', 'Get-VMSwitch')
             Shares = @(); ShareAccess = @{}
             SystemLocale = 'en-US'
             Cim = @{
@@ -495,6 +495,44 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $row.Count | Should -Be 1
             $row[0].Value | Should -Match '^0[.,]4'
             $row[0].Source | Should -Be 'Get-Partition, Get-Disk'
+        }
+    }
+
+    Context 'feature inventory fails (#238)' {
+        BeforeEach {
+            $script:Fake.FeaturesThrow = $true
+            $script:Data = @{}
+            $script:BaselineRun = Invoke-TestCheck 'baseline'
+            $script:BaselineRows = $script:Results.ToArray()
+        }
+        It 'leaves the features unknown, not empty, and the rest of the baseline still runs' {
+            $script:BaselineRun.Outcome | Should -Be 'Completed'
+            $script:Data.Features | Should -BeNullOrEmpty
+            $null -eq $script:Data.Features | Should -BeTrue
+            $script:Data.Platform.Hypervisor | Should -Be 'VMware'
+            $script:Data.Snapshot | Should -Not -BeNullOrEmpty
+            @($script:Data.Snapshot.Features).Count | Should -Be 0
+        }
+        It 'says so in one MANUAL row' {
+            $row = @($script:BaselineRows | Where-Object { $_.Area -eq 'ASSESSMENT' -and $_.Item -eq 'FeatureInventory' })
+            $row.Count | Should -Be 1; $row[0].Status | Should -Be 'MANUAL'; $row[0].Kind | Should -Be 'Finding'
+            $row[0].Details | Should -Match 'ServerManager provider failed'
+        }
+        It 'IIS is MANUAL, not "Not installed"' {
+            $null = Invoke-TestCheck 'iis'
+            (Get-Row 'IIS' 'Web-Server')[0].Status | Should -Be 'MANUAL'
+        }
+        It 'RDS is MANUAL, not "Not installed"' {
+            $null = Invoke-TestCheck 'rds'
+            (Get-Row 'RDS' 'RDSRoles')[0].Status | Should -Be 'MANUAL'
+            (Get-Row 'RDS' 'RDSessionHost').Count | Should -Be 0
+        }
+        It 'the cluster check is MANUAL, not "Feature not installed"' {
+            $null = Invoke-TestCheck 'cluster'
+            (Get-Row 'CLUSTER' 'FailoverClustering')[0].Status | Should -Be 'MANUAL'
+        }
+        It 'the overall status is not OK' {
+            Get-OverallStatus $script:BaselineRows | Should -Be 'MANUAL'
         }
     }
 

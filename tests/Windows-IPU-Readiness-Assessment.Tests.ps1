@@ -599,6 +599,19 @@ Describe 'Get-CimRequired has a time limit (#241)' -Skip:($env:OS -ne 'Windows_N
     }
 }
 
+Describe 'Resolve-ClusterFeatureState (#238)' {
+    It 'a known feature state is used as it is' {
+        Resolve-ClusterFeatureState $true $false $false | Should -BeTrue
+        Resolve-ClusterFeatureState $false $true $true | Should -BeFalse
+    }
+    It 'an unknown state with the Cluster service and the cluster key is a cluster node' { Resolve-ClusterFeatureState $null $true $true | Should -BeTrue }
+    It 'an unknown state without both stays unknown, never "not installed"' {
+        $null -eq (Resolve-ClusterFeatureState $null $false $false) | Should -BeTrue
+        $null -eq (Resolve-ClusterFeatureState $null $true $false) | Should -BeTrue
+        $null -eq (Resolve-ClusterFeatureState $null $false $true) | Should -BeTrue
+    }
+}
+
 Describe 'A MANUAL row counts towards the overall status (#240)' {
     BeforeEach { $script:Results.Clear() }
     It 'Add-Result refuses a MANUAL Observation' {

@@ -124,6 +124,16 @@ function Get-SpaceAfterPartition {
     return [double]($limit - $end)
 }
 
+function Resolve-ClusterFeatureState {
+    # Pure: the feature table says installed or not; when the inventory failed
+    # ($null) the Cluster service together with HKLM:\Cluster is the evidence,
+    # and without it the state stays unknown ($null), never "not installed" (#238).
+    param($FeatureState, [bool]$ClusterService, [bool]$ClusterKey)
+    if ($null -ne $FeatureState) { return [bool]$FeatureState }
+    if ($ClusterService -and $ClusterKey) { return $true }
+    return $null
+}
+
 function Get-ActivationChannelKind {
     # Pure: SoftwareLicensingProduct channel/description -> KMS, MAK, AVMA, OEM, Retail or Unknown.
     param([string]$Channel, [string]$Description)

@@ -1351,9 +1351,9 @@ function Read-FileTail {
 # special check. Defined here (script scope), not inside Register-AssessmentCheck.
 function Get-SpecialServerState {
     # What decides SPECIAL (#152), read once after the baseline. Read-only.
-    $clusterFeature = (Get-FeatureState 'Failover-Clustering') -eq $true
     $clusSvc = @($script:Data.Services | Where-Object { $_.Name -eq 'ClusSvc' -and $_.StartMode -ne 'Disabled' }).Count -gt 0
     $clusterKey = [bool](Test-Path 'HKLM:\Cluster')
+    $clusterFeature = (Resolve-ClusterFeatureState (Get-FeatureState 'Failover-Clustering') $clusSvc $clusterKey) -eq $true
     $role = 0; if ($script:Data.CS) { $role = [int]$script:Data.CS.DomainRole }
     return (Get-SpecialServerDecision $role $clusterFeature $clusSvc $clusterKey $BlockDomainControllerIPU)
 }
@@ -1538,6 +1538,16 @@ function Get-SpaceAfterPartition {
     foreach ($o in @($PartitionOffsets)) { if ($o -ge $end -and $o -lt $limit) { $limit = $o } }
     if ($limit -le $end) { return [double]0 }
     return [double]($limit - $end)
+}
+
+function Resolve-ClusterFeatureState {
+    # Pure: the feature table says installed or not; when the inventory failed
+    # ($null) the Cluster service together with HKLM:\Cluster is the evidence,
+    # and without it the state stays unknown ($null), never "not installed" (#238).
+    param($FeatureState, [bool]$ClusterService, [bool]$ClusterKey)
+    if ($null -ne $FeatureState) { return [bool]$FeatureState }
+    if ($ClusterService -and $ClusterKey) { return $true }
+    return $null
 }
 
 function Get-ActivationChannelKind {
@@ -3220,9 +3230,15 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
     $script:Data.Apps     = @(Get-InstalledApplication)
     $script:Data.CV       = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
     $script:Data.Features = $null
+    $featureInventoryError = ''
     if (Test-CommandAvailable 'Get-WindowsFeature') {
-        $script:Data.Features = @{}
-        foreach ($f in @(Get-WindowsFeature -ErrorAction Stop)) { $script:Data.Features[$f.Name] = [bool]$f.Installed }
+        # Fill a local table and keep it only when the whole list was read:
+        # an empty or partial table would read as "not installed" (#238).
+        try {
+            $featureTable = @{}
+            foreach ($f in @(Get-WindowsFeature -ErrorAction Stop)) { $featureTable[$f.Name] = [bool]$f.Installed }
+            $script:Data.Features = $featureTable
+        } catch { $featureInventoryError = $_.Exception.Message }
     }
     # Drivers: file-system filter drivers (fltmc) and running kernel drivers.
     # Used to recognise AV/EDR/security products independently of their names.
@@ -3245,6 +3261,9 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
     }
     if ($script:Data.Features) { $script:Data.Snapshot.Features = @($script:Data.Features.Keys | Where-Object { $script:Data.Features[$_] } | Sort-Object) }
 
+    if ($featureInventoryError) {
+        Add-Result 'ASSESSMENT' 'FeatureInventory' 'MANUAL' 'Get-WindowsFeature failed' $featureInventoryError -Recommendation 'List the installed roles and features by hand (Server Manager, or Get-WindowsFeature in an elevated session). Until then the cluster, IIS and RDS rows are MANUAL, not "not installed".' -Source 'ServerManager'
+    }
     Add-Result 'ASSESSMENT' 'CollectorVersion' 'INFO' $script:CollectorVersion 'Restructured 4.x edition' -Source 'Script constant'
     Add-Result 'ASSESSMENT' 'Target' 'INFO' (Get-ReleaseDisplayName $TargetServerVersion) ('MediaLanguage=' + $(if ($TargetMediaLanguage) { $TargetMediaLanguage } else { 'not set' })) -Source 'SETTINGS'
     Add-Result 'ASSESSMENT' 'ExecutionContext' 'INFO' ('Identity=' + [Security.Principal.WindowsIdentity]::GetCurrent().Name) @(('PowerShell=' + $PSVersionTable.PSVersion),('LanguageMode=' + $ExecutionContext.SessionState.LanguageMode)) -Source 'Runtime'
@@ -3710,7 +3729,9 @@ Register-Check -Id 'performance' -Name 'CPU and memory' -Script {
 
 # ---------------------------------------------------------------------------
 Register-Check -Id 'cluster' -Name 'Failover clustering' -Script {
-    $feature = Get-FeatureState 'Failover-Clustering'
+    $clusSvcPresent = @($script:Data.Services | Where-Object { $_.Name -eq 'ClusSvc' -and $_.StartMode -ne 'Disabled' }).Count -gt 0
+    $feature = Resolve-ClusterFeatureState (Get-FeatureState 'Failover-Clustering') $clusSvcPresent ([bool](Test-Path 'HKLM:\Cluster'))
+    if ($null -eq $feature) { Add-Result 'CLUSTER' 'FailoverClustering' 'MANUAL' 'Feature state unknown: the role inventory failed' -Recommendation 'Confirm by hand whether this server is a cluster node (Get-Cluster, the Cluster service) before planning an IPU.' -Source 'Get-WindowsFeature'; return }
     if ($feature -ne $true) { Add-Result 'CLUSTER' 'FailoverClustering' 'OK' 'Feature not installed' -Source 'Get-WindowsFeature'; return }
     if (-not (Test-CommandAvailable 'Get-Cluster')) {
         Add-Result 'CLUSTER' 'FailoverClustering' 'ACTION' 'Feature installed; cluster cmdlets unavailable' -Recommendation 'Confirm cluster membership before planning an IPU.' -Source 'Get-WindowsFeature'
@@ -4170,7 +4191,9 @@ Register-Check -Id 'printers' -Name 'Print server: printers, ports and drivers' 
 
 # ---------------------------------------------------------------------------
 Register-Check -Id 'iis' -Name 'IIS' -Script {
-    if ((Get-FeatureState 'Web-Server') -ne $true) { Add-Result 'IIS' 'Web-Server' 'OK' 'Not installed' -Source 'Get-WindowsFeature'; return }
+    $iisState = Get-FeatureState 'Web-Server'
+    if ($null -eq $iisState) { Add-Result 'IIS' 'Web-Server' 'MANUAL' 'Feature state unknown: the role inventory failed' -Recommendation 'Check by hand whether IIS is installed (Get-WindowsFeature Web-Server, or the W3SVC service).' -Source 'Get-WindowsFeature'; return }
+    if ($iisState -ne $true) { Add-Result 'IIS' 'Web-Server' 'OK' 'Not installed' -Source 'Get-WindowsFeature'; return }
     Add-Result 'IIS' 'Web-Server' 'WARNING' 'Installed' -Recommendation 'Immediately before the IPU, run the appcmd.exe add backup command shown (the copy in this report is from assessment time), and keep site, binding and certificate documentation.' -Source 'Get-WindowsFeature' -Command (Get-RecommendationCommand 'IisBackup').Command -CommandKind 'Change' -Link $script:DocLinks.AppCmd.Url -LinkTitle $script:DocLinks.AppCmd.Title
     if ($EnableIISConfigEvidence) {
         try {
@@ -4199,6 +4222,7 @@ Register-Check -Id 'iis' -Name 'IIS' -Script {
 Register-Check -Id 'rds' -Name 'Remote Desktop Services roles' -Script {
     $rdsh = Get-FeatureState 'RDS-RD-Server'
     $rdlic = Get-FeatureState 'RDS-Licensing'
+    if ($null -eq $rdsh -or $null -eq $rdlic) { Add-Result 'RDS' 'RDSRoles' 'MANUAL' 'Feature state unknown: the role inventory failed' -Recommendation 'Check by hand whether the Remote Desktop Session Host and Licensing roles are installed (Get-WindowsFeature RDS-*).' -Source 'Get-WindowsFeature'; return }
     if ($rdsh -eq $true) { Add-Result 'RDS' 'RDSessionHost' 'ACTION' 'Installed' -Recommendation ('Plan a longer IPU window, record the licensing configuration, and confirm RDS CALs are valid for ' + (Get-ReleaseDisplayName $TargetServerVersion) + ' (CALs must be the same or newer release as the server).') -Source 'Get-WindowsFeature' }
     else { Add-Result 'RDS' 'RDSessionHost' 'OK' 'Not installed' -Source 'Get-WindowsFeature' }
     if ($rdlic -eq $true) { Add-Result 'RDS' 'RDLicensingServer' 'ACTION' 'Installed' -Recommendation 'This is an RD Licensing server. Upgrading it affects every RDS host that uses it; confirm installed CALs and the order of upgrades with the RDS owner.' -Source 'Get-WindowsFeature' }
