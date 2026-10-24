@@ -18,7 +18,7 @@ function Invoke-Assessment {
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
             $script:ComputerName,'FAILED','MANUAL','','','',0,
-            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss'),$now.ToString('yyyy-MM-dd HH:mm:ss'),
+            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),$now.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),
             (Format-Duration ($now - $script:CollectionStarted)),$script:CollectorVersion,
             ('Nothing was assessed: another assessment run on this server is using ' + $ReportDirectory + ' (' + $script:LogPath + '.lock). Wait for it to finish, or give this run another -ReportDirectory.')
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
@@ -31,7 +31,7 @@ function Invoke-Assessment {
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
             $script:ComputerName,'FAILED','MANUAL','','','',0,
-            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss'),$now.ToString('yyyy-MM-dd HH:mm:ss'),
+            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),$now.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),
             (Format-Duration ($now - $script:CollectionStarted)),$script:CollectorVersion,
             ('Nothing was assessed: the report folder cannot be written (' + $ReportDirectory + '): ' + $folderError + ' Give -ReportDirectory a folder the account can write to.')
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
@@ -56,7 +56,7 @@ function Invoke-Assessment {
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
             $script:ComputerName,'FAILED','MANUAL',$reportPath,$script:LogPath,'',$script:Results.Count,
-            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss'),$now.ToString('yyyy-MM-dd HH:mm:ss'),
+            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),$now.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),
             (Format-Duration ($now - $script:CollectionStarted)),$script:CollectorVersion,$missingText
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
         $script:ExitCode = 1
@@ -129,7 +129,7 @@ function Invoke-Assessment {
         [Console]::Out.WriteLine((@(
             $script:ComputerName,$runStatus,$final.Overall,$script:ReportPath,$script:LogPath,
             ([Math]::Round($final.Bytes/1KB,1)).ToString('N1',$script:NumberCulture),$records,
-            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss'),$final.Completed.ToString('yyyy-MM-dd HH:mm:ss'),
+            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),$final.Completed.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),
             (Format-Duration ($final.Completed - $script:CollectionStarted)),$script:CollectorVersion,$msg
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
         $script:ExitCode = $(if ($runFailure -or $runStatus -eq 'FAILED') { 1 } else { 0 })
@@ -141,7 +141,7 @@ function Invoke-Assessment {
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
             $script:ComputerName,'FAILED',(Get-OverallStatus $script:Results.ToArray()),$script:ReportPath,$script:LogPath,'',$records,
-            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss'),$now.ToString('yyyy-MM-dd HH:mm:ss'),
+            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),$now.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),
             (Format-Duration ($now - $script:CollectionStarted)),$script:CollectorVersion,$msg
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
         $script:ExitCode = 1

@@ -103,7 +103,7 @@ function Get-SupportLifecycleDecision {
         return [pscustomobject]@{ Status='INFO'; Ended=$false; EndDate=''; Value='End of support not known for this release'; Text='Check the Microsoft Lifecycle page for this release.' }
     }
     $end = [datetime]::ParseExact($script:ReleaseEndOfSupport[$Release], 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
-    $endText = $end.ToString('yyyy-MM-dd')
+    $endText = $end.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
     if ($Today.Date -gt $end) {
         return [pscustomobject]@{ Status='WARNING'; Ended=$true; EndDate=$endText; Value=($name + ': out of support since ' + $endText)
             Text='Microsoft no longer ships security updates for this release unless Extended Security Updates (ESU, for example through Azure Arc) are in place. This is why the newest update can be old, and it adds urgency to the upgrade.' }
@@ -314,6 +314,19 @@ function Test-MediaLanguageMatch {
     return ($have -contains $wanted)
 }
 
+function Test-BuiltInTaskAccount {
+    # Pure (#246): is a scheduled task's principal a built-in account rather
+    # than a named one with stored credentials? The logon type is language
+    # neutral: ServiceAccount (SYSTEM, LOCAL SERVICE, NETWORK SERVICE) and Group
+    # (Users, Administrators) are built in, whatever the account is called on a
+    # German or French server. The English names and the well-known SIDs are a
+    # second signal.
+    param([string]$UserId, [string]$LogonType = '')
+    if (@('ServiceAccount', 'Group') -contains $LogonType) { return $true }
+    if (-not $UserId) { return $true }
+    return ($UserId -match '^(SYSTEM|NT AUTHORITY\\.*|LOCAL SERVICE|NETWORK SERVICE|S-1-5-(18|19|20)|S-1-5-32-\d+|S-1-1-0|INTERACTIVE|Users|Administrators|BUILTIN\\.*|Everyone)$')
+}
+
 function Get-DismVerdict {
     # Pure (#249). Only DISM's own words about the component store are
     # evidence of corruption. A servicing operation that waits for a reboot
@@ -383,12 +396,36 @@ function ConvertFrom-VssWriterOutput {
     return ,$writers
 }
 
+# Whole words: the Italian "errore" and the Spanish "error" in "Ningun error" must not read as English failures (#246).
+$script:VssEnglishErrorWords = '\b(errors?|fail(s|ed|ure)?|timeout|timed out|retryable)\b'
+
+function Get-VssNoErrorText {
+    # Pure (#246): vssadmin writes "No error" in the language of the server.
+    # Most writers are healthy, so the most common last-error text among the
+    # stable writers (state 1) is the local wording of "no error" - when it is
+    # shared by more than half of them and does not read like an English error.
+    param([object[]]$Writers)
+    $stable = @(@($Writers) | Where-Object { $_ -and $_.StateCode -eq 1 -and ([string]$_.LastError).Trim() })
+    if ($stable.Count -lt 2) { return '' }
+    $top = @($stable | Group-Object { ([string]$_.LastError).Trim().ToLowerInvariant() } | Sort-Object Count -Descending) | Select-Object -First 1
+    if ($top.Count * 2 -le $stable.Count) { return '' }
+    if ($top.Name -match $script:VssEnglishErrorWords -and $top.Name -notmatch '^no error$') { return '' }
+    return [string]$top.Name
+}
+
 function Get-VssWriterStatus {
-    param($Writer)
+    # The state code (1 = stable) is language neutral and decides first. For a
+    # stable writer the last-error text is compared with the local "no error"
+    # wording (Get-VssNoErrorText); the English words are a second signal (#246).
+    param($Writer, [string]$NoErrorText = '')
     if ($null -ne $Writer.StateCode -and $Writer.StateCode -ne 1) { return 'ACTION' }
-    if ($Writer.LastError -match '^\s*No error\s*$') { return 'OK' }
-    if ($Writer.LastError -match 'error|fail|timeout|retryable') { return 'ACTION' }
-    if ($Writer.StateCode -eq 1) { return 'MANUAL' }
+    $text = ([string]$Writer.LastError).Trim()
+    if ($text -match '^No error$') { return 'OK' }
+    if ($NoErrorText) {
+        if ($text.ToLowerInvariant() -eq $NoErrorText) { return 'OK' }
+        if ($text) { return 'ACTION' }
+    }
+    if ($text -match $script:VssEnglishErrorWords) { return 'ACTION' }
     return 'MANUAL'
 }
 
@@ -1171,9 +1208,9 @@ function Get-GroupPolicyDecision {
     } else {
         $age = [math]::Floor(($Now - [datetime]$LastApplied).TotalDays)
         if ($age -gt $MaxAgeDays) {
-            $rows += [pscustomobject]@{ Item = 'GroupPolicyLastApplied'; Status = 'WARNING'; Kind = 'Finding'; Value = ('This server has not received Group Policy since ' + ([datetime]$LastApplied).ToString('yyyy-MM-dd HH:mm') + ' (' + $age + ' days)'); Details = ('Limit: ' + $MaxAgeDays + ' days (GroupPolicyMaxAgeDays)'); Recommendation = 'Find out why (domain connectivity, secure channel, Group Policy errors in the System log), fix it and run "gpupdate /target:computer" before the change.' }
+            $rows += [pscustomobject]@{ Item = 'GroupPolicyLastApplied'; Status = 'WARNING'; Kind = 'Finding'; Value = ('This server has not received Group Policy since ' + ([datetime]$LastApplied).ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture) + ' (' + $age + ' days)'); Details = ('Limit: ' + $MaxAgeDays + ' days (GroupPolicyMaxAgeDays)'); Recommendation = 'Find out why (domain connectivity, secure channel, Group Policy errors in the System log), fix it and run "gpupdate /target:computer" before the change.' }
         } else {
-            $rows += [pscustomobject]@{ Item = 'GroupPolicyLastApplied'; Status = 'OK'; Kind = 'Evidence'; Value = ([datetime]$LastApplied).ToString('yyyy-MM-dd HH:mm'); Details = ($age.ToString() + ' days ago'); Recommendation = '' }
+            $rows += [pscustomobject]@{ Item = 'GroupPolicyLastApplied'; Status = 'OK'; Kind = 'Evidence'; Value = ([datetime]$LastApplied).ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture); Details = ($age.ToString() + ' days ago'); Recommendation = '' }
         }
     }
     return ,$rows
@@ -1232,14 +1269,21 @@ function Get-RecommendationCommand {
 $script:WinReMinPartitionMB = 900
 
 function ConvertFrom-ReagentcInfo {
-    # Pure (#161): status and location from "reagentc /info". The location
-    # (\\?\GLOBALROOT\device\harddiskN\partitionM\...) is language
-    # neutral; the status words are read in English only.
-    param([string]$Text)
+    # Pure (#161, #246): status and location of WinRE. The location
+    # (\\?\GLOBALROOT\device\harddiskN\partitionM\...) in the "reagentc /info"
+    # text is language neutral. The status is read from ReAgent.xml
+    # (<InstallState state="1"/> = enabled), which is language neutral too;
+    # the English words "Windows RE status: Enabled" are the second signal.
+    param([string]$Text, [string]$Xml = '')
     $r = [pscustomobject]@{ Enabled = $null; Disk = $null; Partition = $null }
-    if (-not $Text) { return $r }
-    if ($Text -match 'harddisk(\d+)\\partition(\d+)') { $r.Disk = [int]$Matches[1]; $r.Partition = [int]$Matches[2] }
-    if ($Text -match 'Windows RE status:\s*Enabled') { $r.Enabled = $true } elseif ($Text -match 'Windows RE status:\s*Disabled') { $r.Enabled = $false }
+    if ($Text) {
+        if ($Text -match 'harddisk(\d+)\\partition(\d+)') { $r.Disk = [int]$Matches[1]; $r.Partition = [int]$Matches[2] }
+        if ($Text -match 'Windows RE status:\s*Enabled') { $r.Enabled = $true } elseif ($Text -match 'Windows RE status:\s*Disabled') { $r.Enabled = $false }
+    }
+    if ($Xml) {
+        if ($Xml -match '<InstallState\s+state\s*=\s*"(\d+)"') { $r.Enabled = ([int]$Matches[1] -eq 1) }
+        if ($null -eq $r.Partition -and $Xml -match '<WinreLocation\s+path\s*=\s*"[^"]*harddisk(\d+)\\partition(\d+)') { $r.Disk = [int]$Matches[1]; $r.Partition = [int]$Matches[2] }
+    }
     return $r
 }
 

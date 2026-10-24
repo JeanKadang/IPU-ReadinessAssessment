@@ -204,7 +204,7 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
 '@)
     [void]$sb.AppendLine('<div class="hero"><h1>' + (& $e $title) + '</h1>')
     [void]$sb.AppendLine('<p><strong>' + (& $e $script:ComputerName) + '</strong> &nbsp;&rarr;&nbsp; ' + (& $e $target) + '</p>')
-    [void]$sb.AppendLine('<p>Started ' + (& $e $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm')) + ' &nbsp;|&nbsp; Completed ' + (& $e $CompletedTime.ToString('yyyy-MM-dd HH:mm')) + ' &nbsp;|&nbsp; Runtime ' + (& $e $duration) + ' &nbsp;|&nbsp; Collector ' + (& $e $script:CollectorVersion) + '</p>')
+    [void]$sb.AppendLine('<p>Started ' + (& $e $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)) + ' &nbsp;|&nbsp; Completed ' + (& $e $CompletedTime.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)) + ' &nbsp;|&nbsp; Runtime ' + (& $e $duration) + ' &nbsp;|&nbsp; Collector ' + (& $e $script:CollectorVersion) + '</p>')
     [void]$sb.AppendLine('<p class="verdict">' + $(if ($isPost) { 'Overall post-upgrade result: ' } else { 'Overall IPU assessment: ' }) + (New-StatusBadge $OverallStatus) + '</p></div>')
     if ($Partial) {
         [void]$sb.AppendLine('<div class="partial">PARTIAL REPORT - the slow checks (DISM, SFC, Setup compatibility scan) had not finished when this was written. If this is the newest report, the SA job was stopped before they completed.</div>')
@@ -374,8 +374,8 @@ function New-AssessmentJsonObject {
         ComputerName        = $script:ComputerName
         Mode                = $AssessmentMode
         TargetServerVersion = $TargetServerVersion
-        Started             = $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss')
-        Completed           = $Completed.ToString('yyyy-MM-dd HH:mm:ss')
+        Started             = $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
+        Completed           = $Completed.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
         UtcOffset           = (Format-UtcOffset ([TimeZoneInfo]::Local.GetUtcOffset($Completed)))
         Partial             = [bool]$Partial
         Redacted            = $false
@@ -461,7 +461,7 @@ function Invoke-RedactExisting {
     $names = @()
     foreach ($jf in $jsonFiles) { try { $names += [string]([IO.File]::ReadAllText($jf.FullName) | ConvertFrom-Json).ComputerName } catch { Write-Swallowed $_ } }
     foreach ($n in @($names | Where-Object { $_ } | Sort-Object -Unique)) { $null = Get-RedactionPlaceholder $shared 'HOST' $n }
-    $stampAll = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $stampAll = (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture)
     $done = 0
     foreach ($jf in $jsonFiles) {
         try {
@@ -564,7 +564,7 @@ function Write-AssessmentJson {
         try {
             $existing = Get-Content -LiteralPath $script:JsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if (Test-BaselineKeepCopy $existing ([bool]$Partial) (Get-ReleaseDisplayName $script:Data.SourceRelease)) {
-                $kept = $script:JsonPath -replace '\.json$', ('-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.json')
+                $kept = $script:JsonPath -replace '\.json$', ('-' + (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture) + '.json')
                 Copy-Item -LiteralPath $script:JsonPath -Destination $kept -ErrorAction Stop
                 $script:BaselineKept = $kept
                 Write-AssessmentLog 'INFO' 'BASELINE' ('Kept the earlier pre-upgrade result as ' + $kept)

@@ -159,6 +159,7 @@ BeforeAll {
         if (Test-RealPath $p) { $null = Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $p -Force }
         return $p
     }
+    function Read-ReAgentXml { return [string]$script:Fake.ReAgentXml }
     function Get-PrinterInventory {
         if ($script:Fake.PrintInvError) { throw $script:Fake.PrintInvError }
         if ($script:Fake.PrintInv) { return $script:Fake.PrintInv }
@@ -1326,6 +1327,19 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $r.Recommendation | Should -Match 'WinRE is on it'
             (Get-Row 'STORAGE' 'WinREStatus')[0].Value | Should -Be 'Enabled, Disk0 P4'
         }
+        It 'German reagentc output: the WinRE row is written from ReAgent.xml and the location (#246)' {
+            $script:Fake.Native['reagentc.exe'] = @{ ExitCode = 0; Output = "    Status der Windows RE:     Aktiviert`r`n    Windows RE-Speicherort:    \?\GLOBALROOT\device\harddisk0\partition4\Recovery\WindowsRE" }
+            $script:Fake.ReAgentXml = '<WindowsRE version="2.0"><InstallState state="1"/></WindowsRE>'
+            $null = Invoke-TestCheck 'storage'
+            (Get-Row 'STORAGE' 'WinREStatus')[0].Value | Should -Be 'Enabled, Disk0 P4'
+        }
+        It 'unreadable reagentc output and no ReAgent.xml is MANUAL, not silence (#246)' {
+            $script:Fake.Native['reagentc.exe'] = @{ ExitCode = 0; Output = "    Status der Windows RE:     Aktiviert" }
+            $script:Fake.ReAgentXml = ''
+            $null = Invoke-TestCheck 'storage'
+            $r = (Get-Row 'STORAGE' 'WinREStatus')
+            $r.Count | Should -Be 1; $r[0].Status | Should -Be 'MANUAL'
+        }
         It 'a failed reagentc /info is MANUAL (#161)' {
             $script:Fake.Native['reagentc.exe'] = @{ ExitCode = 2; Output = 'Access denied' }
             (Invoke-TestCheck 'storage').Outcome | Should -Be 'Completed'
@@ -1866,6 +1880,18 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             (Get-Row 'BACKUP' 'VSSWriters').Count | Should -Be 0
             (Get-Row 'BACKUP' 'GuestBackupAgent')[0].Status | Should -Be 'INFO'
         }
+        It 'Italian writer texts: "Nessun errore" is OK although it contains "error" (#246)' {
+            $script:Fake.Native['vssadmin.exe'] = @{ Output = "Writer name: 'System Writer'`r`n   State: [1] Stable`r`n   Last error: Nessun errore`r`nWriter name: 'Registry Writer'`r`n   State: [1] Stable`r`n   Last error: Nessun errore`r`nWriter name: 'SqlServerWriter'`r`n   State: [1] Stable`r`n   Last error: Errore non ripetibile" }
+            $null = Invoke-TestCheck 'backup'
+            (Get-Row 'BACKUP' 'VSS writer: System Writer')[0].Status | Should -Be 'OK'
+            (Get-Row 'BACKUP' 'VSS writer: Registry Writer')[0].Status | Should -Be 'OK'
+            (Get-Row 'BACKUP' 'VSS writer: SqlServerWriter')[0].Status | Should -Be 'ACTION'
+        }
+        It 'German writer texts: "Kein Fehler" is OK (#246)' {
+            $script:Fake.Native['vssadmin.exe'] = @{ Output = "Writer name: 'System Writer'`r`n   State: [1] Stable`r`n   Last error: Kein Fehler`r`nWriter name: 'Registry Writer'`r`n   State: [1] Stable`r`n   Last error: Kein Fehler" }
+            $null = Invoke-TestCheck 'backup'
+            (Get-Row 'BACKUP' 'VSS writer: System Writer')[0].Status | Should -Be 'OK'
+        }
         It 'a failed writer is an ACTION' {
             $script:Fake.Native['vssadmin.exe'] = @{ Output = "Writer name: 'SqlServerWriter'`r`n   State: [8] Failed`r`n   Last error: Retryable error" }
             $null = Invoke-TestCheck 'backup'
@@ -1946,6 +1972,16 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             (Get-Row 'TASKS' '\Example\Cleanup')[0].Value | Should -Be 'RunAs=SYSTEM'
             (Get-Row 'TASKS' 'TasksWithNamedAccounts')[0].Details | Should -Match 'svc_batch'
             $script:Data.Snapshot.Tasks | Should -Contain '\Example\Nightly export'
+        }
+        It 'German built-in task accounts are not named accounts (#246)' {
+            $script:Fake.Tasks += [pscustomobject]@{ TaskPath = '\Example\'; TaskName = 'Wartung'; State = 'Ready'; Principal = [pscustomobject]@{ UserId = 'NT-AUTORITAET\SYSTEM'; GroupId = ''; LogonType = 'ServiceAccount' }; Actions = @() }
+            $script:Fake.Tasks += [pscustomobject]@{ TaskPath = '\Example\'; TaskName = 'Gruppe'; State = 'Ready'; Principal = [pscustomobject]@{ UserId = ''; GroupId = 'Benutzer'; LogonType = 'Group' }; Actions = @() }
+            $script:Fake.Tasks += [pscustomobject]@{ TaskPath = '\Example\'; TaskName = 'Nightly export'; State = 'Ready'; Principal = [pscustomobject]@{ UserId = 'CORP\svc_batch'; GroupId = ''; LogonType = 'Password' }; Actions = @() }
+            $null = Invoke-TestCheck 'tasks'
+            $named = (Get-Row 'TASKS' 'TasksWithNamedAccounts')[0].Details
+            $named | Should -Match 'svc_batch'
+            $named | Should -Not -Match 'Wartung'
+            $named | Should -Not -Match 'Gruppe'
         }
         It 'Windows per-user feed tasks are one INFO line, not named-account tasks (#214)' {
             foreach ($g in '0F5377C2-5909-4495-A7CC-00331141DFDA', '55B0E49D-1AF0-44AF-B8D0-0123456789AB') {
