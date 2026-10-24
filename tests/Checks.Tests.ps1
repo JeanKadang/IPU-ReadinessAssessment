@@ -463,7 +463,7 @@ AfterAll { Remove-Item Env:\IPU_ASSESSMENT_LIBRARY_ONLY -ErrorAction SilentlyCon
 
 Describe 'Check registry' {
     It 'registers 36 checks with unique ids' {
-        $script:AllChecks.Count | Should -Be 36
+        $script:AllChecks.Count | Should -Be 37
         @($script:AllChecks | Group-Object Id | Where-Object { $_.Count -gt 1 }).Count | Should -Be 0
     }
     It 'docs/checks.md describes every registered check' {
@@ -2025,6 +2025,47 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $ctx = New-RedactionContext 'SRV01' ''
             foreach ($k in @($script:Data.RedactLiterals.Keys)) { $ctx.Literals[$k] = $script:Data.RedactLiterals[$k] }
             Protect-ReportText 'Windows Installer; task runs as svc_batch' $ctx | Should -Be 'Windows Installer; task runs as ACCOUNT-1'
+        }
+    }
+
+    Context 'eolsnapshot (#285)' {
+        BeforeEach {
+            $script:SnapDir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $null = New-Item -ItemType Directory -Path $script:SnapDir
+            $script:ScriptFolder = $script:SnapDir
+            $EolSnapshotPath = ''
+            $ReportDirectory = Join-Path $TestDrive 'no-reports'
+        }
+        It 'a snapshot next to the script is found and its date shown' {
+            $today = (Get-Date).ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+            Set-Content -LiteralPath (Join-Path $script:SnapDir 'eol-snapshot.json') -Value ('{"asOf":"' + $today + '","products":{}}')
+            (Invoke-TestCheck 'eolsnapshot').Outcome | Should -Be 'Completed'
+            $r = (Get-Row 'APPLICATIONS' 'EOL snapshot')[0]
+            $r.Status | Should -Be 'INFO'; $r.Value | Should -Be ('EOL snapshot from ' + $today)
+        }
+        It 'a snapshot in the report folder is found when none is beside the script' {
+            $ReportDirectory = $script:SnapDir
+            $script:ScriptFolder = Join-Path $TestDrive 'elsewhere'
+            Set-Content -LiteralPath (Join-Path $script:SnapDir 'eol-snapshot.json') -Value '{"asOf":"2020-01-01"}'
+            $null = Invoke-TestCheck 'eolsnapshot'
+            (Get-Row 'APPLICATIONS' 'EOL snapshot')[0].Status | Should -Be 'MANUAL'
+        }
+        It 'no snapshot anywhere: INFO that names the places it looked' {
+            $null = Invoke-TestCheck 'eolsnapshot'
+            $r = (Get-Row 'APPLICATIONS' 'EOL snapshot')[0]
+            $r.Status | Should -Be 'INFO'; $r.Value | Should -Match 'No EOL snapshot found'
+            ($r.Details -join ' ') | Should -Match 'eol-snapshot.json'
+        }
+        It 'a named path is used first; a missing one is MANUAL' {
+            $EolSnapshotPath = Join-Path $script:SnapDir 'missing.json'
+            $null = Invoke-TestCheck 'eolsnapshot'
+            (Get-Row 'APPLICATIONS' 'EOL snapshot')[0].Status | Should -Be 'MANUAL'
+        }
+        It 'a file that is not JSON is MANUAL, not a clean result' {
+            Set-Content -LiteralPath (Join-Path $script:SnapDir 'eol-snapshot.json') -Value 'not json {'
+            (Invoke-TestCheck 'eolsnapshot').Outcome | Should -Be 'Completed'
+            $r = (Get-Row 'APPLICATIONS' 'EOL snapshot')[0]
+            $r.Status | Should -Be 'MANUAL'; $r.Value | Should -Match 'could not be read'
         }
     }
 

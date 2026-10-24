@@ -1492,6 +1492,26 @@ Register-Check -Id 'tasks' -Name 'Scheduled tasks' -Script {
 }
 
 # ---------------------------------------------------------------------------
+Register-Check -Id 'eolsnapshot' -Name 'End-of-life snapshot' -Script {
+    $scriptFolder = ''
+    if ($script:ScriptFolder) { $scriptFolder = $script:ScriptFolder }
+    $searched = @(Get-EolSnapshotSearchPath $EolSnapshotPath $scriptFolder $ReportDirectory)
+    $found = ''; $asOf = ''; $readError = ''
+    foreach ($candidate in $searched) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { $found = $candidate; break }
+    }
+    if ($found) {
+        try {
+            $snap = Get-Content -LiteralPath $found -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            $asOf = $snap.asOf
+            if ($asOf -is [datetime]) { $asOf = $asOf.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) }
+            $asOf = [string]$asOf
+        } catch { $readError = $_.Exception.Message }
+    }
+    $d = Get-EolSnapshotDecision $searched $found $asOf $readError ([bool]$EolSnapshotPath) (Get-Date)
+    Add-Result 'APPLICATIONS' 'EOL snapshot' $d.Status $d.Value $d.Details -Recommendation $d.Recommendation -Kind $d.Kind -Source 'eol-snapshot.json'
+}
+
 Register-Check -Id 'checklist' -Name 'Standard change checklist' -Script {
     $isVM = ($script:Data.Platform.Type -eq 'Virtual')
     $fallback = 'Confirm a tested bare-metal recovery path and a recent successful backup.'

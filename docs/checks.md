@@ -1,6 +1,6 @@
 # Checks reference
 
-The assessment runs 36 checks. The tables group them by report chapter; slow checks run last. Each check writes rows to the report under one or more
+The assessment runs 37 checks. The tables group them by report chapter; slow checks run last. Each check writes rows to the report under one or more
 **areas**. A check that throws is reported as `MANUAL` in *Collector coverage* ("Check did not complete");
 the absence of findings in that area is then **not** evidence of readiness.
 
@@ -42,6 +42,7 @@ check is added without one.
 | `printers` Print server: printers, ports and drivers (#148) | Print Server role or shared printers; printers (share, driver, port, published), the ports they use and every LPR port (address, protocol, queue), drivers (v3/v4, x64/x86, manufacturer), port monitors and print processors with the company of their DLL; `Get-Printer` and friends, CIM as fallback. Inbox virtual printers (Print to PDF, XPS, fax, OneNote) are left out | `WARNING` print server (keep the backup, test each shared printer after the upgrade); `WARNING` third-party drivers (vendor support for the target; for Windows Server 2025 the Windows Update note); `WARNING` per third-party port monitor or print processor; `WARNING` observation LPR port monitor port or LPD Service (deprecated); `INFO` drivers for 32-bit clients only; `MANUAL` printers not readable; `OK` not a print server |
 | `printbackup` Print server backup (slow, #148) | `PrintBrm.exe -B -F <EvidenceRoot>\Printers\<Computer>-IPU-Print-<time>\<Computer>-printers.printerExport` (reads the spooler configuration only); space estimate from `spool\drivers`; timeout *PrintBackupTimeoutMinutes*, counted against the slow-check budget | `OK` export saved (copy it off the server); `MANUAL` skipped for lack of space (needs 1.5 x `spool\drivers` + 1 GB free), switched off (*EnablePrintBackup*), PrintBrm missing or failed, or timed out; skipped when not a print server and after the upgrade |
 | `iis` IIS | Web Server role, sites and bindings; copies the IIS configuration files into `<EvidenceRoot>\IIS` (*EnableIISConfigEvidence*) | `WARNING` IIS installed (run `appcmd add backup` right before the change); `OK` configuration copied (path and SHA-256); `MANUAL` copy failed; `WARNING` observation shared configuration; `OK` not installed |
+| `eolsnapshot` End-of-life snapshot (#285) | `eol-snapshot.json` (ADR 0003): the file given with *EolSnapshotPath*, else next to the script, else in *ReportDirectory*; only its date is read. Reading a file makes no network call | `INFO` observation with the snapshot date; `INFO` observation when none is found (names the places it looked); `MANUAL` when the file is older than six months, cannot be read, has no date, or the file named with *EolSnapshotPath* is missing. The product-by-product end-of-life comparison follows with #286 and #275 |
 | `rds` Remote Desktop Services roles | Session Host and Licensing roles, licensing mode and servers | `ACTION` session host or licensing server; `OK` |
 
 ## Hardware and virtualization

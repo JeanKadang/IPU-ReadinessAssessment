@@ -100,12 +100,12 @@ jobs:
           # The snapshot ships with the scripts (#285). Older than six months
           # it cannot confirm that a release is still supported, so stale data
           # must not go out unnoticed.
-          ./build/Test-EolSnapshot.ps1 -Path data/eol-snapshot.json -CheckAge -MaxAgeMonths 6
+          ./build/Test-EolSnapshot.ps1 -Path src/eol-snapshot.json -CheckAge -MaxAgeMonths 6
       - name: Build the zip and hashes
         run: |
           name="IPU-ReadinessAssessment-$VERSION"
           mkdir -p "dist/$name/docs"
-          cp src/Windows-IPU-Readiness-Assessment.ps1 src/Merge-IPUAssessments.ps1 src/Get-IPUEolStatus.ps1 data/eol-snapshot.json README.md CHANGELOG.md LICENSE SECURITY.md "dist/$name/"
+          cp src/Windows-IPU-Readiness-Assessment.ps1 src/Merge-IPUAssessments.ps1 src/Get-IPUEolStatus.ps1 src/eol-snapshot.json README.md CHANGELOG.md LICENSE SECURITY.md "dist/$name/"
           cp docs/user-guide.md docs/checks.md docs/result-schema.md docs/result-schema.json "dist/$name/docs/"
           cp -r docs/examples "dist/$name/docs/"
           cp -r docs/samples "dist/$name/docs/"

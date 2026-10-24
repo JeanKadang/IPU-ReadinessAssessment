@@ -249,6 +249,10 @@ param(
     [bool]$EnablePrintBackup = $true,
     [ValidateRange(1, 240)][int]$PrintBackupTimeoutMinutes = 30,
 
+    # End-of-life snapshot (eol-snapshot.json, ADR 0003). Blank = look next to
+    # the script, then in the report folder. Reading a file makes no network call.
+    [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$EolSnapshotPath = '',
+
     # Output.
     [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$ReportDirectory = 'C:\Temp\IPU-Assessment',
     [bool]$WriteJson = $true,
@@ -396,6 +400,7 @@ $script:ReportSuffix      = $(if ($AssessmentMode -eq 'Post') { '-IPU-PostUpgrad
 $script:ReportBaseName    = $script:SafeComputerName + $script:ReportSuffix
 # A redacted report must not carry the computer name in its file name.
 if ($RedactReport) { $script:ReportBaseName = 'REDACTED-' + (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture) + $script:ReportSuffix }
+$script:ScriptFolder      = $PSScriptRoot   # where eol-snapshot.json is looked for first (#285)
 $script:ReportPath        = [IO.Path]::Combine($ReportDirectory, $script:ReportBaseName + '.html')
 $script:LogPath           = [IO.Path]::Combine($ReportDirectory, $script:SafeComputerName + $script:ReportSuffix + '.log')
 $script:JsonPath          = [IO.Path]::Combine($ReportDirectory, $script:ReportBaseName + '.json')
@@ -2929,6 +2934,49 @@ function Select-OsLicenseProduct {
     return [pscustomobject]@{ Primary = ($os | Select-Object -First 1); AddOns = $addOns }
 }
 
+function Get-EolSnapshotSearchPath {
+    # Pure (#285): where the assessment looks for eol-snapshot.json. An
+    # explicit -EolSnapshotPath comes first (a folder gets the file name added),
+    # then the script's folder, then the report folder.
+    param([string]$Explicit, [string]$ScriptFolder, [string]$ReportFolder)
+    $paths = @()
+    if ($Explicit) {
+        if ($Explicit -match '\.json$') { $paths += $Explicit } else { $paths += [IO.Path]::Combine($Explicit, 'eol-snapshot.json') }
+    }
+    foreach ($folder in @($ScriptFolder, $ReportFolder)) {
+        if ($folder) { $paths += [IO.Path]::Combine($folder, 'eol-snapshot.json') }
+    }
+    return @($paths | Select-Object -Unique)
+}
+
+function Get-EolSnapshotDecision {
+    # Pure (#285): the lookup result -> the row to show. Same rule as
+    # Get-IPUEolStatus.ps1 (ADR 0003): a snapshot older than the limit cannot
+    # confirm support, so it is MANUAL; no snapshot is one INFO row that says
+    # where it looked, never a clean result. A named -EolSnapshotPath that is
+    # missing is MANUAL: the operator asked for it. (The age rule is a second
+    # copy until the EOL functions become a shared source part, #287.)
+    param([string[]]$Searched, [string]$FoundPath, [string]$AsOf, [string]$ReadError, [bool]$ExplicitGiven, [datetime]$Today, [int]$MaxAgeMonths = 6)
+    $where = (@($Searched) -join '; ')
+    if (-not $FoundPath) {
+        if ($ExplicitGiven) {
+            return [pscustomobject]@{ Status = 'MANUAL'; Kind = 'Finding'; Value = 'The EOL snapshot named with -EolSnapshotPath was not found'; Details = @('Looked in: ' + $where); Recommendation = 'Check the path, or copy eol-snapshot.json from the release next to the script.' }
+        }
+        return [pscustomobject]@{ Status = 'INFO'; Kind = 'Observation'; Value = 'No EOL snapshot found; end-of-life dates are not checked'; Details = @('Looked in: ' + $where); Recommendation = 'Copy eol-snapshot.json from the release next to the script (or give -EolSnapshotPath) to have product end-of-life dates checked.' }
+    }
+    if ($ReadError) {
+        return [pscustomobject]@{ Status = 'MANUAL'; Kind = 'Finding'; Value = 'The EOL snapshot could not be read'; Details = @($FoundPath, $ReadError); Recommendation = 'Replace eol-snapshot.json with the copy from the release.' }
+    }
+    $d = [datetime]::MinValue
+    if (-not [datetime]::TryParseExact($AsOf, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$d)) {
+        return [pscustomobject]@{ Status = 'MANUAL'; Kind = 'Finding'; Value = 'The EOL snapshot has no usable date'; Details = @($FoundPath); Recommendation = 'Replace eol-snapshot.json with the copy from the release.' }
+    }
+    if ($d.AddMonths($MaxAgeMonths) -lt $Today.Date) {
+        return [pscustomobject]@{ Status = 'MANUAL'; Kind = 'Finding'; Value = ('The EOL snapshot is from ' + $d.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) + ', older than ' + $MaxAgeMonths + ' months'); Details = @($FoundPath); Recommendation = 'An old snapshot cannot confirm that a product is still supported. Use the snapshot from the latest release, or check the vendor lifecycle pages.' }
+    }
+    return [pscustomobject]@{ Status = 'INFO'; Kind = 'Observation'; Value = ('EOL snapshot from ' + $d.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)); Details = @($FoundPath, 'Data from endoflife.date (MIT licence).'); Recommendation = '' }
+}
+
 function Get-ActivationDecision {
     # Pure (#171): the activation row per channel. KMS clients name the host
     # that activated them, how it was found and the days to renewal; MAK,
@@ -5135,6 +5183,26 @@ Register-Check -Id 'tasks' -Name 'Scheduled tasks' -Script {
 }
 
 # ---------------------------------------------------------------------------
+Register-Check -Id 'eolsnapshot' -Name 'End-of-life snapshot' -Script {
+    $scriptFolder = ''
+    if ($script:ScriptFolder) { $scriptFolder = $script:ScriptFolder }
+    $searched = @(Get-EolSnapshotSearchPath $EolSnapshotPath $scriptFolder $ReportDirectory)
+    $found = ''; $asOf = ''; $readError = ''
+    foreach ($candidate in $searched) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { $found = $candidate; break }
+    }
+    if ($found) {
+        try {
+            $snap = Get-Content -LiteralPath $found -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            $asOf = $snap.asOf
+            if ($asOf -is [datetime]) { $asOf = $asOf.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) }
+            $asOf = [string]$asOf
+        } catch { $readError = $_.Exception.Message }
+    }
+    $d = Get-EolSnapshotDecision $searched $found $asOf $readError ([bool]$EolSnapshotPath) (Get-Date)
+    Add-Result 'APPLICATIONS' 'EOL snapshot' $d.Status $d.Value $d.Details -Recommendation $d.Recommendation -Kind $d.Kind -Source 'eol-snapshot.json'
+}
+
 Register-Check -Id 'checklist' -Name 'Standard change checklist' -Script {
     $isVM = ($script:Data.Platform.Type -eq 'Virtual')
     $fallback = 'Confirm a tested bare-metal recovery path and a recent successful backup.'

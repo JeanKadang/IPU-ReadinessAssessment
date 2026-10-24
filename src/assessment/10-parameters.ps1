@@ -72,6 +72,10 @@ param(
     [bool]$EnablePrintBackup = $true,
     [ValidateRange(1, 240)][int]$PrintBackupTimeoutMinutes = 30,
 
+    # End-of-life snapshot (eol-snapshot.json, ADR 0003). Blank = look next to
+    # the script, then in the report folder. Reading a file makes no network call.
+    [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$EolSnapshotPath = '',
+
     # Output.
     [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$ReportDirectory = 'C:\Temp\IPU-Assessment',
     [bool]$WriteJson = $true,

@@ -231,6 +231,7 @@ deliberately not inside the report folder, which is retrieved and shared.
 | `WriteJson` | `$true` | Write the JSON result (also the post-upgrade baseline) |
 | `RestrictOutputAcl` | `$true` | Folders the script creates (report folder, evidence folders) get access for SYSTEM and Administrators only. Existing folders are never changed; the report warns, with the `icacls` command to fix it, if an existing folder is readable by Everyone, Authenticated Users or Users. `$false` keeps inherited permissions |
 | `NumberCultureName` | `da-DK` | Culture used to format numbers in the SA result line. Invalid values fall back to invariant. The default is kept for existing SA jobs; set your own in a [profile file](#site-data-files-patterns-and-profile) |
+| `EolSnapshotPath` | blank | The end-of-life snapshot (`eol-snapshot.json`). Blank = next to the script, then in `ReportDirectory`. See [End-of-life data](#end-of-life-data) |
 | `RedactExisting` | blank | A folder or report file: write redacted copies of existing reports and stop (see [Sharing a report: redaction](#sharing-a-report-redaction)) |
 | `RedactReport` | `$false` | Replace names, addresses, accounts, SIDs and certificate details with placeholders in the HTML and JSON, for sharing outside the team. See [Sharing a report: redaction](#sharing-a-report-redaction) |
 | `WriteRedactionKey` | `$true` | With `-RedactReport` or `-RedactExisting`, also write the key that maps each placeholder to its original next to the redacted copies (see [Sharing a report: redaction](#sharing-a-report-redaction)). Share only the `REDACTED-*` files |
@@ -472,7 +473,7 @@ Most severe on the left. The **overall status is the most severe *finding***.
 
 The [checks reference](checks.md) lists every check with what it looks at and the results it can produce.
 
-36 checks. Fast checks run first; the slow ones (print server backup, DISM, SFC, Setup compatibility scan) run after the checkpoint report.
+37 checks. Fast checks run first; the slow ones (print server backup, DISM, SFC, Setup compatibility scan) run after the checkpoint report.
 
 ```mermaid
 mindmap
@@ -768,11 +769,17 @@ The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`
 
 `Get-IPUEolStatus.ps1` says whether a product version (a Windows Server release, SQL Server, PHP, .NET and others) is
 still supported, gets security fixes only, ends soon or has ended. It runs on a workstation, never on an assessed
-server, and is not part of the assessment or the fleet overview yet ([ADR 0003](adr/0003-end-of-life-lookup-architecture.md)).
+server, and is not part of the fleet overview yet ([ADR 0003](adr/0003-end-of-life-lookup-architecture.md)).
 
 - **Where the data is.** The release zip contains `eol-snapshot.json` next to the scripts (in the repository it is
-  `data/eol-snapshot.json`). It is a copy of [endoflife.date](https://endoflife.date) data, MIT-licensed; the licence
-  notice is inside the file.
+  `src/eol-snapshot.json`, next to the scripts there too). It is a copy of [endoflife.date](https://endoflife.date)
+  data, MIT-licensed; the licence notice is inside the file.
+- **The assessment finds it.** The assessment looks for `eol-snapshot.json` in the folder of
+  `-EolSnapshotPath`, then next to the script, then in `-ReportDirectory` (a file read, no network call) and shows one
+  row, *EOL snapshot*, under *Installed applications*: the snapshot date, or, when none is found, where it looked. A
+  snapshot older than six months, or one that cannot be read, is MANUAL. When SA deploys only the `.ps1`, copy
+  `eol-snapshot.json` to the server next to it. The comparison of each installed product with the snapshot follows
+  with #286 and #275.
 - **How old it may be.** A release is only published when the snapshot is at most six months old. A snapshot older than
   `-MaxAgeMonths` (default 6) cannot confirm that a release is still supported: that verdict becomes MANUAL, while
   end-of-life verdicts still show.
