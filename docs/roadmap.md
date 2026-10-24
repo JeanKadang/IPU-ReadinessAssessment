@@ -11,10 +11,7 @@ Next patch release: P1 correctness and failure-visibility fixes in the assessmen
 
 | Issue | Priority | Owner | Title |
 |---|---|---|---|
-| [#239](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/239) | P1 | Micker71 | Post-upgrade comparison is clean against an empty, partial or overwritten baseline |
 | [#130](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/130) | P2 | JeanKadang | PowerShell 4.0 support is only checked statically |
-| [#236](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/236) | P2 | JeanKadang | README lags behind 4.4.0 to 4.5.3: SPECIAL, evidence, redaction, build step |
-| [#280](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/280) | P3 | JeanKadang | Add docs/roadmap.md with the milestone plan |
 
 ## 4.6.0
 
