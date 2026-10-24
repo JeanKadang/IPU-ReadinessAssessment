@@ -23,6 +23,20 @@ Describe 'Build step: parts -> single file (#151)' {
     It 'says where the parts are, in the built file' {
         [IO.File]::ReadAllText($script:Committed) | Should -Match 'BUILT FROM  : src/assessment/\*\.ps1 by build/Build-Script\.ps1'
     }
+    It 'Get-IPUEolStatus.ps1 is exactly the build of its parts, and shares the core with the assessment (#275)' {
+        $manifest = Join-Path $script:Root 'src\eol\manifest.txt'
+        $out = Join-Path $TestDrive 'eol.ps1'
+        $null = & $script:Build -Manifest $manifest -OutputPath $out
+        (Get-FileHash -LiteralPath $out).Hash | Should -Be (Get-FileHash -LiteralPath (Join-Path $script:Root 'src\Get-IPUEolStatus.ps1')).Hash
+        [IO.File]::ReadAllText($manifest) | Should -Match '\.\./assessment/25-eol-core\.ps1'
+    }
+    It 'Merge-IPUAssessments.ps1 is exactly the build of its parts, and shares the core too (#275)' {
+        $manifest = Join-Path $script:Root 'src\merge\manifest.txt'
+        $out = Join-Path $TestDrive 'merge.ps1'
+        $null = & $script:Build -Manifest $manifest -OutputPath $out
+        (Get-FileHash -LiteralPath $out).Hash | Should -Be (Get-FileHash -LiteralPath (Join-Path $script:Root 'src\Merge-IPUAssessments.ps1')).Hash
+        [IO.File]::ReadAllText($manifest) | Should -Match '\.\./assessment/25-eol-core\.ps1'
+    }
     Context 'checks on a copy of the parts' {
         BeforeEach {
             $script:Copy = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))

@@ -1492,26 +1492,6 @@ Register-Check -Id 'tasks' -Name 'Scheduled tasks' -Script {
 }
 
 # ---------------------------------------------------------------------------
-Register-Check -Id 'eolsnapshot' -Name 'End-of-life snapshot' -Script {
-    $scriptFolder = ''
-    if ($script:ScriptFolder) { $scriptFolder = $script:ScriptFolder }
-    $searched = @(Get-EolSnapshotSearchPath $EolSnapshotPath $scriptFolder $ReportDirectory)
-    $found = ''; $asOf = ''; $readError = ''
-    foreach ($candidate in $searched) {
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) { $found = $candidate; break }
-    }
-    if ($found) {
-        try {
-            $snap = Get-Content -LiteralPath $found -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-            $asOf = $snap.asOf
-            if ($asOf -is [datetime]) { $asOf = $asOf.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) }
-            $asOf = [string]$asOf
-        } catch { $readError = $_.Exception.Message }
-    }
-    $d = Get-EolSnapshotDecision $searched $found $asOf $readError ([bool]$EolSnapshotPath) (Get-Date)
-    Add-Result 'APPLICATIONS' 'EOL snapshot' $d.Status $d.Value $d.Details -Recommendation $d.Recommendation -Kind $d.Kind -Source 'eol-snapshot.json'
-}
-
 Register-Check -Id 'eolcandidates' -Name 'Products for end-of-life checks' -Script {
     # Which products with an end-of-life date are on the server (#286, ADR
     # 0003). Only reads: uninstall entries, service command lines, file version
@@ -1558,6 +1538,34 @@ Register-Check -Id 'eolcandidates' -Name 'Products for end-of-life checks' -Scri
     }
 }
 
+Register-Check -Id 'eolsnapshot' -Name 'End-of-life snapshot' -Script {
+    $scriptFolder = ''
+    if ($script:ScriptFolder) { $scriptFolder = $script:ScriptFolder }
+    $searched = @(Get-EolSnapshotSearchPath $EolSnapshotPath $scriptFolder $ReportDirectory)
+    $found = ''; $asOf = ''; $readError = ''; $snap = $null
+    foreach ($candidate in $searched) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { $found = $candidate; break }
+    }
+    if ($found) {
+        try {
+            $snap = Get-Content -LiteralPath $found -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            $asOf = $snap.asOf
+            if ($asOf -is [datetime]) { $asOf = $asOf.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) }
+            $asOf = [string]$asOf
+        } catch { $readError = $_.Exception.Message }
+    }
+    $today = Get-Date
+    $d = Get-EolSnapshotDecision $searched $found $asOf $readError ([bool]$EolSnapshotPath) $today
+    Add-Result 'APPLICATIONS' 'EOL snapshot' $d.Status $d.Value $d.Details -Recommendation $d.Recommendation -Kind $d.Kind -Source 'eol-snapshot.json'
+    # With a readable snapshot, every product the eolcandidates check found gets a verdict (#275).
+    if (-not $found -or $readError -or -not $snap) { return }
+    foreach ($c in @($script:Data.EolCandidates)) {
+        $v = Get-EolCandidateVerdict $c $snap $today
+        $recommendation = Get-EolRecommendation $v
+        $kind = Get-EolResultKind $v
+        Add-Result 'APPLICATIONS' ('EOL: ' + $v.Name + ' ' + $c.Version) $v.Status $v.Text ($c.Source + ': ' + $c.Evidence) -Recommendation $recommendation -Kind $kind -Source 'eol-snapshot.json'
+    }
+}
 Register-Check -Id 'checklist' -Name 'Standard change checklist' -Script {
     $isVM = ($script:Data.Platform.Type -eq 'Virtual')
     $fallback = 'Confirm a tested bare-metal recovery path and a recent successful backup.'
@@ -1938,5 +1946,3 @@ function Invoke-RdpPolicyAssessment {
         Add-Result 'POLICY_EVIDENCE' 'EvidenceLocation' 'INFO' $script:Data.PolicyEvidence $root -Source 'Local filesystem'
     }
 }
-
-

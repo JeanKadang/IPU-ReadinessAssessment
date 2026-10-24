@@ -3,6 +3,7 @@
 00-header.ps1
 10-parameters.ps1
 20-detection-patterns.ps1
+25-eol-core.ps1
 30-core.ps1
 40-decision-rules.ps1
 50-checks.ps1

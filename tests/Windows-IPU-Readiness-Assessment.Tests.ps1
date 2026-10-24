@@ -1198,6 +1198,60 @@ Describe 'Products for end-of-life checks (#286)' {
     }
 }
 
+Describe 'End-of-life verdicts in the assessment (#275)' {
+    BeforeAll {
+        $script:Today = [datetime]'2026-10-24'
+        $script:Snap = ('{"asOf":"2026-10-01","products":{' +
+            '"php":[{"cycle":"8.9","eol":"2099-01-01","support":"2098-01-01"},{"cycle":"7.4","eol":"2022-11-28","support":"2021-11-28"},{"cycle":"8.1","eol":"2026-12-01","support":"2025-11-25"},{"cycle":"8.2","eol":"2028-12-31","support":"2025-12-31"}],' +
+            '"nginx":[]}}') | ConvertFrom-Json
+        function New-EolCandidate([string]$Product, [string]$Version) { [pscustomobject]@{ Product = $Product; Version = $Version; Source = 'Uninstall entry'; Evidence = 'x' } }
+    }
+    It 'past end of life is WARNING' {
+        $v = Get-EolCandidateVerdict (New-EolCandidate 'php' '7.4.33') $script:Snap $script:Today
+        $v.Status | Should -Be 'WARNING'; $v.State | Should -Be 'EndOfLife'; $v.Name | Should -Be 'PHP'
+    }
+    It 'ending within 180 days is INFO' {
+        $v = Get-EolCandidateVerdict (New-EolCandidate 'php' '8.1.2') $script:Snap $script:Today
+        $v.Status | Should -Be 'INFO'; $v.State | Should -Be 'EndingSoon'
+    }
+    It 'security fixes only is INFO, supported is OK' {
+        (Get-EolCandidateVerdict (New-EolCandidate 'php' '8.2.12') $script:Snap $script:Today).State | Should -Be 'SecurityOnly'
+        $v = Get-EolCandidateVerdict (New-EolCandidate 'php' '8.9.0') $script:Snap $script:Today
+        $v.Status | Should -Be 'OK'; $v.State | Should -Be 'Supported'
+    }
+    It 'a version that matches no release is MANUAL, not supported' {
+        $v = Get-EolCandidateVerdict (New-EolCandidate 'php' '5.6.40') $script:Snap $script:Today
+        $v.Status | Should -Be 'MANUAL'; $v.Text | Should -Match 'matches no known release'
+    }
+    It 'a product the snapshot has no releases for is MANUAL' {
+        (Get-EolCandidateVerdict (New-EolCandidate 'nginx' '1.25.3') $script:Snap $script:Today).Status | Should -Be 'MANUAL'
+        (Get-EolCandidateVerdict (New-EolCandidate 'redis' '7.0.1') $script:Snap $script:Today).Text | Should -Match 'No lifecycle data for Redis'
+        (Get-EolCandidateVerdict (New-EolCandidate 'php' '8.2.1') ([pscustomobject]@{ asOf = '2026-10-01' }) $script:Today).Status | Should -Be 'MANUAL'
+    }
+    It 'a snapshot older than six months cannot confirm support; end of life still shows' {
+        $old = ($script:Snap | ConvertTo-Json -Depth 6 | ConvertFrom-Json); $old.asOf = '2025-12-01'
+        $v = Get-EolCandidateVerdict (New-EolCandidate 'php' '8.9.0') $old $script:Today
+        $v.Status | Should -Be 'MANUAL'; $v.State | Should -Be 'Unconfirmed'; $v.Text | Should -Match 'months old'
+        (Get-EolCandidateVerdict (New-EolCandidate 'php' '7.4.33') $old $script:Today).Status | Should -Be 'WARNING'
+    }
+    It 'the date of a snapshot parsed by PowerShell 7 (a DateTime) is read too' {
+        $s = [pscustomobject]@{ asOf = [datetime]'2026-10-01'; products = $script:Snap.products }
+        (Get-EolCandidateVerdict (New-EolCandidate 'php' '8.9.0') $s $script:Today).Status | Should -Be 'OK'
+    }
+    It 'Windows Server is matched by release name (the shared core in the assessment)' {
+        ConvertTo-EolWindowsRelease '10.0.20348' | Should -Be '2022'
+        ConvertTo-EolWindowsRelease '2012R2' | Should -Be '2012-r2'
+        $snap = '{"asOf":"2026-10-01","products":{"windows-server":[{"cycle":"2012-r2","eol":"2023-10-10"}]}}' | ConvertFrom-Json
+        (Get-EolCandidateVerdict ([pscustomobject]@{ Product = 'windows-server'; Version = '6.3.9600' }) $snap $script:Today).State | Should -Be 'EndOfLife'
+    }
+    It 'the EOL core is one source part, built into both scripts' {
+        $core = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\src\assessment\25-eol-core.ps1'))
+        [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\src\Windows-IPU-Readiness-Assessment.ps1')).Contains($core) | Should -BeTrue
+        [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\src\Get-IPUEolStatus.ps1')).Contains($core) | Should -BeTrue
+        $core | Should -Match 'function Get-EolDecision'
+    }
+}
+
 Describe 'EOL snapshot beside the script (#285)' {
     Context 'Get-EolSnapshotSearchPath' {
         It 'looks at the named path, then the script folder, then the report folder' {

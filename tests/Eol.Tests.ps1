@@ -329,3 +329,30 @@ Describe 'Save-EolSnapshot' {
         Test-Path -LiteralPath $script:OutPath | Should -BeFalse
     }
 }
+
+Describe 'Verdicts for detected products - the shared core (#275)' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot '..\src\Get-IPUEolStatus.ps1')
+        $script:Snap = '{"asOf":"2026-10-01","products":{"php":[{"cycle":"7.4","eol":"2022-11-28","support":"2021-11-28"},{"cycle":"8.9","eol":"2099-01-01","support":"2098-01-01"}]}}' | ConvertFrom-Json
+        $script:Today = [datetime]'2026-10-24'
+    }
+    It 'Get-EolCandidateVerdict: end of life, supported, unknown product' {
+        (Get-EolCandidateVerdict ([pscustomobject]@{ Product = 'php'; Version = '7.4.33' }) $script:Snap $script:Today).State | Should -Be 'EndOfLife'
+        (Get-EolCandidateVerdict ([pscustomobject]@{ Product = 'php'; Version = '8.9.0' }) $script:Snap $script:Today).Status | Should -Be 'OK'
+        (Get-EolCandidateVerdict ([pscustomobject]@{ Product = 'redis'; Version = '7.0' }) $script:Snap $script:Today).Status | Should -Be 'MANUAL'
+    }
+    It 'Get-EolRecommendation: advice for end of life, ending soon, unconfirmed and unknown; none for supported' {
+        $mk = { param($state) [pscustomobject]@{ State = $state; Name = 'PHP'; Cycle = '7.4'; Version = '7.4.33'; EolDate = '2026-12-01' } }
+        Get-EolRecommendation (& $mk 'EndOfLife') | Should -Match 'Plan the upgrade or replacement of PHP 7.4'
+        Get-EolRecommendation (& $mk 'EndingSoon') | Should -Match 'before 2026-12-01'
+        Get-EolRecommendation (& $mk 'Unconfirmed') | Should -Match 'too old'
+        Get-EolRecommendation (& $mk 'Unknown') | Should -Match 'vendor page'
+        Get-EolRecommendation (& $mk 'Supported') | Should -Be ''
+        Get-EolRecommendation (& $mk 'SecurityOnly') | Should -Be ''
+    }
+    It 'Get-EolResultKind: findings, observations, evidence' {
+        foreach ($s in 'EndOfLife', 'Unconfirmed', 'Unknown') { Get-EolResultKind ([pscustomobject]@{ State = $s }) | Should -Be 'Finding' }
+        foreach ($s in 'EndingSoon', 'SecurityOnly') { Get-EolResultKind ([pscustomobject]@{ State = $s }) | Should -Be 'Observation' }
+        Get-EolResultKind ([pscustomobject]@{ State = 'Supported' }) | Should -Be 'Evidence'
+    }
+}

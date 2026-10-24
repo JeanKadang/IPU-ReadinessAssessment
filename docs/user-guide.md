@@ -752,6 +752,7 @@ The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`
 | `IPU-Fleet-Overview.html` | Cards with overall counts, a **Servers (worst first)** table, the **most common SPECIAL/BLOCKER/ACTION items** across the fleet with which servers have them, and a list of any files it could not read |
 | `IPU-Fleet-Servers.csv` | One row per server and mode: `ComputerName`, `Mode`, `Overall`, `Special`, `Blocker`, `Action`, `Warning`, `Manual`, `Target`, `CurrentOS`, `UpgradePath`, `InstallationMedia`, `Platform`, `DomainRole`, `SqlServer`, `CompatScan`, `CDrive`, `Activation`, `Nla`, `TopIssues`, `NotAssessed`, `Partial`, `Redacted`, `Completed`, `CollectorVersion`, `SourceFile` |
 | `IPU-Fleet-Findings.csv` | One row per BLOCKER, ACTION, WARNING or MANUAL finding: `ComputerName`, `Mode`, `Status`, `Area`, `Item`, `Value`, `Details`, `Recommendation`, `Command`, `Link`, `SourceFile`. Filter and pivot it in Excel |
+| `IPU-Fleet-Eol.csv` | One row per product and version with an end-of-life date that the servers reported (4.6.0): `Status`, `Product`, `Version`, `Release`, `State`, `EndOfLife`, `DaysLeft`, `ServerCount`, `Servers`, `Text`. Checked against `eol-snapshot.json`; without it every row is MANUAL (not checked) |
 
 ### How it decides
 
@@ -769,7 +770,8 @@ The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`
 
 `Get-IPUEolStatus.ps1` says whether a product version (a Windows Server release, SQL Server, PHP, .NET and others) is
 still supported, gets security fixes only, ends soon or has ended. It runs on a workstation, never on an assessed
-server, and is not part of the fleet overview yet ([ADR 0003](adr/0003-end-of-life-lookup-architecture.md)).
+server. The assessment and the fleet overview use the same rules ([ADR 0003](adr/0003-end-of-life-lookup-architecture.md)):
+one shared source part is built into all three scripts.
 
 - **Where the data is.** The release zip contains `eol-snapshot.json` next to the scripts (in the repository it is
   `src/eol-snapshot.json`, next to the scripts there too). It is a copy of [endoflife.date](https://endoflife.date)
@@ -777,9 +779,16 @@ server, and is not part of the fleet overview yet ([ADR 0003](adr/0003-end-of-li
 - **The assessment finds it.** The assessment looks for `eol-snapshot.json` in the folder of
   `-EolSnapshotPath`, then next to the script, then in `-ReportDirectory` (a file read, no network call) and shows one
   row, *EOL snapshot*, under *Installed applications*: the snapshot date, or, when none is found, where it looked. A
-  snapshot older than six months, or one that cannot be read, is MANUAL. When SA deploys only the `.ps1`, copy
-  `eol-snapshot.json` to the server next to it. The comparison of each installed product with the snapshot follows
-  with #286 and #275.
+  snapshot older than six months, or one that cannot be read, is MANUAL. With a snapshot, every product it found gets
+  its own row, *EOL: <product> <version>*: past end of life is a WARNING, ending within 180 days or security fixes only
+  is INFO, supported is OK, and a product the snapshot cannot place is MANUAL, never "supported". When SA deploys only
+  the `.ps1`, copy `eol-snapshot.json` to the server next to it.
+- **The fleet overview.** `Merge-IPUAssessments.ps1` reads the snapshot next to itself (or in the input folder, or
+  `-EolSnapshot <file>`), compares the products of all servers (`EolCandidates` in the results) and adds a section
+  *End-of-life products* to the overview with the verdict, the servers, the snapshot date and the attribution line, the
+  file `IPU-Fleet-Eol.csv`, a column `EndOfLifeProducts` in the servers CSV, and the findings the server's own report
+  did not already have. Without a snapshot the products are listed as *not checked*. Results from before 4.6.0 have no
+  product list.
 - **Which products.** The assessment records the products it finds in the result JSON as `EolCandidates` (check `eolcandidates`): SQL Server, MySQL, MariaDB, PostgreSQL, MongoDB, Oracle Database, Db2, Redis, Apache HTTP Server, Tomcat, nginx, PHP, .NET, .NET Framework, PowerShell, Python, Node.js, OpenSSL and the Java builds endoflife.date tracks. It reads uninstall entries, service executables, file version resources, the usual folders for PHP, Apache, nginx and OpenSSL, and the .NET Framework registry value. It never runs a product to ask for its version. A product in an unusual folder with no service and no uninstall entry is not found: an empty list means none found, not none installed.
 - **How old it may be.** A release is only published when the snapshot is at most six months old. A snapshot older than
   `-MaxAgeMonths` (default 6) cannot confirm that a release is still supported: that verdict becomes MANUAL, while

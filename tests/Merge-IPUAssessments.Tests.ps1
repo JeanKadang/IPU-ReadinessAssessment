@@ -338,3 +338,142 @@ Describe 'Merge-IPUAssessments.ps1 - CSV encoding and time zones (#252)' {
         $rows[0].Overall | Should -Be 'OK'
     }
 }
+
+Describe 'End-of-life verdicts in the fleet overview (#275)' {
+    BeforeAll {
+        # The pure functions live in parts of the merge script: load them as they are built in.
+        . (Join-Path $PSScriptRoot '..\src\assessment\25-eol-core.ps1')
+        . (Join-Path $PSScriptRoot '..\src\merge\20-eol-fleet.ps1')
+        $script:Today = [datetime]'2026-10-24'
+        $script:SnapJson = '{"asOf":"2026-10-01","products":{"php":[{"cycle":"7.4","eol":"2022-11-28","support":"2021-11-28"},{"cycle":"8.9","eol":"2099-01-01","support":"2098-01-01"}],"redis":[]}}'
+        $script:Snap = $script:SnapJson | ConvertFrom-Json
+        function New-Cand([string]$Product, [string]$Version) { [pscustomobject]@{ Product = $Product; Version = $Version; Source = 'File probe'; Evidence = 'php.exe' } }
+        function New-EolServer([string]$Name, [object[]]$Candidates) { [pscustomobject]@{ ComputerName = $Name; Candidates = $Candidates } }
+    }
+    Context 'pure functions' {
+        It 'Find-EolSnapshotFile: the named file wins, else the first folder that has one' {
+            Find-EolSnapshotFile 'D:\x\snap.json' @($TestDrive) | Should -Be 'D:\x\snap.json'
+            $a = Join-Path $TestDrive 'a'; $b = Join-Path $TestDrive 'b'
+            New-Item -ItemType Directory -Path $a, $b | Out-Null
+            Set-Content -LiteralPath (Join-Path $b 'eol-snapshot.json') -Value '{}'
+            Find-EolSnapshotFile '' @($a, $b, '') | Should -Be (Join-Path $b 'eol-snapshot.json')
+            Find-EolSnapshotFile '' @($a) | Should -Be ''
+        }
+        It 'Get-EolFleetRow: one row per product and version, servers counted, worst first' {
+            $servers = @(
+                (New-EolServer 'SRV-A' @((New-Cand 'php' '8.9.1'), (New-Cand 'php' '7.4.33'))),
+                (New-EolServer 'SRV-B' @((New-Cand 'php' '7.4.33'), (New-Cand 'redis' '7.0.1'))))
+            $rows = @(Get-EolFleetRow $servers $script:Snap $script:Today)
+            $rows.Count | Should -Be 3
+            $rows[0].Status | Should -Be 'WARNING'; $rows[0].Product | Should -Be 'PHP'; $rows[0].Version | Should -Be '7.4.33'
+            $rows[0].ServerCount | Should -Be 2; $rows[0].Servers | Should -Be 'SRV-A, SRV-B'
+            $rows[1].Status | Should -Be 'MANUAL'; $rows[1].Product | Should -Be 'Redis'
+            $rows[2].Status | Should -Be 'OK'
+        }
+        It 'Get-EolFleetRow: without a snapshot every product is MANUAL, never supported' {
+            $rows = @(Get-EolFleetRow @((New-EolServer 'SRV-A' @((New-Cand 'php' '8.9.1')))) $null $script:Today)
+            $rows[0].Status | Should -Be 'MANUAL'; $rows[0].Text | Should -Match 'Not checked'; $rows[0].Product | Should -Be 'PHP'
+        }
+        It 'Get-EolFleetRow: no servers or no candidates, no rows' {
+            @(Get-EolFleetRow @() $script:Snap $script:Today).Count | Should -Be 0
+            @(Get-EolFleetRow @((New-EolServer 'SRV-A' @())) $script:Snap $script:Today).Count | Should -Be 0
+        }
+        It 'Get-EolServerFinding: only findings, and not the ones the server already reported' {
+            $c = @((New-Cand 'php' '7.4.33'), (New-Cand 'php' '8.9.1'), (New-Cand 'redis' '7.0.1'))
+            $f = @(Get-EolServerFinding $c @() $script:Snap $script:Today)
+            $f.Count | Should -Be 2
+            ($f | Where-Object Item -eq 'EOL: PHP 7.4.33').Status | Should -Be 'WARNING'
+            ($f | Where-Object Item -eq 'EOL: Redis 7.0.1').Status | Should -Be 'MANUAL'
+            @(Get-EolServerFinding $c @('EOL: PHP 7.4.33') $script:Snap $script:Today).Count | Should -Be 1
+            @(Get-EolServerFinding $c @() $null $script:Today).Count | Should -Be 0
+        }
+        It 'Get-EolServerSummary: the products past end of life' {
+            Get-EolServerSummary @((New-Cand 'php' '7.4.33'), (New-Cand 'php' '8.9.1')) $script:Snap $script:Today | Should -Be 'PHP 7.4.33'
+            Get-EolServerSummary @((New-Cand 'php' '8.9.1')) $script:Snap $script:Today | Should -Be ''
+            Get-EolServerSummary @((New-Cand 'php' '7.4.33')) $null $script:Today | Should -Be ''
+        }
+    }
+    Context 'the merge script' {
+        BeforeAll {
+            $script:MergeScript = Join-Path $PSScriptRoot '..\src\Merge-IPUAssessments.ps1'
+            function Save-Fake($Object, [string]$Folder, [string]$Name) { $Object | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $Folder $Name) -Encoding UTF8 }
+            function New-Server([string]$Computer, [object[]]$Candidates, [object[]]$Results = @()) {
+                $counts = [ordered]@{ BLOCKER = 0; ACTION = 0; WARNING = 0; MANUAL = 0 }
+                $o = [pscustomobject][ordered]@{
+                    Schema = 'IPU-Assessment/1'; CollectorVersion = '4.6.0'; ComputerName = $Computer; Mode = 'Pre'; TargetServerVersion = '2025'
+                    Started = '2026-10-06 10:00:00'; Completed = '2026-10-06 10:00:00'; Partial = $false; Overall = 'OK'; Counts = [pscustomobject]$counts
+                    Facts = [pscustomobject]@{ CurrentOS = 'Windows Server 2016 Standard'; UpgradePath = 'Supported'; RecommendedMedia = 'x'; Platform = 'Virtual'; DomainRole = 'Member server'; SqlServer = ''; CompatScan = ''; CDrive = ''; Activation = '' }
+                    Results = @($Results); CheckRuns = @([pscustomobject]@{ Id = 'baseline'; Name = 'Baseline inventory'; Phase = 'Fast'; Outcome = 'Completed'; Duration = '00:00:01'; Message = '' })
+                    Snapshot = [pscustomobject]@{}
+                    EolCandidates = @($Candidates)
+                }
+                return $o
+            }
+            $script:EIn = Join-Path $TestDrive 'ein'; New-Item -ItemType Directory -Path $script:EIn | Out-Null
+            Save-Fake (New-Server 'SRV-A' @((New-Cand 'php' '7.4.33'), (New-Cand 'php' '8.9.1'))) $script:EIn 'SRV-A-IPU-Assessment.json'
+            # SRV-B already has its own EOL row from a snapshot on the server: not added twice.
+            $own = [pscustomobject]@{ CheckId = 'eolsnapshot'; Area = 'APPLICATIONS'; Item = 'EOL: PHP 7.4.33'; Status = 'WARNING'; Kind = 'Finding'; Value = 'v'; Details = 'd'; Recommendation = 'r'; Source = 's' }
+            Save-Fake (New-Server 'SRV-B' @((New-Cand 'php' '7.4.33')) @($own)) $script:EIn 'SRV-B-IPU-Assessment.json'
+            # A result from before 4.6.0 has no EolCandidates at all.
+            $old = New-Server 'SRV-OLD' @(); $old.PSObject.Properties.Remove('EolCandidates')
+            Save-Fake $old $script:EIn 'SRV-OLD-IPU-Assessment.json'
+            Set-Content -LiteralPath (Join-Path $script:EIn 'snap.json') -Value $script:SnapJson
+        }
+        It 'with a snapshot: the EOL file, the servers column, the findings and the overview agree' {
+            $out = Join-Path $TestDrive 'eout1'
+            $text = & $script:MergeScript -InputFolder $script:EIn -OutputFolder $out -EolSnapshot (Join-Path $script:EIn 'snap.json')
+            ($text -join "`n") | Should -Match 'IPU-Fleet-Eol.csv'
+            $eol = @(Import-Csv -LiteralPath (Join-Path $out 'IPU-Fleet-Eol.csv') -Delimiter ';')
+            $eol.Count | Should -Be 2
+            $eol[0].Status | Should -Be 'WARNING'; $eol[0].Product | Should -Be 'PHP'; $eol[0].ServerCount | Should -Be '2'
+            $servers = @(Import-Csv -LiteralPath (Join-Path $out 'IPU-Fleet-Servers.csv') -Delimiter ';')
+            ($servers | Where-Object ComputerName -eq 'SRV-A').EndOfLifeProducts | Should -Be 'PHP 7.4.33'
+            ($servers | Where-Object ComputerName -eq 'SRV-OLD').EndOfLifeProducts | Should -Be ''
+            $findings = @(Import-Csv -LiteralPath (Join-Path $out 'IPU-Fleet-Findings.csv') -Delimiter ';' | Where-Object { $_.Item -like 'EOL: *' })
+            @($findings | Where-Object ComputerName -eq 'SRV-A').Count | Should -Be 1
+            @($findings | Where-Object ComputerName -eq 'SRV-B').Count | Should -Be 1   # its own row, not doubled
+            $html = Get-Content -LiteralPath (Join-Path $out 'IPU-Fleet-Overview.html') -Raw
+            $html | Should -Match 'End-of-life products'
+            $html | Should -Match 'Snapshot from 2026-10-01'
+            $html | Should -Match 'End-of-life data from endoflife.date \(https://endoflife.date\), MIT License'
+        }
+        It 'without a snapshot: listed as not checked, a note says so, nothing is called supported' {
+            $dir = Join-Path $TestDrive 'ein2'; New-Item -ItemType Directory -Path $dir | Out-Null
+            Save-Fake (New-Server 'SRV-A' @((New-Cand 'php' '8.9.1'))) $dir 'SRV-A-IPU-Assessment.json'
+            $out = Join-Path $TestDrive 'eout2'
+            $text = & $script:MergeScript -InputFolder $dir -OutputFolder $out -EolSnapshot (Join-Path $dir 'missing.json')
+            $eol = @(Import-Csv -LiteralPath (Join-Path $out 'IPU-Fleet-Eol.csv') -Delimiter ';')
+            $eol[0].Status | Should -Be 'MANUAL'; $eol[0].Text | Should -Match 'Not checked'
+            ($text -join "`n") | Should -Match 'could not be read'
+            (Get-Content -LiteralPath (Join-Path $out 'IPU-Fleet-Overview.html') -Raw) | Should -Match 'listed but not checked'
+            @(Import-Csv -LiteralPath (Join-Path $out 'IPU-Fleet-Findings.csv') -Delimiter ';' | Where-Object { $_.Item -like 'EOL: *' }).Count | Should -Be 0
+        }
+        It 'a snapshot older than six months says so; end of life still shows' {
+            $dir = Join-Path $TestDrive 'ein3'; New-Item -ItemType Directory -Path $dir | Out-Null
+            Save-Fake (New-Server 'SRV-A' @((New-Cand 'php' '7.4.33'), (New-Cand 'php' '8.9.1'))) $dir 'SRV-A-IPU-Assessment.json'
+            Set-Content -LiteralPath (Join-Path $dir 'eol-snapshot.json') -Value ($script:SnapJson.Replace('2026-10-01', '2020-01-01'))
+            $out = Join-Path $TestDrive 'eout3'
+            $null = & $script:MergeScript -InputFolder $dir -OutputFolder $out -EolSnapshot (Join-Path $dir eol-snapshot.json)
+            $eol = @(Import-Csv -LiteralPath (Join-Path $out 'IPU-Fleet-Eol.csv') -Delimiter ';')
+            ($eol | Where-Object Version -eq '7.4.33').Status | Should -Be 'WARNING'
+            ($eol | Where-Object Version -eq '8.9.1').Status | Should -Be 'MANUAL'
+            (Get-Content -LiteralPath (Join-Path $out 'IPU-Fleet-Overview.html') -Raw) | Should -Match 'cannot confirm'
+        }
+        It 'a Windows Server release is matched by name in the merge script too' {
+            $dir = Join-Path $TestDrive 'ein5'; New-Item -ItemType Directory -Path $dir | Out-Null
+            Save-Fake (New-Server 'SRV-W' @((New-Cand 'windows-server' '6.3.9600'))) $dir 'SRV-W-IPU-Assessment.json'
+            Set-Content -LiteralPath (Join-Path $dir 'snap.json') -Value '{"asOf":"2026-10-01","products":{"windows-server":[{"cycle":"2012-r2","eol":"2023-10-10"}]}}'
+            $out = Join-Path $TestDrive 'eout5'
+            $null = & $script:MergeScript -InputFolder $dir -OutputFolder $out -EolSnapshot (Join-Path $dir 'snap.json')
+            $eol = @(Import-Csv -LiteralPath (Join-Path $out 'IPU-Fleet-Eol.csv') -Delimiter ';')
+            $eol[0].Status | Should -Be 'WARNING'; $eol[0].Release | Should -Be '2012-r2'
+        }
+        It 'no server reports products: the section says so' {
+            $dir = Join-Path $TestDrive 'ein4'; New-Item -ItemType Directory -Path $dir | Out-Null
+            Save-Fake (New-Server 'SRV-A' @()) $dir 'SRV-A-IPU-Assessment.json'
+            $out = Join-Path $TestDrive 'eout4'
+            $null = & $script:MergeScript -InputFolder $dir -OutputFolder $out -EolSnapshot (Join-Path $script:EIn 'snap.json')
+            (Get-Content -LiteralPath (Join-Path $out 'IPU-Fleet-Overview.html') -Raw) | Should -Match 'No server reported a product'
+        }
+    }
+}
