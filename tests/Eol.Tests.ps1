@@ -261,7 +261,7 @@ Describe 'Test-EolSnapshotFile' {
         $r.Ok | Should -BeFalse; $r.Age.State | Should -Be 'Unknown'
     }
     It 'the snapshot committed in data/ has the structure the release needs (age is checked at release time)' {
-        $r = Test-EolSnapshotFile -Path (Join-Path $PSScriptRoot '..\data\eol-snapshot.json')
+        $r = Test-EolSnapshotFile -Path (Join-Path $PSScriptRoot '..\src\eol-snapshot.json')
         $r.Problems | Should -BeNullOrEmpty
     }
 }

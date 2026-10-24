@@ -31,6 +31,7 @@ $script:ReportSuffix      = $(if ($AssessmentMode -eq 'Post') { '-IPU-PostUpgrad
 $script:ReportBaseName    = $script:SafeComputerName + $script:ReportSuffix
 # A redacted report must not carry the computer name in its file name.
 if ($RedactReport) { $script:ReportBaseName = 'REDACTED-' + (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture) + $script:ReportSuffix }
+$script:ScriptFolder      = $PSScriptRoot   # where eol-snapshot.json is looked for first (#285)
 $script:ReportPath        = [IO.Path]::Combine($ReportDirectory, $script:ReportBaseName + '.html')
 $script:LogPath           = [IO.Path]::Combine($ReportDirectory, $script:SafeComputerName + $script:ReportSuffix + '.log')
 $script:JsonPath          = [IO.Path]::Combine($ReportDirectory, $script:ReportBaseName + '.json')

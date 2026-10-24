@@ -1,12 +1,12 @@
 <#
-    Checks data/eol-snapshot.json before it ships. The release workflow runs
+    Checks src/eol-snapshot.json before it ships. The release workflow runs
     it with -CheckAge, so a snapshot older than -MaxAgeMonths stops the
     release (#285). Exit code 1 and a GitHub error annotation on any problem.
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '', Justification = 'GitHub workflow commands must be written to the host stream.')]
 [CmdletBinding()]
 param(
-    [string]$Path = 'data/eol-snapshot.json',
+    [string]$Path = 'src/eol-snapshot.json',
     [switch]$CheckAge,
     [int]$MaxAgeMonths = 6
 )

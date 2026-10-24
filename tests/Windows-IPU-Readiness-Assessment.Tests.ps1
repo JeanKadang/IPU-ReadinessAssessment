@@ -1053,6 +1053,61 @@ Describe 'KMS renewal warning and the OS licence product (#248)' {
     }
 }
 
+Describe 'EOL snapshot beside the script (#285)' {
+    Context 'Get-EolSnapshotSearchPath' {
+        It 'looks at the named path, then the script folder, then the report folder' {
+            $p = Get-EolSnapshotSearchPath 'D:\Tools\snap.json' 'C:\IPU' 'C:\Temp\Reports'
+            $p | Should -Be @('D:\Tools\snap.json', 'C:\IPU\eol-snapshot.json', 'C:\Temp\Reports\eol-snapshot.json')
+        }
+        It 'a folder as the named path gets the file name added' {
+            (Get-EolSnapshotSearchPath 'D:\Tools' 'C:\IPU' '')[0] | Should -Be 'D:\Tools\eol-snapshot.json'
+        }
+        It 'without a named path the script folder comes first; empty folders are left out; duplicates once' {
+            @(Get-EolSnapshotSearchPath '' 'C:\IPU' 'C:\IPU').Count | Should -Be 1
+            @(Get-EolSnapshotSearchPath '' '' '').Count | Should -Be 0
+        }
+    }
+    Context 'Get-EolSnapshotDecision' {
+        BeforeAll { $script:Today = [datetime]'2026-10-24' }
+        It 'a fresh snapshot is an INFO observation with its date' {
+            $d = Get-EolSnapshotDecision @('C:\IPU\eol-snapshot.json') 'C:\IPU\eol-snapshot.json' '2026-10-01' '' $false $script:Today
+            $d.Status | Should -Be 'INFO'; $d.Kind | Should -Be 'Observation'; $d.Value | Should -Be 'EOL snapshot from 2026-10-01'
+        }
+        It 'no snapshot is one INFO row that says where it looked, never a clean result' {
+            $d = Get-EolSnapshotDecision @('C:\IPU\eol-snapshot.json', 'C:\R\eol-snapshot.json') '' '' '' $false $script:Today
+            $d.Status | Should -Be 'INFO'; $d.Value | Should -Match 'No EOL snapshot found'
+            $d.Details[0] | Should -Match 'C:\\IPU\\eol-snapshot.json; C:\\R\\eol-snapshot.json'
+        }
+        It 'a named path that is missing is MANUAL: the operator asked for it' {
+            $d = Get-EolSnapshotDecision @('D:\x.json') '' '' '' $true $script:Today
+            $d.Status | Should -Be 'MANUAL'; $d.Kind | Should -Be 'Finding'
+        }
+        It 'a snapshot older than six months is MANUAL; exactly six months is still fresh' {
+            (Get-EolSnapshotDecision @('p') 'p' '2026-04-24' '' $false $script:Today).Status | Should -Be 'INFO'
+            $d = Get-EolSnapshotDecision @('p') 'p' '2026-04-23' '' $false $script:Today
+            $d.Status | Should -Be 'MANUAL'; $d.Value | Should -Match 'older than 6 months'
+        }
+        It 'the age limit can be changed' {
+            (Get-EolSnapshotDecision @('p') 'p' '2026-08-01' '' $false $script:Today 2).Status | Should -Be 'MANUAL'
+        }
+        It 'a read error and a missing date are MANUAL' {
+            (Get-EolSnapshotDecision @('p') 'p' '' 'Unexpected character' $false $script:Today).Value | Should -Match 'could not be read'
+            (Get-EolSnapshotDecision @('p') 'p' '' '' $false $script:Today).Value | Should -Match 'no usable date'
+            (Get-EolSnapshotDecision @('p') 'p' 'yesterday' '' $false $script:Today).Status | Should -Be 'MANUAL'
+        }
+    }
+    It 'the snapshot that ships sits next to the script and is read by the assessment' {
+        $dir = Join-Path $PSScriptRoot '..\src'
+        Test-Path -LiteralPath (Join-Path $dir 'eol-snapshot.json') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $PSScriptRoot '..\data\eol-snapshot.json') | Should -BeFalse
+        $script:ScriptFolder | Should -Not -BeNullOrEmpty
+        # The file the release ships is one the check reads: it has a date the decision accepts.
+        $asOf = [string]((Get-Content -LiteralPath (Join-Path $dir 'eol-snapshot.json') -Raw | ConvertFrom-Json).asOf)
+        $asOf | Should -Match '^\d{4}-\d{2}-\d{2}$'
+        (Get-EolSnapshotDecision @('p') 'p' $asOf '' $false ([datetime]$asOf)).Value | Should -Be ('EOL snapshot from ' + $asOf)
+    }
+}
+
 Describe 'Language-neutral parsing (#246)' {
     BeforeAll {
         function New-VssWriter([string]$Name, $Code, [string]$Err) { [pscustomobject]@{ Name = $Name; StateCode = $Code; StateText = ''; LastError = $Err } }
