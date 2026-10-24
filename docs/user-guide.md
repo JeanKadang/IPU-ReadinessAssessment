@@ -165,6 +165,7 @@ These are project values, not Microsoft minimums (unless noted).
 | `GroupPolicyMaxAgeDays` | 7 | Domain members: warn when Group Policy has not applied for longer |
 | `AVMaxAgeDays` | 3 | Warn when antivirus signatures are older |
 | `CertificateWarningDays` | 90 | Warn on certificates expiring sooner |
+| `KmsRenewWarnDays` | 165 | A KMS client with fewer days left than this has missed two renewal windows (activation lasts 180 days, renews every 7): WARNING |
 | `SystemPartitionMinFreeMB` | 50 | Minimum free space on the system partition |
 | `RecoveryPartitionMinFreeMB` | 250 | Minimum free space on the recovery partition (Microsoft WinRE guidance) |
 

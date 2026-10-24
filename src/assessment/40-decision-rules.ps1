@@ -1358,11 +1358,30 @@ function Get-OptionalProperty {
     return $null
 }
 
+function Select-OsLicenseProduct {
+    # Pure (#248): the Windows operating system licence among the installed
+    # SoftwareLicensingProduct records. An add-on (an ESU licence, flagged
+    # LicenseIsAddon, or named ESU / Extended Security Updates) is never the
+    # OS licence: on a 2012 R2 server with ESU it can read "Licensed" while the
+    # OS licence is in notification state. Licensed OS products come first.
+    # Returns Primary (or $null) and AddOns.
+    param([object[]]$Products)
+    $isAddOn = {
+        param($p)
+        $flag = $false; if ($p.PSObject.Properties['LicenseIsAddon']) { $flag = [bool]$p.LicenseIsAddon }
+        return ($flag -or ([string]$p.Name + ' ' + [string]$p.Description) -match '\bESU\b|Extended Security')
+    }
+    $all = @(@($Products) | Where-Object { $_ })
+    $addOns = @($all | Where-Object { & $isAddOn $_ })
+    $os = @($all | Where-Object { -not (& $isAddOn $_) } | Sort-Object @{Expression={ if ([int]$_.LicenseStatus -eq 1) { 0 } else { 1 } }}, Name)
+    return [pscustomobject]@{ Primary = ($os | Select-Object -First 1); AddOns = $addOns }
+}
+
 function Get-ActivationDecision {
     # Pure (#171): the activation row per channel. KMS clients name the host
     # that activated them, how it was found and the days to renewal; MAK,
     # AVMA, OEM and retail get their own plain text, never KMS wording.
-    param([string]$Kind, [int]$LicenseStatus, [string]$StateName, [string]$Channel, $GraceMinutes, [string]$DiscoveredHost, [string]$DiscoveredPort, [string]$ConfiguredHost, [string]$ConfiguredPort, [int]$RenewWarnDays = 30)
+    param([string]$Kind, [int]$LicenseStatus, [string]$StateName, [string]$Channel, $GraceMinutes, [string]$DiscoveredHost, [string]$DiscoveredPort, [string]$ConfiguredHost, [string]$ConfiguredPort, [int]$RenewWarnDays = 165)
     $licensed = ($LicenseStatus -eq 1)
     $days = $null; if ($null -ne $GraceMinutes -and [int64]$GraceMinutes -gt 0) { $days = [int][math]::Floor([int64]$GraceMinutes / 1440) }
     $r = [pscustomobject]@{ Status = 'OK'; Value = ''; Details = @(); Text = ''; KmsHost = ''; KmsEndpoint = '' }
