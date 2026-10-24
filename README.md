@@ -28,6 +28,7 @@ For many servers, `Merge-IPUAssessments.ps1` turns all the JSON results into a f
 | Fleet overview | Whole estate at a glance, worst server first | `IPU-Fleet-Overview.html` |
 | Servers sheet | One row per server, for Excel | `IPU-Fleet-Servers.csv` |
 | Findings sheet | Every finding, one row each, for filtering | `IPU-Fleet-Findings.csv` |
+| End-of-life products | Every product with an end-of-life date, its verdict and the servers | `IPU-Fleet-Eol.csv` |
 
 ## How it works
 

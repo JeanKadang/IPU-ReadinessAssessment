@@ -16,6 +16,7 @@ through SA, as before.
 | `00-header.ps1` | Comment header, synopsis, parameters help, version history |
 | `10-parameters.ps1` | The `param()` block (the defaults SA uses) |
 | `20-detection-patterns.ps1` | Built-in detection patterns |
+| `25-eol-core.ps1` | End-of-life rules and product tables, **shared** with `Get-IPUEolStatus.ps1` and `Merge-IPUAssessments.ps1` (see below) |
 | `30-core.ps1` | Shared helpers: results, logging, CIM/registry access, redaction |
 | `40-decision-rules.ps1` | Pure decision functions (unit-tested) |
 | `50-checks.ps1` | The checks that collect data |
@@ -42,6 +43,21 @@ the manifest.
 
 The built file stays committed at its old path, so the tests, the smoke test, the release workflow, the checksums and
 every link in the documentation keep working unchanged. Tests and CI test exactly the file operators run.
+
+## Three more built scripts (ADR 0003, #275)
+
+`Get-IPUEolStatus.ps1` and `Merge-IPUAssessments.ps1` are built the same way, from `src/eol/` and `src/merge/` (each
+with its own `manifest.txt`):
+
+```powershell
+pwsh ./build/Build-Script.ps1 -Manifest src/eol/manifest.txt   -OutputPath src/Get-IPUEolStatus.ps1
+pwsh ./build/Build-Script.ps1 -Manifest src/merge/manifest.txt -OutputPath src/Merge-IPUAssessments.ps1
+```
+
+The end-of-life functions (the verdict rules and the product tables) are one shared part,
+`src/assessment/25-eol-core.ps1`, listed in all three manifests as `../assessment/25-eol-core.ps1`, so the
+assessment, the EOL script and the merge step give the same verdict and cannot drift apart. Edit it once, then rebuild
+all three. CI checks each built file against its parts.
 
 ## Later: a second script
 

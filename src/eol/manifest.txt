@@ -1,0 +1,7 @@
+# Parts of Get-IPUEolStatus.ps1, in build order (ADR 0002, ADR 0003).
+# build/Build-Script.ps1 -Manifest src/eol/manifest.txt -OutputPath src/Get-IPUEolStatus.ps1
+# joins them. 25-eol-core.ps1 is shared with the assessment.
+00-header.ps1
+../assessment/25-eol-core.ps1
+20-snapshot.ps1
+30-main.ps1

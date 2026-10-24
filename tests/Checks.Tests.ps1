@@ -2083,6 +2083,57 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
         }
     }
 
+    Context 'EOL verdicts per product (#275)' {
+        BeforeEach {
+            $script:SnapDir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $null = New-Item -ItemType Directory -Path $script:SnapDir
+            $script:ScriptFolder = $script:SnapDir
+            $EolSnapshotPath = ''
+            $ReportDirectory = Join-Path $TestDrive 'no-reports'
+            $today = (Get-Date).ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+            $json = '{"asOf":"' + $today + '","products":{"php":[{"cycle":"7.4","eol":"2022-11-28","support":"2021-11-28"},{"cycle":"8.9","eol":"2099-01-01","support":"2098-01-01"}],"redis":[]}}'
+            Set-Content -LiteralPath (Join-Path $script:SnapDir 'eol-snapshot.json') -Value $json
+            $script:Data.EolCandidates = @(
+                [pscustomobject]@{ Product = 'php'; Version = '7.4.33'; Source = 'File probe'; Evidence = 'php.exe' },
+                [pscustomobject]@{ Product = 'php'; Version = '8.9.1'; Source = 'Uninstall entry'; Evidence = 'PHP 8.9' },
+                [pscustomobject]@{ Product = 'redis'; Version = '7.0.1'; Source = 'Service file'; Evidence = 'Redis' })
+        }
+        It 'each product gets a row: end of life WARNING with advice, supported OK, no data MANUAL' {
+            (Invoke-TestCheck 'eolsnapshot').Outcome | Should -Be 'Completed'
+            $eol = (Get-Row 'APPLICATIONS' 'EOL: PHP 7.4.33')[0]
+            $eol.Status | Should -Be 'WARNING'; $eol.Kind | Should -Be 'Finding'; $eol.Recommendation | Should -Match 'Plan the upgrade'
+            $ok = (Get-Row 'APPLICATIONS' 'EOL: PHP 8.9.1')[0]
+            $ok.Status | Should -Be 'OK'; $ok.Kind | Should -Be 'Evidence'
+            $none = (Get-Row 'APPLICATIONS' 'EOL: Redis 7.0.1')[0]
+            $none.Status | Should -Be 'MANUAL'; $none.Kind | Should -Be 'Finding'
+            (Get-Row 'APPLICATIONS' 'EOL snapshot')[0].Status | Should -Be 'INFO'
+        }
+        It 'without a snapshot the products are not checked and nothing says supported' {
+            Remove-Item -LiteralPath (Join-Path $script:SnapDir 'eol-snapshot.json')
+            $null = Invoke-TestCheck 'eolsnapshot'
+            @($script:Results | Where-Object { $_.Item -like 'EOL: *' }).Count | Should -Be 0
+            (Get-Row 'APPLICATIONS' 'EOL snapshot')[0].Value | Should -Match 'No EOL snapshot found'
+        }
+        It 'an unreadable snapshot gives one MANUAL row and no product rows' {
+            Set-Content -LiteralPath (Join-Path $script:SnapDir 'eol-snapshot.json') -Value '{ broken'
+            $null = Invoke-TestCheck 'eolsnapshot'
+            @($script:Results | Where-Object { $_.Item -like 'EOL: *' }).Count | Should -Be 0
+            (Get-Row 'APPLICATIONS' 'EOL snapshot')[0].Status | Should -Be 'MANUAL'
+        }
+        It 'an old snapshot: supported becomes MANUAL, end of life stays a WARNING' {
+            Set-Content -LiteralPath (Join-Path $script:SnapDir 'eol-snapshot.json') -Value '{"asOf":"2020-01-01","products":{"php":[{"cycle":"7.4","eol":"2022-11-28"},{"cycle":"8.9","eol":"2099-01-01"}]}}'
+            $null = Invoke-TestCheck 'eolsnapshot'
+            (Get-Row 'APPLICATIONS' 'EOL: PHP 8.9.1')[0].Status | Should -Be 'MANUAL'
+            (Get-Row 'APPLICATIONS' 'EOL: PHP 7.4.33')[0].Status | Should -Be 'WARNING'
+            (Get-Row 'APPLICATIONS' 'EOL snapshot')[0].Status | Should -Be 'MANUAL'
+        }
+        It 'no products found: only the snapshot row' {
+            $script:Data.EolCandidates = @()
+            $null = Invoke-TestCheck 'eolsnapshot'
+            @($script:Results | Where-Object { $_.Item -like 'EOL: *' }).Count | Should -Be 0
+        }
+    }
+
     Context 'eolsnapshot (#285)' {
         BeforeEach {
             $script:SnapDir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))

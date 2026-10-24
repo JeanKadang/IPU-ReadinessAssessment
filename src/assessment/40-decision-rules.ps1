@@ -1480,8 +1480,8 @@ function Get-EolSnapshotDecision {
     # Get-IPUEolStatus.ps1 (ADR 0003): a snapshot older than the limit cannot
     # confirm support, so it is MANUAL; no snapshot is one INFO row that says
     # where it looked, never a clean result. A named -EolSnapshotPath that is
-    # missing is MANUAL: the operator asked for it. (The age rule is a second
-    # copy until the EOL functions become a shared source part, #287.)
+    # missing is MANUAL: the operator asked for it. The age rule is the shared
+    # one (Get-EolSnapshotAge, src/assessment/25-eol-core.ps1, #275).
     param([string[]]$Searched, [string]$FoundPath, [string]$AsOf, [string]$ReadError, [bool]$ExplicitGiven, [datetime]$Today, [int]$MaxAgeMonths = 6)
     $where = (@($Searched) -join '; ')
     if (-not $FoundPath) {
@@ -1493,14 +1493,14 @@ function Get-EolSnapshotDecision {
     if ($ReadError) {
         return [pscustomobject]@{ Status = 'MANUAL'; Kind = 'Finding'; Value = 'The EOL snapshot could not be read'; Details = @($FoundPath, $ReadError); Recommendation = 'Replace eol-snapshot.json with the copy from the release.' }
     }
-    $d = [datetime]::MinValue
-    if (-not [datetime]::TryParseExact($AsOf, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$d)) {
+    $age = Get-EolSnapshotAge -AsOf $AsOf -Today $Today -MaxAgeMonths $MaxAgeMonths
+    if ($age.State -eq 'Unknown') {
         return [pscustomobject]@{ Status = 'MANUAL'; Kind = 'Finding'; Value = 'The EOL snapshot has no usable date'; Details = @($FoundPath); Recommendation = 'Replace eol-snapshot.json with the copy from the release.' }
     }
-    if ($d.AddMonths($MaxAgeMonths) -lt $Today.Date) {
-        return [pscustomobject]@{ Status = 'MANUAL'; Kind = 'Finding'; Value = ('The EOL snapshot is from ' + $d.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) + ', older than ' + $MaxAgeMonths + ' months'); Details = @($FoundPath); Recommendation = 'An old snapshot cannot confirm that a product is still supported. Use the snapshot from the latest release, or check the vendor lifecycle pages.' }
+    if ($age.State -eq 'Stale') {
+        return [pscustomobject]@{ Status = 'MANUAL'; Kind = 'Finding'; Value = ('The EOL snapshot is from ' + $AsOf + ', older than ' + $MaxAgeMonths + ' months'); Details = @($FoundPath); Recommendation = 'An old snapshot cannot confirm that a product is still supported. Use the snapshot from the latest release, or check the vendor lifecycle pages.' }
     }
-    return [pscustomobject]@{ Status = 'INFO'; Kind = 'Observation'; Value = ('EOL snapshot from ' + $d.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)); Details = @($FoundPath, 'Data from endoflife.date (MIT licence).'); Recommendation = '' }
+    return [pscustomobject]@{ Status = 'INFO'; Kind = 'Observation'; Value = ('EOL snapshot from ' + $AsOf); Details = @($FoundPath, $script:EolAttribution); Recommendation = '' }
 }
 
 function Get-ActivationDecision {
@@ -2213,5 +2213,3 @@ function Get-StatusRank {
     if ($i -lt 0) { return 99 }
     return $i
 }
-
-

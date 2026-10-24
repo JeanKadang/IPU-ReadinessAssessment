@@ -119,6 +119,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Built file matches its parts (ADR 0002)
         run: ./build/Build-Script.ps1 -Check
+      - name: Get-IPUEolStatus.ps1 matches its parts (ADR 0002, ADR 0003)
+        run: ./build/Build-Script.ps1 -Check -Manifest src/eol/manifest.txt -OutputPath src/Get-IPUEolStatus.ps1
+      - name: Merge-IPUAssessments.ps1 matches its parts (ADR 0002, ADR 0003)
+        run: ./build/Build-Script.ps1 -Check -Manifest src/merge/manifest.txt -OutputPath src/Merge-IPUAssessments.ps1
       - name: Skill copies are identical (#129)
         run: ./build/Sync-Skills.ps1 -Check
       - name: Install PSScriptAnalyzer
