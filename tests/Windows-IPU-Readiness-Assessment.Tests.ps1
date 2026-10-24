@@ -995,6 +995,20 @@ Describe 'Slow-check time budget (#39)' {
     }
 }
 
+Describe 'Test-MediaLanguageMatch (#245)' {
+    It 'the same language matches' { Test-MediaLanguageMatch @('en-US') 'en-US' | Should -BeTrue }
+    It 'the "(Default)" form that Get-WindowsImage lists matches' { Test-MediaLanguageMatch @('en-US (Default)') 'en-US' | Should -BeTrue }
+    It 'case does not matter' { Test-MediaLanguageMatch @('EN-us (Default)') 'en-US' | Should -BeTrue }
+    It 'one of several languages is enough' { Test-MediaLanguageMatch @('da-DK', 'en-US (Default)') 'en-US' | Should -BeTrue }
+    It 'another language is a mismatch' { Test-MediaLanguageMatch @('en-US (Default)') 'da-DK' | Should -BeFalse }
+    It 'a similar language is not the same' { Test-MediaLanguageMatch @('en-GB') 'en-US' | Should -BeFalse }
+    It 'the installed language may carry the suffix too' { Test-MediaLanguageMatch @('da-DK') 'da-DK (Default)' | Should -BeTrue }
+    It 'unknown on either side is not a mismatch' {
+        Test-MediaLanguageMatch @() 'en-US' | Should -BeTrue
+        Test-MediaLanguageMatch @('en-US') '' | Should -BeTrue
+    }
+}
+
 Describe 'Run lock (#244)' {
     It 'the HRESULT of a sharing or lock violation is recognised' {
         Test-SharingViolation (-2147024864) | Should -BeTrue    # 0x80070020

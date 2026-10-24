@@ -1842,6 +1842,18 @@ function Get-SqlSupportDecision {
     return [pscustomobject]@{ Status='BLOCKER'; Release=$label; Text=($label + ' is not supported on ' + (Get-ReleaseDisplayName $Target) + '.' + $hint) }
 }
 
+function Test-MediaLanguageMatch {
+    # Pure (#245): does the installation media carry the installed language?
+    # Get-WindowsImage lists languages as "en-US (Default)" as well as "en-US",
+    # so a trailing "(...)" is dropped before comparing. Anything that is not
+    # known (no list, no installed language) is not a mismatch.
+    param([string[]]$ImageLanguages, [string]$InstalledLanguage)
+    $wanted = ([string]$InstalledLanguage -replace '\s*\(.*\)\s*$', '').Trim()
+    $have = @($ImageLanguages | ForEach-Object { ([string]$_ -replace '\s*\(.*\)\s*$', '').Trim() } | Where-Object { $_ })
+    if (-not $wanted -or $have.Count -eq 0) { return $true }
+    return ($have -contains $wanted)
+}
+
 function Get-DismVerdict {
     # Pure (#249). Only DISM's own words about the component store are
     # evidence of corruption. A servicing operation that waits for a reboot
@@ -5194,7 +5206,7 @@ Register-Check -Id 'compatscan' -Name 'Setup compatibility scan' -Phase 'Slow' -
             return
         }
         Add-Result 'COMPAT_SCAN' 'MatchingImage' 'OK' ('Index ' + $index) @(('Languages=' + $imageLanguages),($imageNames -join ' | ')) -Source $imageFile
-        if ($script:Data.InstallLanguage -and $imageLanguages -and (@($imageLanguages -split ',') -notcontains $script:Data.InstallLanguage)) {
+        if ($script:Data.InstallLanguage -and $imageLanguages -and -not (Test-MediaLanguageMatch @($imageLanguages -split ',') $script:Data.InstallLanguage)) {
             Add-Result 'COMPAT_SCAN' 'MediaLanguage' 'BLOCKER' ('Media=' + $imageLanguages + ', Installed=' + $script:Data.InstallLanguage) '' -Recommendation 'Changing language during IPU is not supported. Use media in the installed language.' -Source $imageFile
         }
 
