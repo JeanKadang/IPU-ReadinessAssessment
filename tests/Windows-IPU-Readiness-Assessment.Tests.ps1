@@ -1046,6 +1046,15 @@ Describe 'Language-neutral parsing (#246)' {
             $r.Disk | Should -Be 1; $r.Partition | Should -Be 2
         }
     }
+    Context 'Read-ReAgentXml' {
+        It 'returns the text of the file' {
+            $p = Join-Path $TestDrive 'ReAgent.xml'
+            Set-Content -LiteralPath $p -Value '<WindowsRE><InstallState state="1"/></WindowsRE>'
+            (Read-ReAgentXml $p) | Should -Match 'InstallState state="1"'
+        }
+        It 'a missing file is empty text, not an error' { Read-ReAgentXml (Join-Path $TestDrive 'nothing.xml') | Should -Be '' }
+        It 'the default path is the system file and never throws' { { $null = Read-ReAgentXml } | Should -Not -Throw }
+    }
     Context 'scheduled task accounts' {
         It 'ServiceAccount and Group are built in, whatever the name (German)' {
             Test-BuiltInTaskAccount 'NT-AUTORITAET\SYSTEM' 'ServiceAccount' | Should -BeTrue

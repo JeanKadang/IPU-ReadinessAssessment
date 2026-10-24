@@ -797,7 +797,8 @@ function Initialize-EvidenceFolder {
 
 function Read-ReAgentXml {
     # The WinRE configuration file; empty text when it cannot be read (#246).
-    $path = Join-Path $env:windir 'System32\Recovery\ReAgent.xml'
+    param([string]$Path = (Join-Path $env:windir 'System32\Recovery\ReAgent.xml'))
+    $path = $Path
     try { if (Test-Path -LiteralPath $path -PathType Leaf) { return [string](Get-Content -LiteralPath $path -Raw -ErrorAction Stop) } }
     catch { Write-Swallowed $_ }
     return ''
