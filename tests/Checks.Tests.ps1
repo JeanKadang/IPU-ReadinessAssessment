@@ -2135,6 +2135,16 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             (Get-Row 'COMPAT_SCAN' 'MatchingImage')[0].Status | Should -Be 'ACTION'
             @($script:Fake.NativeCalls | Where-Object { $_.Exe -eq 'setup.exe' }).Count | Should -Be 0
         }
+        It 'the image language in the form Get-WindowsImage lists it ("en-US (Default)") is not a mismatch (#245)' {
+            $TargetMediaPath = $script:Media
+            $ReportDirectory = $script:Out
+            $script:Fake.Images = @($script:Fake.Images | ForEach-Object { $_.Languages = @('en-US (Default)'); $_ })
+            $script:Data.InstallLanguage = 'en-US'
+            $script:Fake.Native['setup.exe'] = @{ ExitCode = -1047526908 }
+            $null = Invoke-TestCheck 'compatscan'
+            (Get-Row 'COMPAT_SCAN' 'MediaLanguage').Count | Should -Be 0
+            (Get-Row 'COMPAT_SCAN' 'MatchingImage')[0].Status | Should -Be 'OK'
+        }
         It 'media in another language is a BLOCKER' {
             $TargetMediaPath = $script:Media
             $ReportDirectory = $script:Out

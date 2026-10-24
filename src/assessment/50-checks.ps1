@@ -1638,7 +1638,7 @@ Register-Check -Id 'compatscan' -Name 'Setup compatibility scan' -Phase 'Slow' -
             return
         }
         Add-Result 'COMPAT_SCAN' 'MatchingImage' 'OK' ('Index ' + $index) @(('Languages=' + $imageLanguages),($imageNames -join ' | ')) -Source $imageFile
-        if ($script:Data.InstallLanguage -and $imageLanguages -and (@($imageLanguages -split ',') -notcontains $script:Data.InstallLanguage)) {
+        if ($script:Data.InstallLanguage -and $imageLanguages -and -not (Test-MediaLanguageMatch @($imageLanguages -split ',') $script:Data.InstallLanguage)) {
             Add-Result 'COMPAT_SCAN' 'MediaLanguage' 'BLOCKER' ('Media=' + $imageLanguages + ', Installed=' + $script:Data.InstallLanguage) '' -Recommendation 'Changing language during IPU is not supported. Use media in the installed language.' -Source $imageFile
         }
 
