@@ -305,6 +305,54 @@ function Save-EolSnapshot {
     return [pscustomobject]@{ Path = $Path; Written = @($products.Keys | Sort-Object); Failed = $failed; AsOf = $snapshot.asOf }
 }
 
+function Test-EolSnapshotFile {
+    # Checks a snapshot file before it ships (release, CI). Problems is empty
+    # when the file can be read, carries the MIT notice and has releases for
+    # every supported product. Age is Fresh, Stale or Unknown; the release
+    # refuses anything but Fresh, CI only checks the structure.
+    param([string]$Path, [datetime]$Today = (Get-Date), [int]$MaxAgeMonths = 6)
+    $problems = @()
+    $age = [pscustomobject]@{ State = 'Unknown'; Months = $null; Text = 'The snapshot could not be read.' }
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return [pscustomobject]@{ Ok = $false; Problems = @('The snapshot file does not exist: ' + $Path); Age = $age }
+    }
+    try { $snap = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
+    catch { return [pscustomobject]@{ Ok = $false; Problems = @('The snapshot is not valid JSON: ' + $_.Exception.Message); Age = $age } }
+    $asOf = $snap.asOf
+    if ($asOf -is [datetime]) { $asOf = $asOf.ToString('yyyy-MM-dd') }
+    $age = Get-EolSnapshotAge -AsOf ([string]$asOf) -Today $Today -MaxAgeMonths $MaxAgeMonths
+    if ($age.State -eq 'Unknown') { $problems += 'The snapshot has no usable asOf date.' }
+    if ($snap.license -ne 'MIT') { $problems += 'The snapshot does not say license MIT.' }
+    if (-not $snap.licenseNotice) { $problems += 'The snapshot has no MIT licence notice (ADR 0003).' }
+    if (-not $snap.attribution) { $problems += 'The snapshot has no attribution.' }
+    if ($null -eq $snap.products) { $problems += 'The snapshot has no products.' }
+    else {
+        foreach ($slug in $script:EolProducts.Keys) {
+            $p = $snap.products.PSObject.Properties[$slug]
+            if ($null -eq $p -or @($p.Value).Count -eq 0) { $problems += ('No releases for ' + $slug + '.') }
+        }
+    }
+    return [pscustomobject]@{ Ok = ($problems.Count -eq 0); Problems = $problems; Age = $age }
+}
+
+function Get-EolRefreshDecision {
+    # Pure: the committed snapshot + a freshly fetched one + today -> whether
+    # the monthly workflow opens a pull request. Unchanged data does nothing,
+    # unless the committed date is older than KeepDays: then the date is
+    # renewed, or the release age gate (6 months) would close on data that is
+    # still right.
+    param($Current, $Fetched, [datetime]$Today, [int]$KeepDays = 90)
+    if ($null -eq $Current -or $null -eq $Current.products) { return [pscustomobject]@{ Action = 'PullRequest'; Reason = 'There is no usable snapshot yet.' } }
+    $a = ConvertTo-Json -InputObject $Current.products -Depth 8 -Compress
+    $b = ConvertTo-Json -InputObject $Fetched.products -Depth 8 -Compress
+    if ($a -ne $b) { return [pscustomobject]@{ Action = 'PullRequest'; Reason = 'The lifecycle data changed.' } }
+    $asOf = $Current.asOf
+    if ($asOf -is [datetime]) { $asOf = $asOf.ToString('yyyy-MM-dd') }
+    $d = ConvertTo-EolDate ([string]$asOf)
+    if ($null -eq $d -or $d.AddDays($KeepDays) -lt $Today.Date) { return [pscustomobject]@{ Action = 'PullRequest'; Reason = ('The data is unchanged, but the snapshot is older than ' + $KeepDays + ' days; renew its date.') } }
+    return [pscustomobject]@{ Action = 'None'; Reason = 'The data is unchanged.' }
+}
+
 # Dot-sourcing (tests) loads the functions only.
 if ($MyInvocation.InvocationName -ne '.') {
     if ($Update) {

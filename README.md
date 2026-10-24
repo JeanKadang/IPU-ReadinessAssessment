@@ -161,7 +161,7 @@ flowchart TD
 
 | Path | Contents |
 |---|---|
-| `src/` | `Windows-IPU-Readiness-Assessment.ps1` (the one file that runs on each server; **built**, do not edit by hand), `Merge-IPUAssessments.ps1` (fleet overview, runs on a workstation) |
+| `src/` | `Windows-IPU-Readiness-Assessment.ps1` (the one file that runs on each server; **built**, do not edit by hand), `Merge-IPUAssessments.ps1` (fleet overview, runs on a workstation), `Get-IPUEolStatus.ps1` (end-of-life status of a product version, runs on a workstation) |
 | `src/assessment/` | The parts the assessment is built from, in the order of `manifest.txt` |
 | `build/` | `Build-Script.ps1` (parts to single file), CI helpers (tests, lint, smoke test), `New-SampleReport.ps1`, `Sync-Skills.ps1` |
 | `docs/build.md` | How the build works, in plain words |

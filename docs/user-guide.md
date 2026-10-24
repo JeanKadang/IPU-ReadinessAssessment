@@ -752,6 +752,22 @@ The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`
 > The overview and CSVs describe every server in detail. Treat them as sensitive and keep them out of shared
 > locations.
 
+### End-of-life data
+
+`Get-IPUEolStatus.ps1` says whether a product version (a Windows Server release, SQL Server, PHP, .NET and others) is
+still supported, gets security fixes only, ends soon or has ended. It runs on a workstation, never on an assessed
+server, and is not part of the assessment or the fleet overview yet ([ADR 0003](adr/0003-end-of-life-lookup-architecture.md)).
+
+- **Where the data is.** The release zip contains `eol-snapshot.json` next to the scripts (in the repository it is
+  `data/eol-snapshot.json`). It is a copy of [endoflife.date](https://endoflife.date) data, MIT-licensed; the licence
+  notice is inside the file.
+- **How old it may be.** A release is only published when the snapshot is at most six months old. A snapshot older than
+  `-MaxAgeMonths` (default 6) cannot confirm that a release is still supported: that verdict becomes MANUAL, while
+  end-of-life verdicts still show.
+- **Use it.** `.\Get-IPUEolStatus.ps1 -Product php -Version 8.2.12 -SnapshotPath .\eol-snapshot.json`
+- **Refresh it by hand.** On a machine with internet access: `.\Get-IPUEolStatus.ps1 -Update -SnapshotPath .\eol-snapshot.json`.
+- **Refresh in the repository.** The "EOL snapshot" workflow runs on the first of each month (and on demand), and opens a
+  pull request when the data changed. A maintainer reviews and merges it.
 ## 10. Running from OpenText Server Automation
 
 The script is designed for SA Ad-Hoc Scripting, normally as the SA Agent (LocalSystem).

@@ -94,17 +94,24 @@ jobs:
             echo "CI is $status, waiting ($url)..."
             sleep 30
           done
+      - name: Require a recent end-of-life snapshot
+        shell: pwsh
+        run: |
+          # The snapshot ships with the scripts (#285). Older than six months
+          # it cannot confirm that a release is still supported, so stale data
+          # must not go out unnoticed.
+          ./build/Test-EolSnapshot.ps1 -Path data/eol-snapshot.json -CheckAge -MaxAgeMonths 6
       - name: Build the zip and hashes
         run: |
           name="IPU-ReadinessAssessment-$VERSION"
           mkdir -p "dist/$name/docs"
-          cp src/Windows-IPU-Readiness-Assessment.ps1 src/Merge-IPUAssessments.ps1 README.md CHANGELOG.md LICENSE SECURITY.md "dist/$name/"
+          cp src/Windows-IPU-Readiness-Assessment.ps1 src/Merge-IPUAssessments.ps1 src/Get-IPUEolStatus.ps1 data/eol-snapshot.json README.md CHANGELOG.md LICENSE SECURITY.md "dist/$name/"
           cp docs/user-guide.md docs/checks.md docs/result-schema.md docs/result-schema.json "dist/$name/docs/"
           cp -r docs/examples "dist/$name/docs/"
           cp -r docs/samples "dist/$name/docs/"
           (cd dist && zip -r -X "$name.zip" "$name")
-          (cd dist && cp "$name/Windows-IPU-Readiness-Assessment.ps1" "$name/Merge-IPUAssessments.ps1" . \
-            && sha256sum "$name.zip" Windows-IPU-Readiness-Assessment.ps1 Merge-IPUAssessments.ps1 > SHA256SUMS.txt)
+          (cd dist && cp "$name/Windows-IPU-Readiness-Assessment.ps1" "$name/Merge-IPUAssessments.ps1" "$name/Get-IPUEolStatus.ps1" "$name/eol-snapshot.json" . \
+            && sha256sum "$name.zip" Windows-IPU-Readiness-Assessment.ps1 Merge-IPUAssessments.ps1 Get-IPUEolStatus.ps1 eol-snapshot.json > SHA256SUMS.txt)
           cat dist/SHA256SUMS.txt
           awk -v v="$VERSION" '$0 ~ "^## \\[" v "\\]" {on=1; next} on && /^## \[/ {exit} on {print}' CHANGELOG.md > dist/notes.md
           {
@@ -129,7 +136,8 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = 'push' ]; then where='--verify-tag'; else where="--target=$GITHUB_SHA"; fi
           gh release create "$TAG" "$where" --title "$TAG" --notes-file dist/notes.md \
             "dist/IPU-ReadinessAssessment-$VERSION.zip" dist/SHA256SUMS.txt \
-            dist/Windows-IPU-Readiness-Assessment.ps1 dist/Merge-IPUAssessments.ps1
+            dist/Windows-IPU-Readiness-Assessment.ps1 dist/Merge-IPUAssessments.ps1 \
+            dist/Get-IPUEolStatus.ps1 dist/eol-snapshot.json
       - name: Dry run summary
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
         run: |

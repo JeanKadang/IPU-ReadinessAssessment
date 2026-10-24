@@ -1,0 +1,63 @@
+name: EOL snapshot
+
+# Monthly refresh of data/eol-snapshot.json from endoflife.date (#285, ADR 0003).
+# Opens a pull request when the lifecycle data changed, or when the data is
+# unchanged but the snapshot date is older than 90 days (the release stops at
+# six months). Does nothing otherwise. A maintainer reviews and merges the pull
+# request. No third-party action: git, gh and PowerShell only.
+#
+# Needs Settings > Actions > General > "Allow GitHub Actions to create and
+# approve pull requests". Checks do not start on a pull request opened with
+# GITHUB_TOKEN: close and reopen the pull request to run them.
+on:
+  schedule:
+    - cron: '17 5 1 * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  refresh:
+    name: refresh
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch the lifecycle data
+        id: fetch
+        shell: pwsh
+        run: |
+          . ./src/Get-IPUEolStatus.ps1
+          $new = Join-Path $env:RUNNER_TEMP 'eol-snapshot.json'
+          $saved = Save-EolSnapshot -Path $new -Today (Get-Date)
+          if ($saved.Failed.Count -gt 0) { throw ('Not fetched: ' + ($saved.Failed -join '; ')) }
+          $current = Get-Content -LiteralPath data/eol-snapshot.json -Raw | ConvertFrom-Json
+          $fetched = Get-Content -LiteralPath $new -Raw | ConvertFrom-Json
+          $d = Get-EolRefreshDecision -Current $current -Fetched $fetched -Today (Get-Date)
+          "$($d.Reason)" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+          if ($d.Action -eq 'PullRequest') {
+            Copy-Item -LiteralPath $new -Destination data/eol-snapshot.json -Force
+            ./build/Test-EolSnapshot.ps1 -Path data/eol-snapshot.json -CheckAge
+          }
+          "action=$($d.Action)" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
+          "reason=$($d.Reason)" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
+      - name: Open the pull request
+        if: steps.fetch.outputs.action == 'PullRequest'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REASON: ${{ steps.fetch.outputs.reason }}
+        run: |
+          branch="data/eol-snapshot-$(date -u +%Y-%m)"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$branch"
+          git add data/eol-snapshot.json
+          git commit -m "data: refresh the end-of-life snapshot" -m "$REASON"
+          git push --force origin "$branch"
+          gh pr create --base main --head "$branch" --title "data: refresh the end-of-life snapshot" \
+            --body "Refs #285
+
+          $REASON Fetched from endoflife.date (MIT licence, notice kept in the file). Review the diff of data/eol-snapshot.json, then merge." \
+            --label documentation
