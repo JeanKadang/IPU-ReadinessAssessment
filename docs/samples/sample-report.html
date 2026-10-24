@@ -43,7 +43,7 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
 <a class="card" href="#planning" aria-label="5 WARNING findings - go to the list"><small>WARNING</small><b>5</b></a>
 <a class="card" href="#planning" aria-label="1 MANUAL findings - go to the list"><small>MANUAL</small><b>1</b></a>
 <a class="card" href="#checklist" aria-label="5 checklist items - go to the list"><small>Checklist items</small><b>5</b></a>
-<a class="card" href="#coverage" aria-label="18 / 18 checks completed - go to the list"><small>Checks run</small><b>18 / 18</b></a></div>
+<a class="card" href="#coverage" aria-label="19 / 19 checks completed - go to the list"><small>Checks run</small><b>19 / 19</b></a></div>
 <section><h2>Summary</h2><div class="facts">
 <div class="fact"><b>Current OS</b>Microsoft Windows Server 2016 Standard | Build=14393.7428 | Release=Windows Server 2016 | Architecture=64-bit</div>
 <div class="fact"><b>Target</b>Windows Server 2025</div>
@@ -100,8 +100,11 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
 <tr><td class="nw"><span class="badge s-ok">OK</span></td><td class="nw">Windows health</td><td class="item">Uptime</td><td class="txt">UptimeDays=7</td><td class="txt">LastBoot=2026-09-29 01:09</td><td class="txt"></td><td class="txt muted"></td></tr>
 </tbody></table></div>
 </div></details>
-<details open><summary>Workloads and Applications (2)</summary><div>
+<details open><summary>Workloads and Applications (5)</summary><div>
 <div class="scroll"><table><caption class="sr">Workloads and Applications: all records</caption><thead><tr><th scope="col">Status</th><th scope="col">Area</th><th scope="col">Item</th><th scope="col">Value</th><th scope="col">Details</th><th scope="col">Recommendation</th><th scope="col">Source</th></tr></thead><tbody>
+<tr><td class="nw"><span class="badge s-info">INFO</span><br><em class="muted">Observation</em></td><td class="nw">Installed applications</td><td class="item">EOL candidate: dotnetfx</td><td class="txt">4.8</td><td class="txt">Registry: NDP\v4\Full Release</td><td class="txt"></td><td class="txt muted"></td></tr>
+<tr><td class="nw"><span class="badge s-info">INFO</span><br><em class="muted">Observation</em></td><td class="nw">Installed applications</td><td class="item">EOL candidate: eclipse-temurin</td><td class="txt">17.0.12</td><td class="txt">Uninstall entry: Eclipse Temurin JRE with Hotspot 17.0.12</td><td class="txt"></td><td class="txt muted"></td></tr>
+<tr><td class="nw"><span class="badge s-info">INFO</span><br><em class="muted">Observation</em></td><td class="nw">Installed applications</td><td class="item">EOL candidate: mssqlserver</td><td class="txt">14.0.3485.1</td><td class="txt">Uninstall entry: Microsoft SQL Server 2017 (64-bit)</td><td class="txt"></td><td class="txt muted"></td></tr>
 <tr><td class="nw"><span class="badge s-warning">WARNING</span></td><td class="nw">Roles and workloads</td><td class="item">Java runtime</td><td class="txt">Applications=1, Services=0</td><td class="txt">Eclipse Temurin JRE with Hotspot 17.0.12</td><td class="txt">Engage the application owner and confirm Java runtime supports Windows Server 2025.</td><td class="txt muted"></td></tr>
 <tr><td class="nw"><span class="badge s-blocker">BLOCKER</span></td><td class="nw">SQL Server</td><td class="item">Database Engine: MSSQLSERVER</td><td class="txt">SQL Server 2017</td><td class="txt">Version=14.0.3485.1 | Edition=Standard Edition | InstanceId=MSSQL14.MSSQLSERVER</td><td class="txt">SQL Server 2017 is not supported on Windows Server 2025. Windows Server 2022 supports this SQL version - choose that target, or upgrade SQL Server first.</td><td class="txt muted">SQL Server instance registry</td></tr>
 </tbody></table></div>
@@ -154,6 +157,7 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
 <tr><td>Pending reboot and uptime</td><td>Fast</td><td class="nw"><span class="badge s-ok">OK</span> Completed</td><td class="nw">00:00:01</td><td class="txt"></td></tr>
 <tr><td>SQL Server</td><td>Fast</td><td class="nw"><span class="badge s-ok">OK</span> Completed</td><td class="nw">00:00:01</td><td class="txt"></td></tr>
 <tr><td>Roles and workloads</td><td>Fast</td><td class="nw"><span class="badge s-ok">OK</span> Completed</td><td class="nw">00:00:01</td><td class="txt"></td></tr>
+<tr><td>Products for end-of-life checks</td><td>Fast</td><td class="nw"><span class="badge s-ok">OK</span> Completed</td><td class="nw">00:00:01</td><td class="txt"></td></tr>
 <tr><td>Platform and hardware</td><td>Fast</td><td class="nw"><span class="badge s-ok">OK</span> Completed</td><td class="nw">00:00:01</td><td class="txt"></td></tr>
 <tr><td>VMware guest readiness</td><td>Fast</td><td class="nw"><span class="badge s-ok">OK</span> Completed</td><td class="nw">00:00:01</td><td class="txt"></td></tr>
 <tr><td>CPU and memory</td><td>Fast</td><td class="nw"><span class="badge s-ok">OK</span> Completed</td><td class="nw">00:00:01</td><td class="txt"></td></tr>
@@ -169,6 +173,6 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
 <tr><td>Setup compatibility scan</td><td>Slow</td><td class="nw"><span class="badge s-ok">OK</span> Completed</td><td class="nw">00:11:05</td><td class="txt"></td></tr>
 </tbody></table></div><h2 style="margin-top:16px">Records</h2>
 </div></details>
-<footer>Collector 4.5.4 | 36 records | Read-only local assessment. It does not prove backups, credentials, licensing or application/vendor support. Commands are shown, never run, by this script.</footer></div>
+<footer>Collector 4.5.4 | 39 records | Read-only local assessment. It does not prove backups, credentials, licensing or application/vendor support. Commands are shown, never run, by this script.</footer></div>
 <script type="text/javascript">document.documentElement.className+=" js";document.addEventListener("click",function(e){var b=e.target;if(!b||!b.classList||!b.classList.contains("copy"))return;var t=b.getAttribute("data-cmd");var done=function(){b.textContent="Copied";setTimeout(function(){b.textContent="Copy"},1500)};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,function(){})}else{var a=document.createElement("textarea");a.value=t;document.body.appendChild(a);a.select();try{document.execCommand("copy");done()}catch(x){}document.body.removeChild(a)}});document.addEventListener("click",function(e){var b=e.target;if(!b||!b.classList||!b.classList.contains("tgl"))return;var o=b.getAttribute("data-open")==="1";var d=document.querySelectorAll("details");for(var i=0;i<d.length;i++){d[i].open=o}});var closedForPrint=[];window.addEventListener("beforeprint",function(){closedForPrint=[];var d=document.querySelectorAll("details:not([open])");for(var i=0;i<d.length;i++){d[i].open=true;closedForPrint.push(d[i])}});window.addEventListener("afterprint",function(){for(var i=0;i<closedForPrint.length;i++){closedForPrint[i].open=false}closedForPrint=[]});</script>
 </body></html>

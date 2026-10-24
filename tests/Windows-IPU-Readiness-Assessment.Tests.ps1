@@ -1053,6 +1053,151 @@ Describe 'KMS renewal warning and the OS licence product (#248)' {
     }
 }
 
+Describe 'Products for end-of-life checks (#286)' {
+    Context 'version and command line parsing' {
+        It 'takes the first dotted number' {
+            ConvertTo-EolVersionText '16.2-1' | Should -Be '16.2'
+            ConvertTo-EolVersionText '3.12.1150.0' | Should -Be '3.12.1150.0'
+            ConvertTo-EolVersionText 'Version 8.2.12 (x64)' | Should -Be '8.2.12'
+            ConvertTo-EolVersionText 'none' | Should -Be ''
+            ConvertTo-EolVersionText '' | Should -Be ''
+        }
+        It 'reads the executable from a service command line' {
+            Get-ExecutablePathFromCommand '"C:\Program Files\Apache Tomcat\bin\tomcat9.exe" //RS//Tomcat9' | Should -Be 'C:\Program Files\Apache Tomcat\bin\tomcat9.exe'
+            Get-ExecutablePathFromCommand 'D:\app\ORACLE.EXE ORCL' | Should -Be 'D:\app\ORACLE.EXE'
+            Get-ExecutablePathFromCommand 'C:\Program Files\X\x.exe -k run' | Should -Be 'C:\Program Files\X\x.exe'
+            Get-ExecutablePathFromCommand '"unterminated' | Should -Be ''
+            Get-ExecutablePathFromCommand '' | Should -Be ''
+        }
+        It '.NET Framework Release values map to the version' {
+            ConvertFrom-DotNetFrameworkRelease 533320 | Should -Be '4.8.1'
+            ConvertFrom-DotNetFrameworkRelease 528040 | Should -Be '4.8'
+            ConvertFrom-DotNetFrameworkRelease 528372 | Should -Be '4.8'
+            ConvertFrom-DotNetFrameworkRelease 461814 | Should -Be '4.7.2'
+            ConvertFrom-DotNetFrameworkRelease 378389 | Should -Be '4.5'
+            ConvertFrom-DotNetFrameworkRelease 378388 | Should -Be ''
+            ConvertFrom-DotNetFrameworkRelease 'x' | Should -Be ''
+            ConvertFrom-DotNetFrameworkRelease $null | Should -Be ''
+        }
+    }
+    Context 'the detection table' {
+        It 'every product in the snapshot except windows-server has a route, .NET Framework by the registry' {
+            $snap = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\src\eol-snapshot.json') -Raw | ConvertFrom-Json
+            $wanted = @($snap.products.PSObject.Properties.Name | Where-Object { $_ -ne 'windows-server' -and $_ -ne 'dotnetfx' })
+            $have = @($script:EolDetection | ForEach-Object { $_.Product })
+            foreach ($slug in $wanted) { $have | Should -Contain $slug -Because ($slug + ' needs a detection route (#286)') }
+            foreach ($d in $script:EolDetection) {
+                ($d.App -or ($d.Service -and $d.Exe) -or $d.Probe) | Should -BeTrue -Because ($d.Product + ' has no route')
+                if ($d.Service) { $d.Exe | Should -Not -BeNullOrEmpty -Because ($d.Product + ': a service route needs the executable name') }
+            }
+        }
+        It 'the products that leave no uninstall entry are found by file probe' {
+            foreach ($slug in 'php', 'apache-http-server', 'nginx') {
+                @($script:EolDetection | Where-Object { $_.Product -eq $slug })[0].Probe | Should -Not -BeNullOrEmpty
+            }
+        }
+        It 'the check never starts a product' {
+            $src = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\src\assessment\50-checks.ps1'))
+            $i = $src.IndexOf("Register-Check -Id 'eolcandidates'"); $j = $src.IndexOf("Register-Check -Id 'checklist'")
+            $i | Should -BeGreaterThan 0; $j | Should -BeGreaterThan $i
+            $body = $src.Substring($i, $j - $i)
+            $body | Should -Not -Match 'Invoke-NativeCapture|Start-Process|Invoke-Expression|Invoke-Command|\bInvoke-Item\b'
+        }
+    }
+    Context 'Find-EolAppCandidate' {
+        BeforeAll {
+            function New-AppEntry([string]$Name, [string]$Version) { [pscustomobject]@{ Name = $Name; Version = $Version } }
+        }
+        It 'finds products by their uninstall entry and takes the DisplayVersion' {
+            $apps = @((New-AppEntry 'PostgreSQL 16' '16.2-1'), (New-AppEntry 'Node.js' '20.11.0'), (New-AppEntry 'Microsoft SQL Server 2019 (64-bit)' '15.0.2000.5'), (New-AppEntry 'Eclipse Temurin JDK with Hotspot 17.0.9+9 (x64)' '17.0.9.9'))
+            $r = @(Find-EolAppCandidate $script:EolDetection $apps)
+            ($r | Where-Object Product -eq 'postgresql').Version | Should -Be '16.2'
+            ($r | Where-Object Product -eq 'nodejs').Version | Should -Be '20.11.0'
+            ($r | Where-Object Product -eq 'mssqlserver').Version | Should -Be '15.0.2000.5'
+            ($r | Where-Object Product -eq 'eclipse-temurin').Version | Should -Be '17.0.9.9'
+            ($r | Where-Object Product -eq 'nodejs').Source | Should -Be 'Uninstall entry'
+        }
+        It 'the parts of one Python installation and the SQL Server setup entry are not products of their own' {
+            $apps = @((New-AppEntry 'Python 3.12.1 (64-bit)' '3.12.1150.0'), (New-AppEntry 'Python 3.12.1 Core Interpreter (64-bit)' '3.12.1150.0'), (New-AppEntry 'Python 3.12.1 Standard Library (64-bit)' '3.12.1150.0'), (New-AppEntry 'Python Launcher' '3.12.1150.0'), (New-AppEntry 'Microsoft SQL Server 2019 Setup (English)' '15.0.2000.5'))
+            $r = @(Find-EolAppCandidate $script:EolDetection $apps)
+            @($r | Where-Object Product -eq 'python').Count | Should -Be 1
+            @($r | Where-Object Product -eq 'mssqlserver').Count | Should -Be 0
+        }
+        It 'an entry without a readable version comes back with an empty version' {
+            (@(Find-EolAppCandidate $script:EolDetection @((New-AppEntry 'Redis on Windows' ''))))[0].Version | Should -Be ''
+        }
+        It 'the .NET runtimes, desktop runtime and SDK count; the host does not' {
+            $apps = @((New-AppEntry 'Microsoft .NET Runtime - 8.0.4 (x64)' '8.0.4.33311'), (New-AppEntry 'Microsoft Windows Desktop Runtime - 8.0.4 (x64)' '8.0.4.33311'), (New-AppEntry 'Microsoft .NET SDK 8.0.100 (x64)' '8.0.100.0'), (New-AppEntry 'Microsoft ASP.NET Core 8.0.4 - Shared Framework (x64)' '8.0.4.24161'), (New-AppEntry 'Microsoft .NET Host - 8.0.4 (x64)' '8.0.4.33311'))
+            @(Find-EolAppCandidate $script:EolDetection $apps | Where-Object Product -eq 'dotnet').Count | Should -Be 3
+        }
+        It 'no apps, no candidates' { @(Find-EolAppCandidate $script:EolDetection @()).Count | Should -Be 0 }
+    }
+    Context 'Get-EolServiceTarget' {
+        It 'a service of the product gives the executable to read the version from' {
+            $svc = @([pscustomobject]@{ Name = 'Tomcat9'; PathName = '"C:\Program Files\Apache Software Foundation\Tomcat 9.0\bin\tomcat9.exe" //RS//Tomcat9' }, [pscustomobject]@{ Name = 'OracleServiceORCL'; PathName = 'D:\app\product\19\bin\ORACLE.EXE ORCL' })
+            $r = @(Get-EolServiceTarget $script:EolDetection $svc)
+            ($r | Where-Object Product -eq 'tomcat').Path | Should -Match 'tomcat9\.exe$'
+            ($r | Where-Object Product -eq 'oracle-database').Path | Should -Be 'D:\app\product\19\bin\ORACLE.EXE'
+            ($r | Where-Object Product -eq 'tomcat').Source | Should -Be 'Service file'
+            ($r | Where-Object Product -eq 'tomcat').Evidence | Should -Be 'Tomcat9'
+        }
+        It 'a service run by a wrapper (nssm) is not read as the product' {
+            @(Get-EolServiceTarget $script:EolDetection @([pscustomobject]@{ Name = 'nginx'; PathName = 'C:\tools\nssm.exe' })).Count | Should -Be 0
+        }
+        It 'a service without a command line is left out' {
+            @(Get-EolServiceTarget $script:EolDetection @([pscustomobject]@{ Name = 'Redis'; PathName = '' })).Count | Should -Be 0
+        }
+    }
+    Context 'Merge-EolCandidate' {
+        It 'one entry per product and version, the first source wins; unknown versions are dropped; sorted' {
+            $in = @(
+                [pscustomobject]@{ Product = 'php'; Version = '8.2.12'; Source = 'File probe'; Evidence = 'php.exe' },
+                [pscustomobject]@{ Product = 'php'; Version = '8.2.12'; Source = 'Uninstall entry'; Evidence = 'PHP 8.2' },
+                [pscustomobject]@{ Product = 'nginx'; Version = ''; Source = 'File probe'; Evidence = 'nginx.exe' },
+                [pscustomobject]@{ Product = 'dotnet'; Version = '8.0.4'; Source = 'Uninstall entry'; Evidence = 'x' })
+            $r = @(Merge-EolCandidate $in)
+            $r.Count | Should -Be 2
+            $r[0].Product | Should -Be 'dotnet'; $r[1].Product | Should -Be 'php'; $r[1].Source | Should -Be 'File probe'
+        }
+        It 'nothing in, nothing out' { @(Merge-EolCandidate @()).Count | Should -Be 0 }
+    }
+    Context 'reading files' {
+        It 'Get-FileVersionText reads the version resource of a real executable without running it' {
+            $exe = (Get-Process -Id $PID).Path
+            $r = Get-FileVersionText $exe
+            $r.Version | Should -Match '^\d+\.\d+'; $r.Error | Should -Be ''
+        }
+        It 'a file with no version resource and a missing file say why' {
+            $txt = Join-Path $TestDrive 'plain.exe'; Set-Content -LiteralPath $txt -Value 'not an executable'
+            (Get-FileVersionText $txt).Error | Should -Match 'no version resource'
+            (Get-FileVersionText (Join-Path $TestDrive 'missing.exe')).Error | Should -Match 'does not exist'
+        }
+        It 'Resolve-EolProbePath expands variables and a star in a folder name' {
+            $root = Join-Path $TestDrive 'probe'
+            foreach ($d in 'php7', 'php8', 'other') { $null = New-Item -ItemType Directory -Path (Join-Path $root $d) -Force }
+            foreach ($d in 'php7', 'php8') { Set-Content -LiteralPath (Join-Path $root "$d\php.exe") -Value 'x' }
+            $env:IPU_TEST_PROBE_ROOT = $root
+            try {
+                $r = Resolve-EolProbePath '%IPU_TEST_PROBE_ROOT%\php*\php.exe'
+                @($r.Paths).Count | Should -Be 2; $r.Error | Should -Be ''
+                @((Resolve-EolProbePath '%IPU_TEST_PROBE_ROOT%\php8\php.exe').Paths).Count | Should -Be 1
+                @((Resolve-EolProbePath '%IPU_TEST_PROBE_ROOT%\nginx*\nginx.exe').Paths).Count | Should -Be 0
+                @((Resolve-EolProbePath '%IPU_TEST_PROBE_ROOT%\missing\sub*\x.exe').Paths).Count | Should -Be 0
+            } finally { Remove-Item Env:\IPU_TEST_PROBE_ROOT -ErrorAction SilentlyContinue }
+            (Resolve-EolProbePath 'nonsense').Error | Should -Be ''
+        }
+    }
+    It 'the result JSON carries EolCandidates' {
+        $script:Data.EolCandidates = @([pscustomobject]@{ Product = 'php'; Version = '8.2.12'; Source = 'File probe'; Evidence = 'php.exe' })
+        try {
+            $obj = New-AssessmentJsonObject -Results @() -Overall 'OK' -Completed (Get-Date)
+            @($obj.EolCandidates).Count | Should -Be 1
+            $obj.EolCandidates[0].Product | Should -Be 'php'
+            ($obj | ConvertTo-Json -Depth 6) | Should -Match '"EolCandidates"'
+        } finally { $script:Data.EolCandidates = @() }
+    }
+}
+
 Describe 'EOL snapshot beside the script (#285)' {
     Context 'Get-EolSnapshotSearchPath' {
         It 'looks at the named path, then the script folder, then the report folder' {

@@ -463,7 +463,7 @@ AfterAll { Remove-Item Env:\IPU_ASSESSMENT_LIBRARY_ONLY -ErrorAction SilentlyCon
 
 Describe 'Check registry' {
     It 'registers 36 checks with unique ids' {
-        $script:AllChecks.Count | Should -Be 37
+        $script:AllChecks.Count | Should -Be 38
         @($script:AllChecks | Group-Object Id | Where-Object { $_.Count -gt 1 }).Count | Should -Be 0
     }
     It 'docs/checks.md describes every registered check' {
@@ -2025,6 +2025,61 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $ctx = New-RedactionContext 'SRV01' ''
             foreach ($k in @($script:Data.RedactLiterals.Keys)) { $ctx.Literals[$k] = $script:Data.RedactLiterals[$k] }
             Protect-ReportText 'Windows Installer; task runs as svc_batch' $ctx | Should -Be 'Windows Installer; task runs as ACCOUNT-1'
+        }
+    }
+
+    Context 'eolcandidates (#286)' {
+        BeforeEach {
+            $script:SavedEolDetection = $script:EolDetection
+            $script:ProbeRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $null = New-Item -ItemType Directory -Path $script:ProbeRoot
+        }
+        AfterEach { $script:EolDetection = $script:SavedEolDetection }
+        It 'products in the uninstall list become candidates with their version' {
+            $script:Data.Apps = @($script:Data.Apps) + @([pscustomobject]@{ Name = 'PostgreSQL 16'; Version = '16.2-1' }, [pscustomobject]@{ Name = 'Node.js'; Version = '20.11.0' })
+            (Invoke-TestCheck 'eolcandidates').Outcome | Should -Be 'Completed'
+            ($script:Data.EolCandidates | Where-Object Product -eq 'postgresql').Version | Should -Be '16.2'
+            (Get-Row 'APPLICATIONS' 'EOL candidate: PostgreSQL')[0].Value | Should -Be '16.2'
+            (Get-Row 'APPLICATIONS' 'EOL candidate: Node.js')[0].Kind | Should -Be 'Observation'
+        }
+        It 'an unpacked product with no uninstall entry is found by file probe, version from the file' {
+            $dir = Join-Path $script:ProbeRoot 'php8'; $null = New-Item -ItemType Directory -Path $dir
+            Copy-Item -LiteralPath ([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName) -Destination (Join-Path $dir 'php.exe')
+            $script:EolDetection = @(@{ Product = 'php'; Name = 'PHP'; Probe = @(($script:ProbeRoot + '\php*\php.exe')) })
+            $null = Invoke-TestCheck 'eolcandidates'
+            $c = @($script:Data.EolCandidates | Where-Object Product -eq 'php')
+            $c.Count | Should -Be 1; $c[0].Version | Should -Match '^\d+\.\d+'; $c[0].Source | Should -Be 'File probe'
+            (Get-Row 'APPLICATIONS' 'EOL candidate: PHP')[0].Details | Should -Match 'php.exe'
+        }
+        It 'a service executable gives the version' {
+            $dir = Join-Path $script:ProbeRoot 'tc'; $null = New-Item -ItemType Directory -Path $dir
+            Copy-Item -LiteralPath ([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName) -Destination (Join-Path $dir 'tomcat9.exe')
+            $script:Data.Services = @($script:Data.Services) + @([pscustomobject]@{ Name = 'Tomcat9'; PathName = ('"' + (Join-Path $dir 'tomcat9.exe') + '" //RS//Tomcat9') })
+            $null = Invoke-TestCheck 'eolcandidates'
+            $c = @($script:Data.EolCandidates | Where-Object Product -eq 'tomcat')
+            $c.Count | Should -Be 1; $c[0].Source | Should -Be 'Service file'; $c[0].Evidence | Should -Be 'Tomcat9'
+        }
+        It 'a product found but with no readable version is MANUAL, never silent and never run' {
+            $dir = Join-Path $script:ProbeRoot 'nginx-1'; $null = New-Item -ItemType Directory -Path $dir
+            Set-Content -LiteralPath (Join-Path $dir 'nginx.exe') -Value 'no version resource'
+            $script:EolDetection = @(@{ Product = 'nginx'; Name = 'nginx'; Probe = @(($script:ProbeRoot + '\nginx*\nginx.exe')) })
+            $null = Invoke-TestCheck 'eolcandidates'
+            @($script:Data.EolCandidates).Count | Should -Be 0
+            $r = (Get-Row 'APPLICATIONS' 'EOL detection: nginx')[0]
+            $r.Status | Should -Be 'MANUAL'; $r.Kind | Should -Be 'Finding'; $r.Value | Should -Match 'version not known'
+            $r.Recommendation | Should -Match 'never runs a product'
+        }
+        It 'nothing found is no rows and an empty list' {
+            $script:EolDetection = @(@{ Product = 'php'; Name = 'PHP'; Probe = @(($script:ProbeRoot + '\php*\php.exe')) })
+            $null = Invoke-TestCheck 'eolcandidates'
+            @($script:Data.EolCandidates).Count | Should -Be 0
+            @($script:Results | Where-Object { $_.Item -like 'EOL *' }).Count | Should -Be 0
+        }
+        It '.NET Framework comes from the registry Release value' {
+            $script:Fake.ItemProperty['HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full'] = [pscustomobject]@{ Release = 528040 }
+            $null = Invoke-TestCheck 'eolcandidates'
+            ($script:Data.EolCandidates | Where-Object Product -eq 'dotnetfx').Version | Should -Be '4.8'
+            (Get-Row 'APPLICATIONS' 'EOL candidate: .NET Framework')[0].Value | Should -Be '4.8'
         }
     }
 

@@ -1512,6 +1512,52 @@ Register-Check -Id 'eolsnapshot' -Name 'End-of-life snapshot' -Script {
     Add-Result 'APPLICATIONS' 'EOL snapshot' $d.Status $d.Value $d.Details -Recommendation $d.Recommendation -Kind $d.Kind -Source 'eol-snapshot.json'
 }
 
+Register-Check -Id 'eolcandidates' -Name 'Products for end-of-life checks' -Script {
+    # Which products with an end-of-life date are on the server (#286, ADR
+    # 0003). Only reads: uninstall entries, service command lines, file version
+    # resources, one registry value. A product is never run to ask its version.
+    $found = @(Find-EolAppCandidate $script:EolDetection $script:Data.Apps)
+    $targets = @(Get-EolServiceTarget $script:EolDetection $script:Data.Services)
+    foreach ($d in @($script:EolDetection)) {
+        if (-not $d.Probe) { continue }
+        foreach ($pattern in @($d.Probe)) {
+            $r = Resolve-EolProbePath $pattern
+            foreach ($p in @($r.Paths)) { $targets += [pscustomobject]@{ Product = [string]$d.Product; Name = [string]$d.Name; Path = $p; Source = 'File probe'; Evidence = (Split-Path -Leaf $p) } }
+            if ($r.Error) { $found += [pscustomobject]@{ Product = [string]$d.Product; Name = [string]$d.Name; Version = ''; Source = 'File probe'; Evidence = $pattern; Error = $r.Error } }
+        }
+    }
+    foreach ($t in $targets) {
+        $v = Get-FileVersionText $t.Path
+        $found += [pscustomobject]@{ Product = $t.Product; Name = $t.Name; Version = $v.Version; Source = $t.Source; Evidence = $t.Evidence; Error = $v.Error }
+    }
+    $netfxError = ''
+    try {
+        $nd = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full' -ErrorAction Stop
+        $fx = ConvertFrom-DotNetFrameworkRelease $nd.Release
+        if ($fx) { $found += [pscustomobject]@{ Product = 'dotnetfx'; Name = '.NET Framework'; Version = $fx; Source = 'Registry'; Evidence = 'NDP\v4\Full Release' } }
+    } catch { if (-not (Test-NotFoundError $_)) { $netfxError = $_.Exception.Message } }
+
+    $script:Data.EolCandidates = @(Merge-EolCandidate $found)
+    foreach ($c in $script:Data.EolCandidates) {
+        $name = @($script:EolDetection | Where-Object { $_.Product -eq $c.Product } | ForEach-Object { $_.Name })[0]
+        if (-not $name) { $name = $(if ($c.Product -eq 'dotnetfx') { '.NET Framework' } else { $c.Product }) }
+        Add-Result 'APPLICATIONS' ('EOL candidate: ' + $name) 'INFO' $c.Version ($c.Source + ': ' + $c.Evidence) -Kind 'Observation' -Source 'Uninstall registry, service files, file versions'
+    }
+    # A product seen but without a version is a MANUAL finding, not silence.
+    $have = @{}; foreach ($c in $script:Data.EolCandidates) { $have[$c.Product] = $true }
+    $reported = @{}
+    foreach ($f in @($found | Where-Object { -not $_.Version })) {
+        if ($have.ContainsKey($f.Product) -or $reported.ContainsKey($f.Product)) { continue }
+        $reported[$f.Product] = $true
+        $why = 'The version could not be read.'
+        if ($f.PSObject.Properties['Error'] -and $f.Error) { $why = [string]$f.Error }
+        Add-Result 'APPLICATIONS' ('EOL detection: ' + $f.Name) 'MANUAL' ($f.Name + ' found, version not known') ($f.Source + ': ' + $f.Evidence + '. ' + $why) -Recommendation ('Read the version of ' + $f.Name + ' by hand (its file properties or its own documentation) and check its end-of-life date. The assessment never runs a product to ask.') -Kind 'Finding' -Source $f.Source
+    }
+    if ($netfxError) {
+        Add-Result 'APPLICATIONS' 'EOL detection: .NET Framework' 'MANUAL' '.NET Framework version could not be read' $netfxError -Recommendation 'Check the .NET Framework version by hand (Release value under HKLM\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full).' -Kind 'Finding' -Source 'Registry'
+    }
+}
+
 Register-Check -Id 'checklist' -Name 'Standard change checklist' -Script {
     $isVM = ($script:Data.Platform.Type -eq 'Virtual')
     $fallback = 'Confirm a tested bare-metal recovery path and a recent successful backup.'
