@@ -3312,6 +3312,46 @@ Describe 'Network configuration (#149)' {
         # A new link-local address alone is not a change worth reporting.
         @(Compare-NetworkAdapter @(New-TestAdapter) @(New-TestAdapter -IPv6 @('fe80::9'))).Count | Should -Be 0
     }
+    It 'a changed subnet mask on a static adapter is an ACTION (#247)' {
+        $after = New-TestAdapter; $after.Mask = @('255.0.0.0')
+        $rows = @(Compare-NetworkAdapter @(New-TestAdapter) @($after))
+        $rows.Count | Should -Be 1
+        $rows[0].Status | Should -Be 'ACTION'
+        $rows[0].Details | Should -Be 'Subnet mask of 10.20.30.40: before 255.255.255.0, now 255.0.0.0'
+    }
+    It 'a changed subnet mask on a DHCP adapter is a WARNING (#247)' {
+        $before = New-TestAdapter -Dhcp $true; $after = New-TestAdapter -Dhcp $true; $after.Mask = @('255.255.0.0')
+        (@(Compare-NetworkAdapter @($before) @($after)))[0].Status | Should -Be 'WARNING'
+    }
+    It 'the mask is compared per address, in step with the address list (#247)' {
+        $before = New-TestAdapter -IPv4 @('10.20.30.40', '10.20.31.40'); $before.Mask = @('255.255.255.0', '255.255.255.0')
+        $after = New-TestAdapter -IPv4 @('10.20.31.40', '10.20.30.40'); $after.Mask = @('255.255.255.0', '255.255.255.0')
+        @(Compare-NetworkAdapter @($before) @($after)).Count | Should -Be 0
+        $after.Mask = @('255.255.0.0', '255.255.255.0')
+        (@(Compare-NetworkAdapter @($before) @($after)))[0].Details | Should -Be 'Subnet mask of 10.20.31.40: before 255.255.255.0, now 255.255.0.0'
+    }
+    It 'a missing mask is not a change (#247)' {
+        $after = New-TestAdapter; $after.Mask = @()
+        @(Compare-NetworkAdapter @(New-TestAdapter) @($after)).Count | Should -Be 0
+    }
+    It 'a changed registration with the DNS suffix is a WARNING (#247)' {
+        $after = New-TestAdapter; $after.RegisterSuffix = $true
+        $rows = @(Compare-NetworkAdapter @(New-TestAdapter) @($after))
+        $rows[0].Status | Should -Be 'WARNING'
+        $rows[0].Details | Should -Be 'Register with DNS suffix: before False, now True'
+    }
+    It 'a baseline without RegisterSuffix does not report a change (#247)' {
+        $before = New-TestAdapter; $before.PSObject.Properties.Remove('RegisterSuffix')
+        $after = New-TestAdapter; $after.RegisterSuffix = $true
+        @(Compare-NetworkAdapter @($before) @($after)).Count | Should -Be 0
+    }
+    It 'an added address with nothing lost is INFO (#247)' {
+        $after = New-TestAdapter -IPv4 @('10.20.30.40', '10.20.30.41'); $after.Mask = @('255.255.255.0', '255.255.255.0')
+        $rows = @(Compare-NetworkAdapter @(New-TestAdapter) @($after))
+        $rows.Count | Should -Be 1
+        $rows[0].Status | Should -Be 'INFO'
+        $rows[0].Details | Should -Be 'IPv4 added: 10.20.30.41'
+    }
     It 'a changed VLAN is an ACTION' {
         (@(Compare-NetworkAdapter @(New-TestAdapter -Vlan '20') @(New-TestAdapter -Vlan '')))[0].Status | Should -Be 'ACTION'
     }

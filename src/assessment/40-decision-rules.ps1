@@ -607,6 +607,17 @@ function Compare-NetworkAdapter {
         if ([bool]$b.Dhcp -ne [bool]$a.Dhcp) { & $add 'ACTION' ('DHCP: before ' + [bool]$b.Dhcp + ', now ' + [bool]$a.Dhcp) }
         $lost4 = @(@($b.IPv4) | Where-Object { $_ -and @($a.IPv4) -notcontains $_ })
         if ($lost4.Count -gt 0) { & $add $addrStatus ('IPv4: before ' + (& $list $b.IPv4) + ', now ' + (& $list $a.IPv4)) }
+        else {
+            # Nothing lost: an address that is new is only worth a note (#247).
+            $added4 = @(@($a.IPv4) | Where-Object { $_ -and @($b.IPv4) -notcontains $_ })
+            if ($added4.Count -gt 0) { & $add 'INFO' ('IPv4 added: ' + (& $list $added4)) }
+        }
+        # The subnet mask of an address that is still there. Mask and IPv4 lists run in step (#247).
+        $maskOf = { param($rec, $ip) $i = [array]::IndexOf(@($rec.IPv4), $ip); if ($i -ge 0 -and $i -lt @($rec.Mask).Count) { [string]@($rec.Mask)[$i] } else { '' } }
+        foreach ($ip in @(@($b.IPv4) | Where-Object { $_ -and @($a.IPv4) -contains $_ })) {
+            $maskBefore = & $maskOf $b $ip; $maskNow = & $maskOf $a $ip
+            if ($maskBefore -and $maskNow -and $maskBefore -ne $maskNow) { & $add $addrStatus ('Subnet mask of ' + $ip + ': before ' + $maskBefore + ', now ' + $maskNow) }
+        }
         if ((& $set $b.Gateway) -ne (& $set $a.Gateway)) { & $add $addrStatus ('Gateway: before ' + (& $list $b.Gateway) + ', now ' + (& $list $a.Gateway)) }
         # DNS server order matters for resolution, so the lists are compared in order.
         if ((& $list $b.Dns) -ne (& $list $a.Dns)) { & $add 'WARNING' ('DNS servers: before ' + (& $list $b.Dns) + ', now ' + (& $list $a.Dns)) }
@@ -615,6 +626,8 @@ function Compare-NetworkAdapter {
         if ($lost6.Count -gt 0) { & $add 'WARNING' ('IPv6: before ' + (& $list (& $global6 $b.IPv6)) + ', now ' + (& $list (& $global6 $a.IPv6))) }
         if ([string]$b.Suffix -ne [string]$a.Suffix) { & $add 'WARNING' ('DNS suffix: before ' + (& $list $b.Suffix) + ', now ' + (& $list $a.Suffix)) }
         if ((& $list $b.SuffixSearch) -ne (& $list $a.SuffixSearch)) { & $add 'WARNING' ('Suffix search list: before ' + (& $list $b.SuffixSearch) + ', now ' + (& $list $a.SuffixSearch)) }
+        # Old baselines (before 4.4.0) have no RegisterSuffix; "missing" is not "off" (#247).
+        if ($b.PSObject.Properties['RegisterSuffix'] -and $a.PSObject.Properties['RegisterSuffix'] -and [bool]$b.RegisterSuffix -ne [bool]$a.RegisterSuffix) { & $add 'WARNING' ('Register with DNS suffix: before ' + [bool]$b.RegisterSuffix + ', now ' + [bool]$a.RegisterSuffix) }
         if ([bool]$b.RegisterInDns -ne [bool]$a.RegisterInDns) { & $add 'WARNING' ('Register in DNS: before ' + [bool]$b.RegisterInDns + ', now ' + [bool]$a.RegisterInDns) }
         if ((& $set $b.Wins) -ne (& $set $a.Wins)) { & $add 'WARNING' ('WINS: before ' + (& $list $b.Wins) + ', now ' + (& $list $a.Wins)) }
         if ($b.NetBios -and $a.NetBios -and [string]$b.NetBios -ne [string]$a.NetBios) { & $add 'WARNING' ('NetBIOS over TCP/IP: before ' + $b.NetBios + ', now ' + $a.NetBios) }
