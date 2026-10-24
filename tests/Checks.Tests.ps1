@@ -2012,6 +2012,21 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $null = Invoke-TestCheck 'dism'
             (Get-Row 'WINDOWS_HEALTH' 'DISM ScanHealth')[0].Status | Should -Be 'MANUAL'
         }
+        It 'a plain error code is MANUAL and does not recommend a repair (#249)' {
+            $script:Fake.Native['dism.exe'] = @{ ExitCode = 87; Output = 'Error: 87' }
+            $null = Invoke-TestCheck 'dism'
+            $r = (Get-Row 'WINDOWS_HEALTH' 'DISM ScanHealth')[0]
+            $r.Status | Should -Be 'MANUAL'
+            $r.Recommendation | Should -Not -Match 'RestoreHealth'
+            $r.Details | Should -Match 'Basis=DISM error, exit code 87'
+        }
+        It 'a pending servicing operation is a WARNING to restart (#249)' {
+            $script:Fake.Native['dism.exe'] = @{ ExitCode = -2146498513; Output = 'Error: 0x800f082f' }
+            $null = Invoke-TestCheck 'dism'
+            $r = (Get-Row 'WINDOWS_HEALTH' 'DISM ScanHealth')[0]
+            $r.Status | Should -Be 'WARNING'
+            $r.Recommendation | Should -Match 'restart'
+        }
         It 'a repairable store is an ACTION' {
             $script:Fake.Native['dism.exe'] = @{ ExitCode = 0; Output = 'The component store is repairable.' }
             $null = Invoke-TestCheck 'dism'

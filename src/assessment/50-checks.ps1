@@ -1567,8 +1567,7 @@ Register-Check -Id 'dism' -Name 'DISM component store scan' -Phase 'Slow' -Scrip
     if ($r.Error) { throw $r.Error }
     $verdict = Get-DismVerdict $r.Output $r.ExitCode
     $summary = @($r.Lines | Where-Object { $_ -notmatch '^\[=*' -and $_ -notmatch '%' } | Select-Object -Last 3) -join ' | '
-    $rec = @{ OK=''; ACTION='Repair the component store (DISM /RestoreHealth with matching source) and re-run before IPU - Setup fails on a corrupt component store.'; MANUAL='Result unclear; review the output and %windir%\Logs\DISM\dism.log.' }[$verdict]
-    Add-Result 'WINDOWS_HEALTH' 'DISM ScanHealth' $verdict ('ExitCode=' + $r.ExitCode) @($duration,$summary) -Recommendation $rec -Source 'dism.exe /English /Online /Cleanup-Image /ScanHealth'
+    Add-Result 'WINDOWS_HEALTH' 'DISM ScanHealth' $verdict.Status ('ExitCode=' + $r.ExitCode) @($duration,$summary,('Basis=' + $verdict.Basis)) -Recommendation $verdict.Recommendation -Source 'dism.exe /English /Online /Cleanup-Image /ScanHealth'
 }
 
 Register-Check -Id 'sfc' -Name 'SFC protected file verification' -Phase 'Slow' -Script {

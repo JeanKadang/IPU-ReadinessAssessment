@@ -126,10 +126,27 @@ Describe 'Get-SqlSupportDecision (Microsoft SQL/Windows matrix)' {
 }
 
 Describe 'Get-DismVerdict' {
-    It 'healthy' { Get-DismVerdict 'No component store corruption detected.' 0 | Should -Be 'OK' }
-    It 'repairable' { Get-DismVerdict 'The component store is repairable.' 0 | Should -Be 'ACTION' }
-    It 'non-zero exit' { Get-DismVerdict 'Error: 87' 87 | Should -Be 'ACTION' }
-    It 'unclear' { Get-DismVerdict '' 0 | Should -Be 'MANUAL' }
+    It 'healthy' { (Get-DismVerdict 'No component store corruption detected.' 0).Status | Should -Be 'OK' }
+    It 'repairable' {
+        $v = Get-DismVerdict 'The component store is repairable.' 0
+        $v.Status | Should -Be 'ACTION'; $v.Recommendation | Should -Match 'RestoreHealth'
+    }
+    It 'a component store that cannot be repaired is an ACTION' { (Get-DismVerdict 'The component store cannot be repaired.' 0).Status | Should -Be 'ACTION' }
+    It 'a plain error code is MANUAL, not a repair (#249)' {
+        $v = Get-DismVerdict 'Error: 87' 87
+        $v.Status | Should -Be 'MANUAL'; $v.Basis | Should -Match 'exit code 87'
+        $v.Recommendation | Should -Not -Match 'RestoreHealth'; $v.Recommendation | Should -Match 'not evidence of corruption'
+    }
+    It 'a pending servicing operation (0x800f082f) is a WARNING to reboot, not a repair (#249)' {
+        $v = Get-DismVerdict "Error: 0x800f082f`r`nA servicing operation requires a reboot to complete." (-2146498513)
+        $v.Status | Should -Be 'WARNING'; $v.Basis | Should -Be 'Servicing pending reboot'
+        $v.Recommendation | Should -Match 'restart'; $v.Recommendation | Should -Not -Match 'RestoreHealth'
+    }
+    It 'the pending code alone is enough, whatever the language of the text' { (Get-DismVerdict '0x800f082f' 1).Status | Should -Be 'WARNING' }
+    It 'exit code 3010 (restart required) is pending too' { (Get-DismVerdict '' 3010).Status | Should -Be 'WARNING' }
+    It 'DISM text about corruption wins over a non-zero exit code' { (Get-DismVerdict 'The component store is repairable.' 1).Status | Should -Be 'ACTION' }
+    It 'unclear' { (Get-DismVerdict '' 0).Status | Should -Be 'MANUAL' }
+    It 'no exit code and no text is unclear' { (Get-DismVerdict '' $null).Basis | Should -Be 'Unclassified' }
 }
 
 Describe 'Get-SfcVerdict' {
