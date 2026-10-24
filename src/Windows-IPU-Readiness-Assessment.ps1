@@ -1801,11 +1801,25 @@ function Get-SqlSupportDecision {
 }
 
 function Get-DismVerdict {
+    # Pure (#249). Only DISM's own words about the component store are
+    # evidence of corruption. A servicing operation that waits for a reboot
+    # (0x800f082f) or a plain error code (Error: 87, access denied, ...) means
+    # DISM did not look: reboot and run again, or run it by hand. Neither is a
+    # reason to "repair the component store".
     param([string]$OutputText, $ExitCode)
-    if ($OutputText -match 'No component store corruption detected') { return 'OK' }
-    if ($OutputText -match 'component store is repairable|component store cannot be repaired') { return 'ACTION' }
-    if ($null -ne $ExitCode -and [int]$ExitCode -ne 0) { return 'ACTION' }
-    return 'MANUAL'
+    $manualRec = 'Result unclear; review the output and %windir%\Logs\DISM\dism.log.'
+    if ($OutputText -match 'No component store corruption detected') { return [pscustomobject]@{ Status='OK'; Basis='DISM output'; Recommendation='' } }
+    if ($OutputText -match 'component store is repairable|component store cannot be repaired') {
+        return [pscustomobject]@{ Status='ACTION'; Basis='DISM output'; Recommendation='Repair the component store (DISM /RestoreHealth with matching source) and re-run before IPU - Setup fails on a corrupt component store.' }
+    }
+    $code = $null; if ($null -ne $ExitCode) { $code = [int]$ExitCode }
+    if ($OutputText -match '0x800f082f|800f082f|requires a reboot|reboot (is )?(required|pending)|restart (is )?(required|pending)' -or $code -eq 3010) {
+        return [pscustomobject]@{ Status='WARNING'; Basis='Servicing pending reboot'; Recommendation='A servicing operation is waiting for a reboot, so DISM did not scan the component store. This is not evidence of corruption: restart the server in the change window and run the assessment again.' }
+    }
+    if ($null -ne $code -and $code -ne 0) {
+        return [pscustomobject]@{ Status='MANUAL'; Basis=('DISM error, exit code ' + $code); Recommendation=('DISM stopped with an error (exit code ' + $code + ') before it reported the state of the component store. This is not evidence of corruption. See %windir%\Logs\DISM\dism.log and run "DISM /Online /Cleanup-Image /ScanHealth" by hand.') }
+    }
+    return [pscustomobject]@{ Status='MANUAL'; Basis='Unclassified'; Recommendation=$manualRec }
 }
 
 function Get-SfcVerdict {
@@ -5017,8 +5031,7 @@ Register-Check -Id 'dism' -Name 'DISM component store scan' -Phase 'Slow' -Scrip
     if ($r.Error) { throw $r.Error }
     $verdict = Get-DismVerdict $r.Output $r.ExitCode
     $summary = @($r.Lines | Where-Object { $_ -notmatch '^\[=*' -and $_ -notmatch '%' } | Select-Object -Last 3) -join ' | '
-    $rec = @{ OK=''; ACTION='Repair the component store (DISM /RestoreHealth with matching source) and re-run before IPU - Setup fails on a corrupt component store.'; MANUAL='Result unclear; review the output and %windir%\Logs\DISM\dism.log.' }[$verdict]
-    Add-Result 'WINDOWS_HEALTH' 'DISM ScanHealth' $verdict ('ExitCode=' + $r.ExitCode) @($duration,$summary) -Recommendation $rec -Source 'dism.exe /English /Online /Cleanup-Image /ScanHealth'
+    Add-Result 'WINDOWS_HEALTH' 'DISM ScanHealth' $verdict.Status ('ExitCode=' + $r.ExitCode) @($duration,$summary,('Basis=' + $verdict.Basis)) -Recommendation $verdict.Recommendation -Source 'dism.exe /English /Online /Cleanup-Image /ScanHealth'
 }
 
 Register-Check -Id 'sfc' -Name 'SFC protected file verification' -Phase 'Slow' -Script {
