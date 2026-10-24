@@ -141,13 +141,12 @@ Register-Check -Id 'licensing' -Name 'Windows activation' -Script {
     $products = @()
     $queryError = ''
     try {
-        $products = @(Get-CimInstance -Query "SELECT Name,Description,LicenseStatus,PartialProductKey,ProductKeyChannel,GracePeriodRemaining,DiscoveredKeyManagementServiceMachineName,DiscoveredKeyManagementServiceMachinePort,KeyManagementServiceMachine,KeyManagementServicePort FROM SoftwareLicensingProduct WHERE ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f' AND PartialProductKey IS NOT NULL" -ErrorAction Stop |
-            Where-Object { $_.Name -match '^Windows' })
+        $products = @(Get-CimInstance -Query "SELECT Name,Description,LicenseStatus,LicenseIsAddon,PartialProductKey,ProductKeyChannel,GracePeriodRemaining,DiscoveredKeyManagementServiceMachineName,DiscoveredKeyManagementServiceMachinePort,KeyManagementServiceMachine,KeyManagementServicePort FROM SoftwareLicensingProduct WHERE ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f' AND PartialProductKey IS NOT NULL" -ErrorAction Stop)
     } catch {
         # Older builds do not expose ProductKeyChannel; retry with all columns.
         try {
             $products = @(Get-CimInstance -Query "SELECT * FROM SoftwareLicensingProduct WHERE ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f'" -ErrorAction Stop |
-                Where-Object { $_.PartialProductKey -and $_.Name -match '^Windows' })
+                Where-Object { $_.PartialProductKey })
         } catch { $queryError = $_.Exception.Message }
     }
     $spp = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform' -ErrorAction SilentlyContinue
@@ -159,7 +158,13 @@ Register-Check -Id 'licensing' -Name 'Windows activation' -Script {
         Add-Result 'LICENSING' 'CurrentActivation' 'MANUAL' 'Activation state could not be queried' @($queryError,('KMS=' + $kms)) -Recommendation 'Validate activation manually (slmgr /dlv). A query failure does not prove Windows is unlicensed.' -Source 'SoftwareLicensingProduct'
         return
     }
-    $primary = @($products | Sort-Object @{Expression={ if ([int]$_.LicenseStatus -eq 1) { 0 } else { 1 } }},Name) | Select-Object -First 1
+    $os = Select-OsLicenseProduct $products
+    $primary = $os.Primary
+    # An ESU licence is its own row, never the OS licence (#248).
+    foreach ($addOn in @($os.AddOns)) {
+        $addOnState = $statusNames[[int]$addOn.LicenseStatus]; if (-not $addOnState) { $addOnState = 'Unknown(' + $addOn.LicenseStatus + ')' }
+        Add-Result 'LICENSING' ('Add-on licence: ' + [string]$addOn.Name) 'INFO' $addOnState ('PartialProductKey=' + $addOn.PartialProductKey) -Recommendation 'An add-on licence (for example Extended Security Updates) is not the Windows licence. Confirm what happens to it on the target release.' -Kind 'Observation' -Source 'SoftwareLicensingProduct'
+    }
     if (-not $primary) {
         Add-Result 'LICENSING' 'CurrentActivation' 'ACTION' 'No installed Windows license with a product key was returned' ('KMS=' + $kms) -Recommendation 'Resolve Windows activation before IPU.' -Source 'SoftwareLicensingProduct'
         return
@@ -180,7 +185,7 @@ Register-Check -Id 'licensing' -Name 'Windows activation' -Script {
     $confPort = [string](Get-OptionalProperty $primary 'KeyManagementServicePort')
     if (-not $confHost -and $spp.KeyManagementServiceName) { $confHost = [string]$spp.KeyManagementServiceName; $confPort = [string]$spp.KeyManagementServicePort }
     $grace = $null; if ($null -ne $primary.GracePeriodRemaining) { $grace = [int64]$primary.GracePeriodRemaining }
-    $act = Get-ActivationDecision $script:Data.ActivationKind ([int]$primary.LicenseStatus) $state $channel $grace $discHost $discPort $confHost $confPort
+    $act = Get-ActivationDecision $script:Data.ActivationKind ([int]$primary.LicenseStatus) $state $channel $grace $discHost $discPort $confHost $confPort $KmsRenewWarnDays
     if ($act.KmsHost) { foreach ($h in @($act.KmsHost, ($act.KmsHost -split '\.')[0]) | Select-Object -Unique) { Add-RedactionLiteral $h 'HOST' }; $script:Data.KmsEndpoint = $act.KmsEndpoint } elseif ($script:Data.ActivationKind -eq 'KMS') { $script:Data.KmsEndpoint = 'found via DNS' }
     $script:Data.ActivationSummary = $act.Value
     $details = @(('Channel=' + $channel), ('PartialProductKey=' + $primary.PartialProductKey)) + @($act.Details)

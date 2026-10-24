@@ -33,6 +33,7 @@ param(
     [ValidateRange(1, 365)][int]$GroupPolicyMaxAgeDays = 7,
     [ValidateRange(1, 365)][int]$AVMaxAgeDays = 3,
     [ValidateRange(1, 3650)][int]$CertificateWarningDays = 90,
+    [ValidateRange(1, 180)][int]$KmsRenewWarnDays = 165,   # a KMS activation lasts 180 days and renews every 7: below 165 days left, two renewals were missed
     [ValidateRange(1, 10240)][int]$SystemPartitionMinFreeMB = 50,
     [ValidateRange(1, 10240)][int]$RecoveryPartitionMinFreeMB = 250,   # Microsoft's WinRE servicing guidance
 

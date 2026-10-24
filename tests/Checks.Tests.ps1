@@ -815,6 +815,24 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
         }
     }
 
+    Context 'licensing: an ESU add-on is not the OS licence (#248)' {
+        It 'an unlicensed OS with a licensed ESU add-on is not shown as Licensed' {
+            $os = $script:Fake.Licensing[0]; $os.LicenseStatus = 5
+            $esu = [pscustomobject]@{ Name = 'Windows(R), ServerStandard-ESU-Year1 add-on'; Description = 'Windows(R) Operating System, ESU add-on'; LicenseStatus = 1; LicenseIsAddon = $true; PartialProductKey = 'ZZZZZ'; ProductKeyChannel = 'Volume:MAK'; GracePeriodRemaining = 0 }
+            $script:Fake.Licensing = @($esu, $os)
+            (Invoke-TestCheck 'licensing').Outcome | Should -Be 'Completed'
+            (Get-Row 'LICENSING' 'CurrentActivation')[0].Status | Should -Be 'ACTION'
+            (Get-Row 'LICENSING' 'CurrentActivation')[0].Value | Should -Match 'Notification'
+            $row = (Get-Row 'LICENSING' 'Add-on licence: Windows(R), ServerStandard-ESU-Year1 add-on')
+            $row.Count | Should -Be 1; $row[0].Value | Should -Be 'Licensed'
+        }
+        It 'a KMS client with 45 days left warns in the check too' {
+            $script:Fake.Licensing[0].GracePeriodRemaining = 45 * 1440
+            $null = Invoke-TestCheck 'licensing'
+            (Get-Row 'LICENSING' 'CurrentActivation')[0].Status | Should -Be 'WARNING'
+        }
+    }
+
     Context 'licensing' {
         It 'a licensed KMS client is OK and records the KMS host' {
             (Invoke-TestCheck 'licensing').Outcome | Should -Be 'Completed'
