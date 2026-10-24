@@ -61,6 +61,14 @@ Add-Run 'sql' 'SQL Server'
 Set-Check 'workloads'
 Add-Result 'WORKLOAD' 'Java runtime' 'WARNING' 'Applications=1, Services=0' 'Eclipse Temurin JRE with Hotspot 17.0.12' -Recommendation 'Engage the application owner and confirm Java runtime supports Windows Server 2025.'
 Add-Run 'workloads' 'Roles and workloads'
+Set-Check 'eolcandidates'
+$script:Data.EolCandidates = @(
+    [pscustomobject]@{ Product = 'eclipse-temurin'; Version = '17.0.12'; Source = 'Uninstall entry'; Evidence = 'Eclipse Temurin JRE with Hotspot 17.0.12' }
+    [pscustomobject]@{ Product = 'mssqlserver'; Version = '14.0.3485.1'; Source = 'Uninstall entry'; Evidence = 'Microsoft SQL Server 2017 (64-bit)' }
+    [pscustomobject]@{ Product = 'dotnetfx'; Version = '4.8'; Source = 'Registry'; Evidence = 'NDP\v4\Full Release' }
+)
+foreach ($c in $script:Data.EolCandidates) { Add-Result 'APPLICATIONS' ('EOL candidate: ' + $c.Product) 'INFO' $c.Version ($c.Source + ': ' + $c.Evidence) -Kind 'Observation' }
+Add-Run 'eolcandidates' 'Products for end-of-life checks'
 
 # --- platform, storage, network
 Set-Check 'platform'
@@ -121,7 +129,7 @@ Add-Run 'checklist' 'Standard change checklist'
 
 # --- slow checks
 Set-Check 'dism'
-Add-Result 'WINDOWS_HEALTH' 'DISM ScanHealth' (Get-DismVerdict 'No component store corruption detected.' 0) 'ExitCode=0' @('Duration=00:07:21', 'No component store corruption detected.')
+Add-Result 'WINDOWS_HEALTH' 'DISM ScanHealth' (Get-DismVerdict 'No component store corruption detected.' 0).Status 'ExitCode=0' @('Duration=00:07:21', 'No component store corruption detected.')
 Add-Run 'dism' 'DISM component store scan' 'Slow' '00:07:21'
 Set-Check 'sfc'
 Add-Result 'WINDOWS_HEALTH' 'SFC VerifyOnly' (Get-SfcVerdict 'Windows Resource Protection did not find any integrity violations.' @()).Status 'ExitCode=0, Basis=SFC output' 'Duration=00:04:18'

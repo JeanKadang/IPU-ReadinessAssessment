@@ -177,6 +177,55 @@ function Test-NotFoundError {
     return ($null -ne $ErrorRecord -and $null -ne $ErrorRecord.CategoryInfo -and [string]$ErrorRecord.CategoryInfo.Category -eq 'ObjectNotFound')
 }
 
+function Get-FileVersionText {
+    # (#286) The version in a file's version resource; reads the file, never
+    # runs it. Version is '' with an Error text when it cannot be read.
+    param([string]$Path)
+    try {
+        $info = (Get-Item -LiteralPath $Path -ErrorAction Stop).VersionInfo
+        $v = ConvertTo-EolVersionText ([string]$info.ProductVersion)
+        if (-not $v) { $v = ConvertTo-EolVersionText ([string]$info.FileVersion) }
+        if (-not $v) { return [pscustomobject]@{ Version = ''; Error = 'The file has no version resource.' } }
+        return [pscustomobject]@{ Version = $v; Error = '' }
+    } catch {
+        if (Test-NotFoundError $_) { return [pscustomobject]@{ Version = ''; Error = 'The file does not exist.' } }
+        return [pscustomobject]@{ Version = ''; Error = $_.Exception.Message }
+    }
+}
+
+function Resolve-EolProbePath {
+    # (#286) Expands %Variables% and a '*' in folder names of one probe path
+    # ('%SystemDrive%\php*\php.exe') to the files that exist. Folders that are
+    # not there are an empty answer; other errors (access denied) come back in
+    # Error so the check can say it could not look.
+    param([string]$Pattern)
+    $paths = @(); $errors = @()
+    $expanded = [Environment]::ExpandEnvironmentVariables($Pattern)
+    $parts = @($expanded -split '\\')
+    if ($parts.Count -lt 2) { return [pscustomobject]@{ Paths = @(); Error = '' } }
+    $current = @($parts[0] + '\')
+    for ($i = 1; $i -lt $parts.Count; $i++) {
+        $part = $parts[$i]; $next = @()
+        foreach ($dir in $current) {
+            if ($i -eq $parts.Count - 1) {
+                $candidate = [IO.Path]::Combine($dir, $part)
+                if ([IO.File]::Exists($candidate)) { $next += $candidate }
+            } elseif ($part.Contains('*')) {
+                try { $next += @([IO.Directory]::GetDirectories($dir, $part)) }
+                catch [IO.DirectoryNotFoundException] { Write-Swallowed $_ }
+                catch { $errors += $_.Exception.Message }
+            } else {
+                $candidate = [IO.Path]::Combine($dir, $part)
+                if ([IO.Directory]::Exists($candidate)) { $next += $candidate }
+            }
+        }
+        $current = $next
+        if ($current.Count -eq 0) { break }
+    }
+    if ($parts.Count -ge 2 -and $current.Count -gt 0) { $paths = @($current) }
+    return [pscustomobject]@{ Paths = @($paths); Error = ($errors -join ' ') }
+}
+
 function Find-DetectionMatch {
     # Pure: matches one pattern table (section 2) against the inventories and
     # returns one object per detected product with the evidence that matched.
