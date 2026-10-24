@@ -7,6 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - The end-of-life script and its data now ship: `data/eol-snapshot.json` (endoflife.date, MIT notice inside) is committed, and the release zip and release assets contain `Get-IPUEolStatus.ps1` and `eol-snapshot.json` next to the scripts, with SHA-256 sums. The release stops when the snapshot is older than six months (`build/Test-EolSnapshot.ps1 -CheckAge`). The "EOL snapshot" workflow refreshes the file monthly and opens a pull request when the data changed (or when its date is over 90 days old); it needs the repository setting that lets Actions create pull requests. The assessment does not read the snapshot yet (#285, part of #266).
 
+### Fixed
+- A failed read no longer turns into a clean result (#242). These now report MANUAL (with the error) instead of OK, 0 or the wrong cause: LBFO teams (also when the cmdlet is missing), static routes (the list is then left out of the snapshot), listening ports (or the check reports it did not complete), the non-Microsoft driver list (the summary says `unknown`, not 0), IIS sites and HTTPS bindings when the WebAdministration module is missing or fails, printers (but a disabled or missing Print Spooler on a server without the role still means `Not a print server`), the free space of a system or recovery partition without a readable volume, AppLocker, BitLocker and TPM read errors, and an unreadable CA configuration (it was shown as an enterprise root CA).
+- Secure Boot: only a legacy BIOS (PlatformNotSupportedException) is reported as such; any other error is MANUAL (#242).
+- The RDP check no longer says `Nothing listening` (NO-GO) when the listener query itself failed; the result is REVIEW with the error (#242). A query that finds nothing (ObjectNotFound) is still an empty answer, not a failure.
+- Expect more MANUAL rows, and a MANUAL overall status, on servers where one of these reads fails; before, the same servers looked clean.
+
 ## [4.5.4] - 2026-10-23
 
 Fixes from the 4.5.3 script evaluation: failures that read as a clean result, time limits for the fast phase, a trustworthy post-upgrade comparison and clear SA result lines. It also lays the groundwork for end-of-life checks (ADR 0003, a separate script that is not wired into the assessment yet).

@@ -799,6 +799,41 @@ $script:SnapshotListSources = [ordered]@{
     Printers = 'printers'; PrinterPorts = 'printers'; PrinterDrivers = 'printers'
 }
 
+function Get-SecureBootDecision {
+    # Pure (#242): what a failed Confirm-SecureBootUEFI means. The cmdlet
+    # raises PlatformNotSupportedException on a legacy BIOS machine; any other
+    # error (access denied, a driver fault) says nothing about the firmware, so
+    # it must not be reported as "legacy BIOS".
+    param([string]$ExceptionType, [string]$Message)
+    if ($ExceptionType -match 'PlatformNotSupported' -or $Message -match 'not supported on this platform|0xC0000002') {
+        return [pscustomobject]@{ Kind = 'LegacyBios'; Status = 'INFO'; Value = 'Not available (legacy BIOS or not supported)' }
+    }
+    return [pscustomobject]@{ Kind = 'Unreadable'; Status = 'MANUAL'; Value = 'Secure Boot state could not be read' }
+}
+
+function Get-CaTypeName {
+    # Pure (#242): CertSvc CAType number -> name. An unreadable or unknown
+    # value gives an empty name; a missing value must not become EnterpriseRoot
+    # (an empty value cast to [int] is 0).
+    param($CaType)
+    if ($null -eq $CaType -or [string]$CaType -notmatch '^\d+$') { return '' }
+    $names = @{ 0 = 'EnterpriseRoot'; 1 = 'EnterpriseSubordinate'; 3 = 'StandaloneRoot'; 4 = 'StandaloneSubordinate' }
+    $n = [int]$CaType
+    if ($names.ContainsKey($n)) { return $names[$n] }
+    return ''
+}
+
+function Get-PrinterReadFailureDecision {
+    # Pure (#242): the printer inventory failed. With the Print Server role it
+    # is a failure to look. Without the role, a disabled or missing Print
+    # Spooler explains the failure (many hardened servers turn it off): the
+    # server is not a print server. Anything else is unexplained.
+    param([bool]$Role, [string]$SpoolerStartMode, [bool]$SpoolerFound)
+    if ($Role) { return 'Manual' }
+    if (-not $SpoolerFound -or $SpoolerStartMode -eq 'Disabled') { return 'NotPrintServer' }
+    return 'Manual'
+}
+
 function Get-BaselineReleaseText {
     # Pure: the release a pre-upgrade result was taken on, from its CurrentOS
     # row ("Release=Windows Server 2016"). Empty when it cannot be read.

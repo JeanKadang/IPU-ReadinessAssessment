@@ -46,6 +46,16 @@ BeforeAll {
         foreach ($root in $roots) { if ($P.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { return $true } }
         return $false
     }
+    function Write-FakeFailure {
+        # A fixture-driven failure for a stand-in cmdlet. Write-Error (not throw), like the CDXML cmdlets:
+        # -ErrorAction SilentlyContinue hides it, -ErrorAction Stop raises it (#242).
+        param([string]$Name)
+        $mode = $script:Fake.Fail[$Name]
+        if (-not $mode) { return $false }
+        if ($mode -eq 'NotFound') { Write-Error ('Simulated: nothing found by ' + $Name) -Category ObjectNotFound }
+        else { Write-Error ('Simulated failure of ' + $Name) -Category InvalidOperation }
+        return $true
+    }
     function Get-PathArg { param($Path, $LiteralPath) if ($LiteralPath) { return [string]$LiteralPath } return [string]$Path }
 
     # ------------------------------------------------- script helper overrides
@@ -230,14 +240,15 @@ BeforeAll {
     function Test-ComputerSecureChannel { [CmdletBinding()] param() if ($null -eq $script:Fake.SecureChannel) { throw 'Simulated: domain unreachable' } return $script:Fake.SecureChannel }
     function Get-ScheduledTask { [CmdletBinding()] param() return @($script:Fake.Tasks) }
     function Get-MpComputerStatus { [CmdletBinding()] param() if ($null -eq $script:Fake.Mp) { throw 'Simulated: Defender status unavailable' } return $script:Fake.Mp }
-    function Get-AppLockerPolicy { [CmdletBinding()] param([switch]$Effective) return $script:Fake.AppLocker }
-    function Get-BitLockerVolume { [CmdletBinding()] param([string]$MountPoint) return $script:Fake.BitLocker }
-    function Confirm-SecureBootUEFI { [CmdletBinding()] param() if ($null -eq $script:Fake.SecureBoot) { throw 'Simulated: not supported' } return $script:Fake.SecureBoot }
-    function Get-Tpm { [CmdletBinding()] param() return $script:Fake.Tpm }
+    function Get-AppLockerPolicy { [CmdletBinding()] param([switch]$Effective) if (Write-FakeFailure 'Get-AppLockerPolicy') { return } return $script:Fake.AppLocker }
+    function Get-BitLockerVolume { [CmdletBinding()] param([string]$MountPoint) if (Write-FakeFailure 'Get-BitLockerVolume') { return } return $script:Fake.BitLocker }
+    function Confirm-SecureBootUEFI { [CmdletBinding()] param() if ($script:Fake.Fail['Confirm-SecureBootUEFI']) { throw 'Simulated: access denied' } if ($null -eq $script:Fake.SecureBoot) { throw (New-Object System.PlatformNotSupportedException('Cmdlet not supported on this platform: 0xC0000002')) } return $script:Fake.SecureBoot }
+    function Get-Tpm { [CmdletBinding()] param() if (Write-FakeFailure 'Get-Tpm') { return } return $script:Fake.Tpm }
 
     # ------------------------------------------- storage cmdlets
     function Get-Partition {
         [CmdletBinding()] param([string]$DriveLetter, $DiskNumber)
+        if ($null -ne $DiskNumber -and (Write-FakeFailure 'Get-Partition')) { return }
         $all = @($script:Fake.Partitions)
         if ($DriveLetter) {
             $hit = @($all | Where-Object { [string]$_.DriveLetter -eq $DriveLetter }) | Select-Object -First 1
@@ -263,20 +274,22 @@ BeforeAll {
     function Get-PartitionSupportedSize { [CmdletBinding()] param([string]$DriveLetter) return $script:Fake.SupportedSize }
 
     # ------------------------------------------- network cmdlets
-    function Get-NetLbfoTeam { [CmdletBinding()] param() return @($script:Fake.LbfoTeams) }
+    function Get-NetLbfoTeam { [CmdletBinding()] param() if (Write-FakeFailure 'Get-NetLbfoTeam') { return } return @($script:Fake.LbfoTeams) }
     function Get-NetAdapter { [CmdletBinding()] param([string]$Name) return @($script:Fake.NetAdapters | Where-Object { -not $Name -or $_.Name -eq $Name }) | Select-Object -First 1 }
     function Get-VMSwitch { [CmdletBinding()] param() return @($script:Fake.VMSwitches) }
     function Get-VMSwitchTeam { [CmdletBinding()] param() return @($script:Fake.VMSwitchTeams) }
     function Get-NetRoute {
         [CmdletBinding()] param([string]$PolicyStore)
+        if (Write-FakeFailure 'Get-NetRoute') { return }
         if ($PolicyStore -eq 'PersistentStore') { return @($script:Fake.RoutesPersistent) }
         return @($script:Fake.RoutesActive)
     }
     function Get-NetTCPConnection {
         [CmdletBinding()] param([string]$State, $LocalPort)
+        if (Write-FakeFailure 'Get-NetTCPConnection') { return }
         return @($script:Fake.Tcp | Where-Object { $null -eq $LocalPort -or $_.LocalPort -eq [int]$LocalPort })
     }
-    function Get-NetUDPEndpoint { [CmdletBinding()] param() return @($script:Fake.Udp) }
+    function Get-NetUDPEndpoint { [CmdletBinding()] param() if (Write-FakeFailure 'Get-NetUDPEndpoint') { return } return @($script:Fake.Udp) }
     function Get-NetFirewallProfile { [CmdletBinding()] param([string]$PolicyStore) return @($script:Fake.FirewallProfiles) }
     function Get-NetFirewallRule { [CmdletBinding()] param([string]$PolicyStore) return @($script:Fake.FirewallRules) }
 
@@ -287,8 +300,8 @@ BeforeAll {
     function Get-ClusterQuorum { [CmdletBinding()] param() return $script:Fake.ClusterQuorum }
     function Get-ClusterSharedVolume { [CmdletBinding()] param() return @($script:Fake.ClusterCsv) }
     function Get-ClusterResource { [CmdletBinding()] param() return @($script:Fake.ClusterResources) }
-    function Get-Website { [CmdletBinding()] param() return @($script:Fake.Websites) }
-    function Get-WebBinding { [CmdletBinding()] param([string]$Protocol) return @($script:Fake.WebBindings) }
+    function Get-Website { [CmdletBinding()] param() if (Write-FakeFailure 'Get-Website') { return } return @($script:Fake.Websites) }
+    function Get-WebBinding { [CmdletBinding()] param([string]$Protocol) if (Write-FakeFailure 'Get-WebBinding') { return } return @($script:Fake.WebBindings) }
     function Get-WindowsImage {
         [CmdletBinding()] param([string]$ImagePath, $Index)
         if ($null -ne $Index) { return @($script:Fake.Images | Where-Object { $_.ImageIndex -eq [int]$Index }) | Select-Object -First 1 }
@@ -307,7 +320,7 @@ BeforeAll {
         $hosts = 'C:\Windows\System32\drivers\etc\hosts'
         if ($env:SystemRoot) { $hosts = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts' }
         $f = @{
-            NativeCalls = @(); CimThrow = @(); FeaturesThrow = $false; MissingCommands = @('Get-Cluster', 'Get-VMSwitch')
+            NativeCalls = @(); Fail = @{}; CimThrow = @(); FeaturesThrow = $false; MissingCommands = @('Get-Cluster', 'Get-VMSwitch')
             Shares = @(); ShareAccess = @{}
             SystemLocale = 'en-US'
             Cim = @{
@@ -495,6 +508,195 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $row.Count | Should -Be 1
             $row[0].Value | Should -Match '^0[.,]4'
             $row[0].Source | Should -Be 'Get-Partition, Get-Disk'
+        }
+    }
+
+    Context 'a failed query is not a clean result (#242)' {
+        BeforeEach { $script:RdpEvidence = Join-Path $TestDrive ([guid]::NewGuid().ToString('N')) }
+        It 'LBFO: a failed team query is MANUAL, not "No LBFO team detected"' {
+            $script:Fake.Fail['Get-NetLbfoTeam'] = 'Error'
+            (Invoke-TestCheck 'network').Outcome | Should -Be 'Completed'
+            $r = (Get-Row 'NETWORK' 'NICTeaming')
+            $r.Count | Should -Be 1; $r[0].Status | Should -Be 'MANUAL'; $r[0].Kind | Should -Be 'Finding'
+            $r[0].Details | Should -Match 'Simulated failure'
+        }
+        It 'LBFO: "nothing found" is still the clean answer' {
+            $script:Fake.Fail['Get-NetLbfoTeam'] = 'NotFound'
+            $null = Invoke-TestCheck 'network'
+            (Get-Row 'NETWORK' 'NICTeaming')[0].Status | Should -Be 'OK'
+        }
+        It 'LBFO: a machine without the cmdlet is MANUAL too' {
+            $script:Fake.MissingCommands += 'Get-NetLbfoTeam'
+            $null = Invoke-TestCheck 'network'
+            (Get-Row 'NETWORK' 'NICTeaming')[0].Status | Should -Be 'MANUAL'
+        }
+        It 'routes: a failed query is MANUAL and the list is left out of the snapshot' {
+            $script:Fake.Fail['Get-NetRoute'] = 'Error'
+            (Invoke-TestCheck 'network').Outcome | Should -Be 'Completed'
+            $r = (Get-Row 'NETWORK_DEPENDENCY' 'StaticRoutes')
+            $r.Count | Should -Be 1; $r[0].Status | Should -Be 'MANUAL'; $r[0].Kind | Should -Be 'Finding'
+            $script:Data.Snapshot.ContainsKey('Routes') | Should -BeFalse
+            $script:Data.Snapshot.ContainsKey('IPv4') | Should -BeTrue
+        }
+        It 'routes: no route found is the clean answer' {
+            $script:Fake.Fail['Get-NetRoute'] = 'NotFound'
+            $null = Invoke-TestCheck 'network'
+            (Get-Row 'NETWORK_DEPENDENCY' 'StaticRoutes')[0].Status | Should -Be 'OK'
+            $script:Data.Snapshot.ContainsKey('Routes') | Should -BeTrue
+        }
+        It 'ports: a failed query fails the check, which is reported as not completed' {
+            $script:Fake.Fail['Get-NetTCPConnection'] = 'Error'
+            $run = Invoke-TestCheck 'ports'
+            $run.Outcome | Should -Be 'Failed'
+            (Get-Row 'COLLECTOR' 'Listening ports')[0].Status | Should -Be 'MANUAL'
+            (Get-Row 'PORTS' 'Summary').Count | Should -Be 0
+        }
+        It 'ports: a machine without Get-NetTCPConnection is MANUAL and leaves the list out' {
+            $script:Fake.MissingCommands += 'Get-NetTCPConnection'
+            $null = Invoke-TestCheck 'ports'
+            (Get-Row 'PORTS' 'ListeningPorts')[0].Status | Should -Be 'MANUAL'
+            $script:Data.Snapshot.ContainsKey('Ports') | Should -BeFalse
+        }
+        It 'ports: nothing found is an empty list, not a failure' {
+            $script:Fake.Fail['Get-NetTCPConnection'] = 'NotFound'
+            (Invoke-TestCheck 'ports').Outcome | Should -Be 'Completed'
+            (Get-Row 'PORTS' 'Summary')[0].Value | Should -Match 'ListeningPorts='
+        }
+        It 'drivers: a failed device query is MANUAL and the summary says unknown, not 0' {
+            $script:Fake.CimThrow = @('Win32_PnPSignedDriver')
+            (Invoke-TestCheck 'drivers').Outcome | Should -Be 'Completed'
+            (Get-Row 'DRIVERS' 'DeviceDrivers')[0].Status | Should -Be 'MANUAL'
+            (Get-Row 'DRIVERS' 'Summary')[0].Value | Should -Match 'NonMicrosoftDevices=unknown'
+        }
+        It 'IIS: installed without the WebAdministration module is MANUAL, not silence' {
+            $script:Fake.Features['Web-Server'] = $true
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'iis'
+            (Get-Row 'IIS' 'Sites')[0].Status | Should -Be 'MANUAL'
+            (Get-Row 'IIS' 'Sites')[0].Value | Should -Match 'WebAdministration module missing'
+        }
+        It 'IIS: a failed site query is MANUAL' {
+            $script:Fake.Features['Web-Server'] = $true
+            $script:Fake.Modules = @('WebAdministration')
+            Reset-FakeServerKeep
+            $script:Fake.Fail['Get-Website'] = 'Error'
+            $null = Invoke-TestCheck 'iis'
+            (Get-Row 'IIS' 'Sites')[0].Status | Should -Be 'MANUAL'
+        }
+        It 'HTTPS bindings: without the module, or when the query fails, they are MANUAL' {
+            $script:Fake.Features['Web-Server'] = $true
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'pki'
+            (Get-Row 'CERTIFICATES' 'IIS https bindings')[0].Value | Should -Match 'module missing'
+            $script:Fake.Modules = @('WebAdministration')
+            $script:Fake.Fail['Get-WebBinding'] = 'Error'
+            $null = Invoke-TestCheck 'pki'
+            (Get-Row 'CERTIFICATES' 'IIS https bindings')[0].Value | Should -Match 'could not be read'
+        }
+        It 'HTTPS bindings: no binding found is not a failure' {
+            $script:Fake.Features['Web-Server'] = $true
+            $script:Fake.Modules = @('WebAdministration')
+            Reset-FakeServerKeep
+            $script:Fake.Fail['Get-WebBinding'] = 'NotFound'
+            $null = Invoke-TestCheck 'pki'
+            (Get-Row 'CERTIFICATES' 'IIS https bindings').Count | Should -Be 0
+        }
+        It 'printers: an unreadable inventory without the role but with a running spooler is MANUAL' {
+            $script:Fake.Cim['Win32_Service'] = @($script:Fake.Cim['Win32_Service']) + @(New-FakeService 'Spooler' 'Running' 'Auto')
+            Reset-FakeServerKeep
+            $script:Fake.PrintInvError = 'Simulated: spooler RPC failed'
+            (Invoke-TestCheck 'printers').Outcome | Should -Be 'Completed'
+            (Get-Row 'PRINTING' 'Printers')[0].Status | Should -Be 'MANUAL'
+        }
+        It 'printers: a disabled spooler without the role means not a print server' {
+            $script:Fake.Cim['Win32_Service'] = @($script:Fake.Cim['Win32_Service']) + @(New-FakeService 'Spooler' 'Stopped' 'Disabled')
+            Reset-FakeServerKeep
+            $script:Fake.PrintInvError = 'Simulated: spooler RPC failed'
+            $null = Invoke-TestCheck 'printers'
+            (Get-Row 'PRINTING' 'Printers').Count | Should -Be 0
+            (Get-Row 'PRINTING' 'PrintServer')[0].Status | Should -Be 'OK'
+        }
+        It 'printers: an unreadable inventory with the role is MANUAL' {
+            $script:Fake.Features['Print-Server'] = $true
+            Reset-FakeServerKeep
+            $script:Fake.PrintInvError = 'Simulated: spooler RPC failed'
+            $null = Invoke-TestCheck 'printers'
+            (Get-Row 'PRINTING' 'Printers')[0].Status | Should -Be 'MANUAL'
+        }
+        It 'storage: an unreadable partition layout fails the check visibly, with no OK row' {
+            $script:Fake.Fail['Get-Partition'] = 'Error'
+            $run = Invoke-TestCheck 'storage'
+            $run.Outcome | Should -Be 'Failed'
+            (Get-Row 'COLLECTOR' 'Storage')[0].Status | Should -Be 'MANUAL'
+            (Get-Row 'STORAGE' 'RecoveryPartitionAfterC').Count | Should -Be 0
+        }
+        It 'storage: a system partition without a readable volume is MANUAL' {
+            $script:Fake.Volumes.Remove('0-2')
+            $null = Invoke-TestCheck 'storage'
+            $r = (Get-Row 'STORAGE' 'SystemPartition')
+            $r.Count | Should -Be 1; $r[0].Status | Should -Be 'MANUAL'; $r[0].Kind | Should -Be 'Finding'
+            $r[0].Value | Should -Match 'free space not readable'
+        }
+        It 'storage: a recovery partition without a readable volume is MANUAL too' {
+            $script:Fake.Volumes.Remove('0-1')
+            $null = Invoke-TestCheck 'storage'
+            $r = (Get-Row 'STORAGE' 'RecoveryPartition')
+            $r.Count | Should -Be 1; $r[0].Status | Should -Be 'MANUAL'; $r[0].Kind | Should -Be 'Finding'
+        }
+        It 'security: unreadable AppLocker, BitLocker and TPM states are MANUAL rows' {
+            foreach ($n in 'Get-AppLockerPolicy', 'Get-BitLockerVolume', 'Get-Tpm') { $script:Fake.Fail[$n] = 'Error' }
+            $null = Invoke-TestCheck 'antivirus'
+            (Get-Row 'SECURITY' 'AppLocker')[0].Status | Should -Be 'MANUAL'
+            (Get-Row 'SECURITY' 'BitLocker C:')[0].Status | Should -Be 'MANUAL'
+            (Get-Row 'SECURITY' 'TPM')[0].Status | Should -Be 'MANUAL'
+        }
+        It 'security: Secure Boot on a legacy BIOS machine is information, any other error is MANUAL' {
+            $script:Fake.SecureBoot = $null
+            $null = Invoke-TestCheck 'antivirus'
+            (Get-Row 'SECURITY' 'SecureBoot')[0].Status | Should -Be 'INFO'
+            (Get-Row 'SECURITY' 'SecureBoot')[0].Value | Should -Match 'legacy BIOS'
+            $script:Fake.Fail['Confirm-SecureBootUEFI'] = 'Error'
+            $null = Invoke-TestCheck 'antivirus'
+            (Get-Row 'SECURITY' 'SecureBoot')[0].Status | Should -Be 'MANUAL'
+            (Get-Row 'SECURITY' 'SecureBoot')[0].Value | Should -Not -Match 'legacy BIOS'
+        }
+        It 'rdp: a failed listener query is not reported as "Nothing listening"' {
+            $PolicyEvidenceRoot = $script:RdpEvidence
+            $script:Fake.Fail['Get-NetTCPConnection'] = 'Error'
+            $null = Invoke-TestCheck 'rdp'
+            $r = (Get-Row 'RDP' 'RDPAccessReadiness')[0]
+            $r.Value | Should -Be 'REVIEW'
+            (@($r.Details) -join ' ') | Should -Match 'listener query failed'
+            (@($r.Details) -join ' ') | Should -Not -Match 'Nothing listening'
+        }
+        It 'rdp: no listener found is still NO-GO' {
+            $PolicyEvidenceRoot = $script:RdpEvidence
+            $script:Fake.Fail['Get-NetTCPConnection'] = 'NotFound'
+            $null = Invoke-TestCheck 'rdp'
+            $r = (Get-Row 'RDP' 'RDPAccessReadiness')[0]
+            $r.Value | Should -Be 'NO-GO'
+            (@($r.Details) -join ' ') | Should -Match 'Nothing listening'
+        }
+        It 'PKI: an unreadable CA configuration is MANUAL, not an enterprise root CA' {
+            $script:Fake.Cim['Win32_Service'] = @($script:Fake.Cim['Win32_Service']) + @(New-FakeService 'CertSvc')
+            $script:Fake.Registry['HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration|Active'] = 'Example-CA'
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'pki'
+            $r = (Get-Row 'PKI' 'CA: Example-CA')
+            $r[0].Status | Should -Be 'MANUAL'
+            $r[0].Value | Should -Not -Match 'EnterpriseRoot'
+        }
+        It 'PKI: a CA configuration without a type is MANUAL; with a type it is listed' {
+            $script:Fake.Cim['Win32_Service'] = @($script:Fake.Cim['Win32_Service']) + @(New-FakeService 'CertSvc')
+            $script:Fake.Registry['HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration|Active'] = 'Example-CA'
+            Reset-FakeServerKeep
+            $key = 'HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration\Example-CA'
+            $script:Fake.ItemProperty[$key] = [pscustomobject]@{ DBDirectory = 'D:\CA\db'; DBLogDirectory = 'D:\CA\log' }
+            $null = Invoke-TestCheck 'pki'
+            (Get-Row 'PKI' 'CA: Example-CA')[0].Status | Should -Be 'MANUAL'
+            $script:Fake.ItemProperty[$key] = [pscustomobject]@{ CAType = 1; DBDirectory = 'D:\CA\db'; DBLogDirectory = 'D:\CA\log' }
+            $null = Invoke-TestCheck 'pki'
+            (Get-Row 'PKI' 'CA: Example-CA')[0].Value | Should -Be 'Type=EnterpriseSubordinate'
         }
     }
 
