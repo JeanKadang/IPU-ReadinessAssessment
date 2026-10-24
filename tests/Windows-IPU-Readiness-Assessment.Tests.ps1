@@ -912,13 +912,63 @@ Describe 'Slow-check time budget (#39)' {
         $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '..\src\Windows-IPU-Readiness-Assessment.ps1'), [ref]$null, [ref]$null)
         $p = $ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'SlowCheckBudgetMinutes' }
         $p.DefaultValue.Value | Should -Be 50
-        Get-SlowCheckBudget 50 45 '' 'Pre' | Should -Be 50
+        Get-SlowCheckBudget 50 30 $false | Should -Be 50
     }
-    It 'adds the compat-scan timeout when media is set in Pre mode' {
-        Get-SlowCheckBudget 50 45 'D:\' 'Pre' | Should -Be 95
+    It 'the print export draws on the pool only when it applies (#244)' {
+        Get-SlowCheckBudget 50 30 $true | Should -Be 80
+        Test-PrintBackupDue 'Pre' $true $true | Should -BeTrue
+        Test-PrintBackupDue 'Post' $true $true | Should -BeFalse
+        Test-PrintBackupDue 'Pre' $false $true | Should -BeFalse
+        Test-PrintBackupDue 'Pre' $true $false | Should -BeFalse
     }
-    It 'does not add it in Post mode' {
-        Get-SlowCheckBudget 50 45 'D:\' 'Post' | Should -Be 50
+    It 'the Setup scan is not part of the shared pool (#244)' {
+        $plan = Get-SlowCheckPlan 'compatscan' 50 99999 45 @()
+        $plan.Skip | Should -BeFalse
+        $plan.SecondsLeft | Should -Be 2700
+    }
+    It 'SE-8: DISM and SFC use all of their pool, and the Setup scan still has its full timeout (#244)' {
+        # Every check ran to its timeout, so the pool clock is used up.
+        (Get-SlowCheckPlan 'dism' 50 3000 45 @()).Reason | Should -Be 'BudgetUsedUp'
+        $plan = Get-SlowCheckPlan 'compatscan' 50 3000 45 @([pscustomobject]@{ Id = 'dism'; Outcome = 'TimedOut' }, [pscustomobject]@{ Id = 'sfc'; Outcome = 'Skipped' })
+        $plan.Skip | Should -BeFalse; $plan.SecondsLeft | Should -Be 2700
+    }
+    It 'a check inside the pool gets the seconds that are left' {
+        $plan = Get-SlowCheckPlan 'dism' 50 600 0 @()
+        $plan.Skip | Should -BeFalse; $plan.SecondsLeft | Should -Be 2400
+    }
+    It 'with no media the Setup scan plan has no time (the check itself is not applicable)' { (Get-SlowCheckPlan 'compatscan' 50 0 0 @()).SecondsLeft | Should -Be 0 }
+    It 'after a DISM timeout SFC is skipped, because the scan may still be running (#244)' {
+        $plan = Get-SlowCheckPlan 'sfc' 50 1800 0 @([pscustomobject]@{ Id = 'printbackup'; Outcome = 'Completed' }, [pscustomobject]@{ Id = 'dism'; Outcome = 'TimedOut' })
+        $plan.Skip | Should -BeTrue; $plan.Reason | Should -Be 'ServicingMayBeRunning'
+    }
+    It 'a DISM that failed or finished does not stop SFC; a PrintBrm timeout does not either' {
+        (Get-SlowCheckPlan 'sfc' 50 600 0 @([pscustomobject]@{ Id = 'dism'; Outcome = 'Failed' })).Skip | Should -BeFalse
+        (Get-SlowCheckPlan 'sfc' 50 600 0 @([pscustomobject]@{ Id = 'dism'; Outcome = 'Completed' })).Skip | Should -BeFalse
+        (Get-SlowCheckPlan 'dism' 50 600 0 @([pscustomobject]@{ Id = 'printbackup'; Outcome = 'TimedOut' })).Skip | Should -BeFalse
+    }
+    It 'a skipped servicing check is a MANUAL finding that coverage lists as a problem (#244)' {
+        $script:Results.Clear(); $script:CheckRuns.Clear()
+        Add-SkippedSlowCheck ([pscustomobject]@{ Id = 'sfc'; Name = 'SFC protected file verification' }) 50 'ServicingMayBeRunning'
+        $script:Results[0].Status | Should -Be 'MANUAL'; $script:Results[0].Kind | Should -Be 'Finding'
+        $script:Results[0].Value | Should -Match 'may still be running'
+        $script:Results[0].Recommendation | Should -Match 'TiWorker'
+        $script:CheckRuns[0].Outcome | Should -Be 'Skipped'
+        $notice = Get-CoverageNotice @($script:CheckRuns[0])
+        @($notice.Problems).Count | Should -Be 1
+        $notice.Problems[0] | Should -Match 'may still be running'
+        $script:CurrentCheckId | Should -Be 'core'
+    }
+    It 'the stop failure text is only there when the process is still running (#244)' {
+        Get-StopFailureText $true | Should -Match 'could not be stopped'
+        Get-StopFailureText $false | Should -Be ''
+    }
+    It 'the process state decides whether the stop worked (#244)' {
+        (Get-NativeKillOutcome $true 0).StillRunning | Should -BeFalse
+        (Get-NativeKillOutcome $true 128).StillRunning | Should -BeFalse
+        (Get-NativeKillOutcome $true $null).StillRunning | Should -BeFalse
+        $stuck = Get-NativeKillOutcome $false 0
+        $stuck.StillRunning | Should -BeTrue; $stuck.Text | Should -Match 'still running'
+        (Get-NativeKillOutcome $false 5).Text | Should -Match 'exit code 5'
     }
     It 'computes the seconds left' {
         Get-SlowSecondsLeft 50 0 | Should -Be 3000
@@ -943,6 +993,36 @@ Describe 'Slow-check time budget (#39)' {
         $script:CheckRuns[0].Outcome | Should -Be 'Skipped'
         $script:CurrentCheckId | Should -Be 'core'
     }
+}
+
+Describe 'Run lock (#244)' {
+    It 'the HRESULT of a sharing or lock violation is recognised' {
+        Test-SharingViolation (-2147024864) | Should -BeTrue    # 0x80070020
+        Test-SharingViolation (-2147024863) | Should -BeTrue    # 0x80070021
+        Test-SharingViolation (-2147024891) | Should -BeFalse   # access denied
+        Test-SharingViolation 32 | Should -BeFalse
+    }
+    It 'a second run on the same lock is refused, and a leftover file does not block' {
+        $path = Join-Path $TestDrive 'srv.log.lock'
+        $first = Enter-RunLock $path
+        $first | Should -Not -BeNullOrEmpty
+        Enter-RunLock $path | Should -BeNullOrEmpty
+        Exit-RunLock $first
+        # The file is still there, but nobody holds it (a killed run leaves exactly this).
+        Test-Path -LiteralPath $path | Should -BeTrue
+        $again = Enter-RunLock $path
+        $again | Should -Not -BeNullOrEmpty
+        Exit-RunLock $again
+    }
+    It 'another lock name is independent' {
+        $a = Enter-RunLock (Join-Path $TestDrive 'a.log.lock'); $b = Enter-RunLock (Join-Path $TestDrive 'b.log.lock')
+        $a | Should -Not -BeNullOrEmpty; $b | Should -Not -BeNullOrEmpty
+        Exit-RunLock $a; Exit-RunLock $b
+    }
+    It 'a lock that cannot be created is an error, not "another run"' {
+        { Enter-RunLock (Join-Path $TestDrive 'no-such-folder\x.lock') } | Should -Throw
+    }
+    It 'releasing nothing is fine' { { Exit-RunLock $null } | Should -Not -Throw }
 }
 
 Describe 'Compare-IPUSnapshot - every category (#35)' {
@@ -1378,6 +1458,7 @@ Describe 'Invoke-NativeCapture (#37)' -Tag 'Integration' {
         $r.TimedOut | Should -BeTrue
         $r.ExitCode | Should -BeNullOrEmpty
         $sw.Elapsed.TotalSeconds | Should -BeLessThan 30
+        $r.StillRunning | Should -BeFalse
         Start-Sleep -Milliseconds 500
         @(Get-Process -Name PING -ErrorAction SilentlyContinue | Where-Object { $_.StartTime -ge $started }).Count | Should -Be 0
     }
