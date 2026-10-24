@@ -995,6 +995,103 @@ Describe 'Slow-check time budget (#39)' {
     }
 }
 
+Describe 'Language-neutral parsing (#246)' {
+    BeforeAll {
+        function New-VssWriter([string]$Name, $Code, [string]$Err) { [pscustomobject]@{ Name = $Name; StateCode = $Code; StateText = ''; LastError = $Err } }
+    }
+    Context 'VSS writers' {
+        It 'English "No error" is OK' { Get-VssWriterStatus (New-VssWriter 'A' 1 'No error') | Should -Be 'OK' }
+        It 'a writer that is not stable is an ACTION whatever the language' { Get-VssWriterStatus (New-VssWriter 'A' 8 'Kein Fehler') 'kein fehler' | Should -Be 'ACTION' }
+        It 'the most common text among the stable writers is the local "no error" (German)' {
+            $w = @((New-VssWriter 'A' 1 'Kein Fehler'), (New-VssWriter 'B' 1 'Kein Fehler'), (New-VssWriter 'C' 1 'Kein Fehler'), (New-VssWriter 'D' 1 'Wiederholbarer Fehler'))
+            Get-VssNoErrorText $w | Should -Be 'kein fehler'
+            Get-VssWriterStatus $w[0] 'kein fehler' | Should -Be 'OK'
+            Get-VssWriterStatus $w[3] 'kein fehler' | Should -Be 'ACTION'
+        }
+        It 'Italian "Nessun errore" contains "error" but is OK; a different text is an ACTION' {
+            $w = @((New-VssWriter 'A' 1 'Nessun errore'), (New-VssWriter 'B' 1 'Nessun errore'), (New-VssWriter 'C' 1 'Errore non ripetibile'))
+            $no = Get-VssNoErrorText $w
+            $no | Should -Be 'nessun errore'
+            Get-VssWriterStatus $w[0] $no | Should -Be 'OK'
+            Get-VssWriterStatus $w[2] $no | Should -Be 'ACTION'
+        }
+        It 'without the local text a German writer is MANUAL, not OK' { Get-VssWriterStatus (New-VssWriter 'A' 1 'Kein Fehler') | Should -Be 'MANUAL' }
+        It 'one stable writer is too few to learn the text' { Get-VssNoErrorText @((New-VssWriter 'A' 1 'Kein Fehler')) | Should -Be '' }
+        It 'no clear majority learns nothing' {
+            Get-VssNoErrorText @((New-VssWriter 'A' 1 'x'), (New-VssWriter 'B' 1 'x'), (New-VssWriter 'C' 1 'y'), (New-VssWriter 'D' 1 'z')) | Should -Be ''
+        }
+        It 'a majority that reads like an English error is never "no error"' {
+            Get-VssNoErrorText @((New-VssWriter 'A' 1 'Retryable error'), (New-VssWriter 'B' 1 'Retryable error')) | Should -Be ''
+        }
+        It 'writers that are not stable are left out when learning' {
+            Get-VssNoErrorText @((New-VssWriter 'A' 8 'Timed out'), (New-VssWriter 'B' 8 'Timed out'), (New-VssWriter 'C' 1 'Aucune erreur'), (New-VssWriter 'D' 1 'Aucune erreur')) | Should -Be 'aucune erreur'
+        }
+    }
+    Context 'WinRE' {
+        BeforeAll {
+            $script:ReXml = "<WindowsRE version=`"2.0`">`r`n  <WinreLocation path=`"\Recovery\WindowsRE`" id=`"0`" offset=`"499218644992`"/>`r`n  <InstallState state=`"1`"/>`r`n</WindowsRE>"
+            $script:ReXmlOff = "<WindowsRE version=`"2.0`"><InstallState state=`"0`"/></WindowsRE>"
+            $script:GermanText = "Windows-Wiederherstellungsumgebung (Windows RE)`r`nInformationen:`r`n    Status der Windows RE:  Aktiviert`r`n    Windows RE-Speicherort:  \\?\GLOBALROOT\device\harddisk0\partition4\Recovery\WindowsRE"
+        }
+        It 'German reagentc text: the location is read, the status comes from ReAgent.xml' {
+            $r = ConvertFrom-ReagentcInfo $script:GermanText $script:ReXml
+            $r.Enabled | Should -BeTrue; $r.Disk | Should -Be 0; $r.Partition | Should -Be 4
+        }
+        It 'a disabled state in ReAgent.xml is read' { (ConvertFrom-ReagentcInfo '' $script:ReXmlOff).Enabled | Should -BeFalse }
+        It 'German text alone leaves the status unknown, not guessed' { (ConvertFrom-ReagentcInfo $script:GermanText).Enabled | Should -BeNullOrEmpty }
+        It 'ReAgent.xml wins over the English words' { (ConvertFrom-ReagentcInfo 'Windows RE status:  Enabled' $script:ReXmlOff).Enabled | Should -BeFalse }
+        It 'the location can come from the XML when the text has none' {
+            $x = '<WinreLocation path="\\?\GLOBALROOT\device\harddisk1\partition2\Recovery\WindowsRE" id="0"/><InstallState state="1"/>'
+            $r = ConvertFrom-ReagentcInfo '' $x
+            $r.Disk | Should -Be 1; $r.Partition | Should -Be 2
+        }
+    }
+    Context 'scheduled task accounts' {
+        It 'ServiceAccount and Group are built in, whatever the name (German)' {
+            Test-BuiltInTaskAccount 'NT-AUTORITAET\SYSTEM' 'ServiceAccount' | Should -BeTrue
+            Test-BuiltInTaskAccount 'LOKALER DIENST' 'ServiceAccount' | Should -BeTrue
+            Test-BuiltInTaskAccount 'Benutzer' 'Group' | Should -BeTrue
+        }
+        It 'a named account is not built in' {
+            Test-BuiltInTaskAccount 'CORP\svc-backup' 'Password' | Should -BeFalse
+            Test-BuiltInTaskAccount 'CORP\svc-backup' '' | Should -BeFalse
+        }
+        It 'the English names and SIDs are the second signal' {
+            foreach ($n in 'SYSTEM', 'NT AUTHORITY\SYSTEM', 'LOCAL SERVICE', 'S-1-5-18', 'BUILTIN\Users', 'S-1-5-32-545', 'Everyone') { Test-BuiltInTaskAccount $n '' | Should -BeTrue }
+        }
+        It 'no account at all is not a named account' { Test-BuiltInTaskAccount '' '' | Should -BeTrue }
+    }
+    Context 'native output code page' {
+        It 'decodes with the given code page' {
+            $bytes = [byte[]](0x61, 0xD5, 0x62)
+            (ConvertFrom-NativeByteArray $bytes 850) | Should -Be ('a' + [string][char]0x0131 + 'b')   # CP850 0xD5 = dotless i
+            (ConvertFrom-NativeByteArray $bytes 437) | Should -Be ('a' + [string][char]0x2552 + 'b')   # CP437 0xD5 = box drawing
+        }
+        It 'defaults to the system OEM code page, not the current user''s' {
+            $bytes = [byte[]](0x61, 0x84, 0x62)
+            $expect = [Text.Encoding]::GetEncoding([Globalization.CultureInfo]::InstalledUICulture.TextInfo.OEMCodePage).GetString($bytes)
+            (ConvertFrom-NativeByteArray $bytes) | Should -Be $expect
+        }
+        It 'UTF-16 output is still detected' { (ConvertFrom-NativeByteArray ([Text.Encoding]::Unicode.GetBytes('Abc')) 850) | Should -Be 'Abc' }
+    }
+    Context 'dates are written in the invariant culture' {
+        It 'a Danish time separator and a Thai calendar do not change the SA line format' {
+            $d = Get-Date -Year 2026 -Month 10 -Day 24 -Hour 9 -Minute 5 -Second 7
+            $old = [Threading.Thread]::CurrentThread.CurrentCulture
+            try {
+                [Threading.Thread]::CurrentThread.CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('th-TH')
+                $d.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture) | Should -Be '2026-10-24 09:05:07'
+                $d.ToString('yyyy-MM-dd HH:mm:ss') | Should -Not -Be '2026-10-24 09:05:07'
+            } finally { [Threading.Thread]::CurrentThread.CurrentCulture = $old }
+        }
+        It 'no date is formatted with the current culture in the collector' {
+            $src = [IO.File]::ReadAllLines((Join-Path $PSScriptRoot '..\src\Windows-IPU-Readiness-Assessment.ps1'))
+            $bad = @($src | Where-Object { $_ -match "\.ToString\('yyyy[^']*'\)" -or $_ -match "Get-Date -Format" })
+            $bad | Should -BeNullOrEmpty
+        }
+    }
+}
+
 Describe 'Test-MediaLanguageMatch (#245)' {
     It 'the same language matches' { Test-MediaLanguageMatch @('en-US') 'en-US' | Should -BeTrue }
     It 'the "(Default)" form that Get-WindowsImage lists matches' { Test-MediaLanguageMatch @('en-US (Default)') 'en-US' | Should -BeTrue }
@@ -3161,7 +3258,7 @@ Describe 'RedactExisting recovers every name the collector registers (#172)' {
             'Add-RedactionLiteral ([string]$sh.Name) ''NAME''',
             'if ($sh.Description) { Add-RedactionLiteral ([string]$sh.Description) ''NAME'' }',
             'foreach ($s in @($script:Data.Services | Where-Object { $_.StartName })) { Add-RedactionLiteral ([string]$s.StartName) ''ACCOUNT'' }',
-            'if ($user -and $user -notmatch $builtIn) { Add-RedactionLiteral $user ''ACCOUNT'' }',
+            'if ($user -and -not $isBuiltIn) { Add-RedactionLiteral $user ''ACCOUNT'' }',
             'Add-RedactionLiteral ([string]$cluster.Name) ''HOST''',
             'foreach ($n in @(Get-ClusterNode -ErrorAction SilentlyContinue)) { Add-RedactionLiteral ([string]$n.Name) ''HOST''; Add-Result ''CLUSTER'' (''Node: '' + $n.Name) ''INFO'' (''State='' + $n.State) -Source ''Get-ClusterNode'' }',
             'if ($act.KmsHost) { foreach ($h in @($act.KmsHost, ($act.KmsHost -split ''\.'')[0]) | Select-Object -Unique) { Add-RedactionLiteral $h ''HOST'' }; $script:Data.KmsEndpoint = $act.KmsEndpoint } elseif ($script:Data.ActivationKind -eq ''KMS'') { $script:Data.KmsEndpoint = ''found via DNS'' }',

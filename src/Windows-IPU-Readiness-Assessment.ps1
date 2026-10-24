@@ -394,7 +394,7 @@ $script:SafeComputerName  = ($script:ComputerName -replace '[^A-Za-z0-9_.-]','_'
 $script:ReportSuffix      = $(if ($AssessmentMode -eq 'Post') { '-IPU-PostUpgrade' } else { '-IPU-Assessment' })
 $script:ReportBaseName    = $script:SafeComputerName + $script:ReportSuffix
 # A redacted report must not carry the computer name in its file name.
-if ($RedactReport) { $script:ReportBaseName = 'REDACTED-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + $script:ReportSuffix }
+if ($RedactReport) { $script:ReportBaseName = 'REDACTED-' + (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture) + $script:ReportSuffix }
 $script:ReportPath        = [IO.Path]::Combine($ReportDirectory, $script:ReportBaseName + '.html')
 $script:LogPath           = [IO.Path]::Combine($ReportDirectory, $script:SafeComputerName + $script:ReportSuffix + '.log')
 $script:JsonPath          = [IO.Path]::Combine($ReportDirectory, $script:ReportBaseName + '.json')
@@ -495,7 +495,7 @@ $script:AreaMap = @{
 function Write-AssessmentLog {
     param([string]$Level = 'INFO', [string]$Phase = '', [string]$Message = '')
     try {
-        $line = '{0};{1};{2};{3}{4}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),$Level,$Phase,(($Message -replace '[\r\n;]+',' | ')),[Environment]::NewLine
+        $line = '{0};{1};{2};{3}{4}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),$Level,$Phase,(($Message -replace '[\r\n;]+',' | ')),[Environment]::NewLine
         [IO.File]::AppendAllText($script:LogPath,$line,(New-Object System.Text.UTF8Encoding($false)))
     } catch {
         # The log itself cannot record this; count it so the report can say
@@ -795,6 +795,14 @@ function Initialize-EvidenceFolder {
     return $folder
 }
 
+function Read-ReAgentXml {
+    # The WinRE configuration file; empty text when it cannot be read (#246).
+    $path = Join-Path $env:windir 'System32\Recovery\ReAgent.xml'
+    try { if (Test-Path -LiteralPath $path -PathType Leaf) { return [string](Get-Content -LiteralPath $path -Raw -ErrorAction Stop) } }
+    catch { Write-Swallowed $_ }
+    return ''
+}
+
 function Get-GpResultXml {
     # Runs "gpresult /scope computer /x" into a temp file and returns the
     # XML text. Throws with gpresult's own message when it fails.
@@ -1008,7 +1016,7 @@ function Save-NetworkEvidence {
         if ($r.Error) { $failed += ($label + ': ' + $r.Error); continue }
         if ($r.TimedOut) { $failed += ($label + ': no answer within ' + $TimeoutSeconds + ' seconds'); continue }
         if ($r.ExitCode -ne 0 -or -not [string]$r.Output) { $failed += ($label + ': exit code ' + $r.ExitCode + ', no output'); continue }
-        $text = '# ' + $label + "`r`n# " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + "`r`n`r`n" + ([string]$r.Output -replace '\r?\n', "`r`n") + "`r`n"
+        $text = '# ' + $label + "`r`n# " + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture) + "`r`n`r`n" + ([string]$r.Output -replace '\r?\n', "`r`n") + "`r`n"
         [IO.File]::WriteAllText((Join-Path $Destination $c.File), $text, $utf8)
         $saved += $c.File
     }
@@ -1268,7 +1276,7 @@ function ConvertTo-DateTimeValue {
 function ConvertFrom-NativeByteArray {
     # Native tools write either UTF-16LE (sfc.exe, secedit) or the OEM code
     # page (dism.exe, netsh, vssadmin). Detect which and strip control chars.
-    param([byte[]]$Bytes)
+    param([byte[]]$Bytes, [int]$CodePage = 0)
     if ($null -eq $Bytes -or $Bytes.Length -eq 0) { return '' }
     $text = ''
     $isUnicode = $false
@@ -1282,7 +1290,9 @@ function ConvertFrom-NativeByteArray {
     if ($isUnicode) { $text = [Text.Encoding]::Unicode.GetString($Bytes) }
     else {
         $encoding = $null
-        try { $encoding = [Text.Encoding]::GetEncoding([Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage) } catch { Write-Swallowed $_ }
+        # The tools write the OEM code page of the system (the installed language), not of the account that runs the script (#246).
+        if ($CodePage -le 0) { $CodePage = [Globalization.CultureInfo]::InstalledUICulture.TextInfo.OEMCodePage }
+        try { $encoding = [Text.Encoding]::GetEncoding($CodePage) } catch { Write-Swallowed $_ }
         if ($null -eq $encoding) { $encoding = New-Object System.Text.UTF8Encoding($false) }
         $text = $encoding.GetString($Bytes)
     }
@@ -1643,7 +1653,7 @@ function Get-SupportLifecycleDecision {
         return [pscustomobject]@{ Status='INFO'; Ended=$false; EndDate=''; Value='End of support not known for this release'; Text='Check the Microsoft Lifecycle page for this release.' }
     }
     $end = [datetime]::ParseExact($script:ReleaseEndOfSupport[$Release], 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
-    $endText = $end.ToString('yyyy-MM-dd')
+    $endText = $end.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
     if ($Today.Date -gt $end) {
         return [pscustomobject]@{ Status='WARNING'; Ended=$true; EndDate=$endText; Value=($name + ': out of support since ' + $endText)
             Text='Microsoft no longer ships security updates for this release unless Extended Security Updates (ESU, for example through Azure Arc) are in place. This is why the newest update can be old, and it adds urgency to the upgrade.' }
@@ -1854,6 +1864,19 @@ function Test-MediaLanguageMatch {
     return ($have -contains $wanted)
 }
 
+function Test-BuiltInTaskAccount {
+    # Pure (#246): is a scheduled task's principal a built-in account rather
+    # than a named one with stored credentials? The logon type is language
+    # neutral: ServiceAccount (SYSTEM, LOCAL SERVICE, NETWORK SERVICE) and Group
+    # (Users, Administrators) are built in, whatever the account is called on a
+    # German or French server. The English names and the well-known SIDs are a
+    # second signal.
+    param([string]$UserId, [string]$LogonType = '')
+    if (@('ServiceAccount', 'Group') -contains $LogonType) { return $true }
+    if (-not $UserId) { return $true }
+    return ($UserId -match '^(SYSTEM|NT AUTHORITY\\.*|LOCAL SERVICE|NETWORK SERVICE|S-1-5-(18|19|20)|S-1-5-32-\d+|S-1-1-0|INTERACTIVE|Users|Administrators|BUILTIN\\.*|Everyone)$')
+}
+
 function Get-DismVerdict {
     # Pure (#249). Only DISM's own words about the component store are
     # evidence of corruption. A servicing operation that waits for a reboot
@@ -1923,12 +1946,36 @@ function ConvertFrom-VssWriterOutput {
     return ,$writers
 }
 
+# Whole words: the Italian "errore" and the Spanish "error" in "Ningun error" must not read as English failures (#246).
+$script:VssEnglishErrorWords = '\b(errors?|fail(s|ed|ure)?|timeout|timed out|retryable)\b'
+
+function Get-VssNoErrorText {
+    # Pure (#246): vssadmin writes "No error" in the language of the server.
+    # Most writers are healthy, so the most common last-error text among the
+    # stable writers (state 1) is the local wording of "no error" - when it is
+    # shared by more than half of them and does not read like an English error.
+    param([object[]]$Writers)
+    $stable = @(@($Writers) | Where-Object { $_ -and $_.StateCode -eq 1 -and ([string]$_.LastError).Trim() })
+    if ($stable.Count -lt 2) { return '' }
+    $top = @($stable | Group-Object { ([string]$_.LastError).Trim().ToLowerInvariant() } | Sort-Object Count -Descending) | Select-Object -First 1
+    if ($top.Count * 2 -le $stable.Count) { return '' }
+    if ($top.Name -match $script:VssEnglishErrorWords -and $top.Name -notmatch '^no error$') { return '' }
+    return [string]$top.Name
+}
+
 function Get-VssWriterStatus {
-    param($Writer)
+    # The state code (1 = stable) is language neutral and decides first. For a
+    # stable writer the last-error text is compared with the local "no error"
+    # wording (Get-VssNoErrorText); the English words are a second signal (#246).
+    param($Writer, [string]$NoErrorText = '')
     if ($null -ne $Writer.StateCode -and $Writer.StateCode -ne 1) { return 'ACTION' }
-    if ($Writer.LastError -match '^\s*No error\s*$') { return 'OK' }
-    if ($Writer.LastError -match 'error|fail|timeout|retryable') { return 'ACTION' }
-    if ($Writer.StateCode -eq 1) { return 'MANUAL' }
+    $text = ([string]$Writer.LastError).Trim()
+    if ($text -match '^No error$') { return 'OK' }
+    if ($NoErrorText) {
+        if ($text.ToLowerInvariant() -eq $NoErrorText) { return 'OK' }
+        if ($text) { return 'ACTION' }
+    }
+    if ($text -match $script:VssEnglishErrorWords) { return 'ACTION' }
     return 'MANUAL'
 }
 
@@ -2711,9 +2758,9 @@ function Get-GroupPolicyDecision {
     } else {
         $age = [math]::Floor(($Now - [datetime]$LastApplied).TotalDays)
         if ($age -gt $MaxAgeDays) {
-            $rows += [pscustomobject]@{ Item = 'GroupPolicyLastApplied'; Status = 'WARNING'; Kind = 'Finding'; Value = ('This server has not received Group Policy since ' + ([datetime]$LastApplied).ToString('yyyy-MM-dd HH:mm') + ' (' + $age + ' days)'); Details = ('Limit: ' + $MaxAgeDays + ' days (GroupPolicyMaxAgeDays)'); Recommendation = 'Find out why (domain connectivity, secure channel, Group Policy errors in the System log), fix it and run "gpupdate /target:computer" before the change.' }
+            $rows += [pscustomobject]@{ Item = 'GroupPolicyLastApplied'; Status = 'WARNING'; Kind = 'Finding'; Value = ('This server has not received Group Policy since ' + ([datetime]$LastApplied).ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture) + ' (' + $age + ' days)'); Details = ('Limit: ' + $MaxAgeDays + ' days (GroupPolicyMaxAgeDays)'); Recommendation = 'Find out why (domain connectivity, secure channel, Group Policy errors in the System log), fix it and run "gpupdate /target:computer" before the change.' }
         } else {
-            $rows += [pscustomobject]@{ Item = 'GroupPolicyLastApplied'; Status = 'OK'; Kind = 'Evidence'; Value = ([datetime]$LastApplied).ToString('yyyy-MM-dd HH:mm'); Details = ($age.ToString() + ' days ago'); Recommendation = '' }
+            $rows += [pscustomobject]@{ Item = 'GroupPolicyLastApplied'; Status = 'OK'; Kind = 'Evidence'; Value = ([datetime]$LastApplied).ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture); Details = ($age.ToString() + ' days ago'); Recommendation = '' }
         }
     }
     return ,$rows
@@ -2772,14 +2819,21 @@ function Get-RecommendationCommand {
 $script:WinReMinPartitionMB = 900
 
 function ConvertFrom-ReagentcInfo {
-    # Pure (#161): status and location from "reagentc /info". The location
-    # (\\?\GLOBALROOT\device\harddiskN\partitionM\...) is language
-    # neutral; the status words are read in English only.
-    param([string]$Text)
+    # Pure (#161, #246): status and location of WinRE. The location
+    # (\\?\GLOBALROOT\device\harddiskN\partitionM\...) in the "reagentc /info"
+    # text is language neutral. The status is read from ReAgent.xml
+    # (<InstallState state="1"/> = enabled), which is language neutral too;
+    # the English words "Windows RE status: Enabled" are the second signal.
+    param([string]$Text, [string]$Xml = '')
     $r = [pscustomobject]@{ Enabled = $null; Disk = $null; Partition = $null }
-    if (-not $Text) { return $r }
-    if ($Text -match 'harddisk(\d+)\\partition(\d+)') { $r.Disk = [int]$Matches[1]; $r.Partition = [int]$Matches[2] }
-    if ($Text -match 'Windows RE status:\s*Enabled') { $r.Enabled = $true } elseif ($Text -match 'Windows RE status:\s*Disabled') { $r.Enabled = $false }
+    if ($Text) {
+        if ($Text -match 'harddisk(\d+)\\partition(\d+)') { $r.Disk = [int]$Matches[1]; $r.Partition = [int]$Matches[2] }
+        if ($Text -match 'Windows RE status:\s*Enabled') { $r.Enabled = $true } elseif ($Text -match 'Windows RE status:\s*Disabled') { $r.Enabled = $false }
+    }
+    if ($Xml) {
+        if ($Xml -match '<InstallState\s+state\s*=\s*"(\d+)"') { $r.Enabled = ([int]$Matches[1] -eq 1) }
+        if ($null -eq $r.Partition -and $Xml -match '<WinreLocation\s+path\s*=\s*"[^"]*harddisk(\d+)\\partition(\d+)') { $r.Disk = [int]$Matches[1]; $r.Partition = [int]$Matches[2] }
+    }
     return $r
 }
 
@@ -3797,9 +3851,9 @@ Register-Check -Id 'pendingreboot' -Name 'Pending reboot and uptime' -Script {
     if (-not $boot) { throw ('LastBootUpTime could not be read: ' + $script:Data.OS.LastBootUpTime) }
     $days = [math]::Floor(((Get-Date) - $boot).TotalDays)
     if ($days -ge $UptimeWarningDays) {
-        Add-Result 'WINDOWS_HEALTH' 'Uptime' 'WARNING' ('UptimeDays=' + $days) ('LastBoot=' + $boot.ToString('yyyy-MM-dd HH:mm')) -Recommendation 'Do a controlled reboot before the change window and re-run the assessment. A long-unrebooted server can hide reboot-time problems that would otherwise surface mid-upgrade.' -Source 'Win32_OperatingSystem'
+        Add-Result 'WINDOWS_HEALTH' 'Uptime' 'WARNING' ('UptimeDays=' + $days) ('LastBoot=' + $boot.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)) -Recommendation 'Do a controlled reboot before the change window and re-run the assessment. A long-unrebooted server can hide reboot-time problems that would otherwise surface mid-upgrade.' -Source 'Win32_OperatingSystem'
     } else {
-        Add-Result 'WINDOWS_HEALTH' 'Uptime' 'OK' ('UptimeDays=' + $days) ('LastBoot=' + $boot.ToString('yyyy-MM-dd HH:mm')) -Source 'Win32_OperatingSystem'
+        Add-Result 'WINDOWS_HEALTH' 'Uptime' 'OK' ('UptimeDays=' + $days) ('LastBoot=' + $boot.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)) -Source 'Win32_OperatingSystem'
     }
 }
 
@@ -3813,7 +3867,7 @@ Register-Check -Id 'patchlevel' -Name 'Patch level' -Script {
         return
     }
     $age = [math]::Floor(((Get-Date) - $latest.Date).TotalDays)
-    $value = 'LatestInstalled=' + $latest.Date.ToString('yyyy-MM-dd') + ' (' + $latest.Id + ')'
+    $value = 'LatestInstalled=' + $latest.Date.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) + ' (' + $latest.Id + ')'
     $patchDetails = @('AgeDays=' + $age)
     $patchAdvice = 'Install the latest cumulative update before IPU; Setup and Dynamic Update are most reliable on a current source OS.'
     if ($script:Data.SourceSupport -and $script:Data.SourceSupport.Ended) {
@@ -3834,7 +3888,7 @@ Register-Check -Id 'history' -Name 'Previous upgrade history' -Script {
         $p = Get-ItemProperty $key.PSPath -ErrorAction SilentlyContinue
         $found = $true
         $installed = ''
-        if ($p.InstallDate) { try { $installed = (New-Object DateTime 1970,1,1,0,0,0,([DateTimeKind]::Utc)).AddSeconds([int64]$p.InstallDate).ToLocalTime().ToString('yyyy-MM-dd') } catch { Write-Swallowed $_ } }
+        if ($p.InstallDate) { try { $installed = (New-Object DateTime 1970,1,1,0,0,0,([DateTimeKind]::Utc)).AddSeconds([int64]$p.InstallDate).ToLocalTime().ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) } catch { Write-Swallowed $_ } }
         Add-Result 'UPGRADE_HISTORY' $key.PSChildName 'INFO' ('Product=' + $p.ProductName) @(('Build=' + $p.CurrentBuild),('InstallDate=' + $installed)) -Source $key.Name
     }
     # Only Source OS registry keys and C:\Windows.old show a completed
@@ -3845,7 +3899,7 @@ Register-Check -Id 'history' -Name 'Previous upgrade history' -Script {
     if (Test-Path 'C:\Windows.old') { $upgradeHints += 'C:\Windows.old exists' }
     $osInstall = ''
     $installDate = ConvertTo-DateTimeValue $script:Data.OS.InstallDate
-    if ($installDate) { $osInstall = $installDate.ToString('yyyy-MM-dd') }
+    if ($installDate) { $osInstall = $installDate.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) }
     Add-Result 'UPGRADE_HISTORY' 'OSInstallDate' 'INFO' $osInstall 'Date of the current OS installation (or of the last in-place upgrade).' -Source 'Win32_OperatingSystem.InstallDate'
     if ($found -or $upgradeHints.Count -gt 0) {
         if ($AssessmentMode -eq 'Post') {
@@ -3859,7 +3913,7 @@ Register-Check -Id 'history' -Name 'Previous upgrade history' -Script {
     $btLog = 'C:\$WINDOWS.~BT\Sources\Panther\setupact.log'
     if (Test-Path -LiteralPath 'C:\$WINDOWS.~BT') {
         $btDate = ''
-        if (Test-Path -LiteralPath $btLog) { $btDate = 'setupact.log LastWrite=' + (Get-Item -LiteralPath $btLog).LastWriteTime.ToString('yyyy-MM-dd HH:mm') }
+        if (Test-Path -LiteralPath $btLog) { $btDate = 'setupact.log LastWrite=' + (Get-Item -LiteralPath $btLog).LastWriteTime.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture) }
         Add-Result 'UPGRADE_HISTORY' 'SetupWorkingFolder' 'INFO' 'C:\$WINDOWS.~BT exists' $btDate -Recommendation 'Left by an earlier Setup run: a compatibility scan or an aborted upgrade. If no scan was run, read the Panther logs to see why an upgrade stopped.' -Kind 'Observation' -Source 'C:\$WINDOWS.~BT'
     }
 }
@@ -4047,7 +4101,7 @@ Register-Check -Id 'platform' -Name 'Platform and hardware' -Script {
     if ($bios) {
         $biosDate = [string]$bios.ReleaseDate
         $releaseDate = ConvertTo-DateTimeValue $bios.ReleaseDate
-        if ($releaseDate) { $biosDate = $releaseDate.ToString('yyyy-MM-dd') }
+        if ($releaseDate) { $biosDate = $releaseDate.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) }
         Add-Result 'HARDWARE' 'BIOS' 'INFO' ('Version=' + $bios.SMBIOSBIOSVersion) @(('Manufacturer=' + $bios.Manufacturer),('ReleaseDate=' + $biosDate)) -Source 'Win32_BIOS'
     }
     $firmware = 'Legacy BIOS or undetermined'
@@ -4161,8 +4215,10 @@ Register-Check -Id 'storage' -Name 'Storage' -Script {
     if ($ra.TimedOut -or $ra.Error -or ($null -ne $ra.ExitCode -and [int]$ra.ExitCode -ne 0)) {
         Add-Result 'STORAGE' 'WinREStatus' 'MANUAL' 'reagentc /info failed' ([string]$ra.Error + ' ExitCode=' + $ra.ExitCode) -Recommendation 'Run "reagentc /info" as administrator to see where WinRE is before changing partitions.' -Kind 'Finding' -Source 'reagentc /info'
     } else {
-        $winRe = ConvertFrom-ReagentcInfo $ra.Output
-        if ($null -ne $winRe.Partition -or $null -ne $winRe.Enabled) {
+        $winRe = ConvertFrom-ReagentcInfo $ra.Output (Read-ReAgentXml)
+        if ($null -eq $winRe.Partition -and $null -eq $winRe.Enabled) {
+            Add-Result 'STORAGE' 'WinREStatus' 'MANUAL' 'The Windows RE status could not be read' -Recommendation 'Run "reagentc /info" as administrator to see where WinRE is before changing partitions.' -Kind 'Finding' -Source 'reagentc /info, ReAgent.xml'
+        } else {
             $where = 'Location not reported'; if ($null -ne $winRe.Partition) { $where = 'Disk' + $winRe.Disk + ' P' + $winRe.Partition }
             $state = 'Unknown'; if ($winRe.Enabled -eq $true) { $state = 'Enabled' } elseif ($winRe.Enabled -eq $false) { $state = 'Disabled' }
             Add-Result 'STORAGE' 'WinREStatus' 'INFO' ($state + ', ' + $where) -Source 'reagentc /info'
@@ -4259,7 +4315,7 @@ Register-Check -Id 'network' -Name 'Network, teaming, hosts and routes' -Script 
     # team if the upgrade resets an adapter. Read-only commands.
     if ($EnableNetworkEvidence) {
         try {
-            $dest = Join-Path (Initialize-EvidenceFolder 'Network') ($script:SafeComputerName + '-IPU-Network-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+            $dest = Join-Path (Initialize-EvidenceFolder 'Network') ($script:SafeComputerName + '-IPU-Network-' + (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture))
             $copy = Save-NetworkEvidence -Destination $dest -Zip $CreatePolicyEvidenceZip
             $script:Data.NetworkEvidence = $copy.Location
             $keep = 'Copy it off the server before the change: it holds the full IP configuration, is not redacted and must not be shared outside the team. netsh-interface-dump.txt is a netsh script that can put the configuration back (read it first; see the user guide).'
@@ -4583,7 +4639,7 @@ Register-Check -Id 'iis' -Name 'IIS' -Script {
     Add-Result 'IIS' 'Web-Server' 'WARNING' 'Installed' -Recommendation 'Immediately before the IPU, run the appcmd.exe add backup command shown (the copy in this report is from assessment time), and keep site, binding and certificate documentation.' -Source 'Get-WindowsFeature' -Command (Get-RecommendationCommand 'IisBackup').Command -CommandKind 'Change' -Link $script:DocLinks.AppCmd.Url -LinkTitle $script:DocLinks.AppCmd.Title
     if ($EnableIISConfigEvidence) {
         try {
-            $dest = Join-Path (Initialize-EvidenceFolder 'IIS') ($script:SafeComputerName + '-IPU-IIS-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+            $dest = Join-Path (Initialize-EvidenceFolder 'IIS') ($script:SafeComputerName + '-IPU-IIS-' + (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture))
             $copy = Save-IISConfigEvidence -Destination $dest -Zip $CreatePolicyEvidenceZip
             $script:Data.IISConfigEvidence = $copy.Location
             Add-Result 'IIS' 'ConfigurationCopy' 'OK' $copy.Location @(('Files=' + ($copy.Files -join ', ')), ('applicationHost.config SHA256=' + $copy.ApplicationHostSha256)) -Recommendation 'Restore: copy the files back to %windir%\System32\inetsrv\config, or put them in a folder under inetsrv\backup and run "appcmd restore backup <folder>". See the user guide.' -Source 'inetsrv\config (copied, not changed)'
@@ -4667,7 +4723,7 @@ Register-Check -Id 'pki' -Name 'PKI, certificates and TLS bindings' -Script {
             if ($index.ContainsKey($thumb)) { continue }
             $index[$thumb] = [pscustomobject]@{ Cert=$cert; Store=$store }
             $days = [math]::Floor(($cert.NotAfter - (Get-Date)).TotalDays)
-            Add-Result 'CERTIFICATES' $thumb 'INFO' ('Subject=' + $cert.Subject) @(('Store=' + $store),('Issuer=' + $cert.Issuer),('NotAfter=' + $cert.NotAfter.ToString('yyyy-MM-dd')),('HasPrivateKey=' + $cert.HasPrivateKey)) -Source ('Cert:\LocalMachine\' + $store)
+            Add-Result 'CERTIFICATES' $thumb 'INFO' ('Subject=' + $cert.Subject) @(('Store=' + $store),('Issuer=' + $cert.Issuer),('NotAfter=' + $cert.NotAfter.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)),('HasPrivateKey=' + $cert.HasPrivateKey)) -Source ('Cert:\LocalMachine\' + $store)
             if ($days -lt 0) {
                 Add-Result 'CERTIFICATES' ('Expired: ' + $thumb) 'WARNING' ('ExpiredDaysAgo=' + [math]::Abs($days)) ('Subject=' + $cert.Subject) -Recommendation 'Determine whether it is still bound; renew/remove through the owning team.' -Kind 'Observation' -Source ('Cert:\LocalMachine\' + $store)
             } elseif ($days -le $CertificateWarningDays) {
@@ -4719,7 +4775,7 @@ Register-Check -Id 'pki' -Name 'PKI, certificates and TLS bindings' -Script {
         if ($thumb -and $index.ContainsKey($thumb)) {
             $c = $index[$thumb].Cert
             $st = 'OK'; if ($c.NotAfter -lt (Get-Date)) { $st = 'WARNING' }
-            Add-Result 'CERTIFICATES' 'RDP-Tcp certificate' $st ('Thumbprint=' + $thumb) @(('Subject=' + $c.Subject),('NotAfter=' + $c.NotAfter.ToString('yyyy-MM-dd'))) -Recommendation 'Verify RDP connects after IPU.' -Kind 'Observation' -Source 'Win32_TSGeneralSetting'
+            Add-Result 'CERTIFICATES' 'RDP-Tcp certificate' $st ('Thumbprint=' + $thumb) @(('Subject=' + $c.Subject),('NotAfter=' + $c.NotAfter.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture))) -Recommendation 'Verify RDP connects after IPU.' -Kind 'Observation' -Source 'Win32_TSGeneralSetting'
         } elseif ($thumb) {
             Add-Result 'CERTIFICATES' 'RDP-Tcp certificate' 'MANUAL' ('Thumbprint=' + $thumb) 'Not found in My, Remote Desktop or WebHosting' -Recommendation 'Verify the RDP certificate configuration.' -Kind 'Finding' -Source 'Win32_TSGeneralSetting'
         }
@@ -4876,8 +4932,9 @@ Register-Check -Id 'backup' -Name 'Backup and VSS' -Script {
         Add-Result 'BACKUP' 'VSSWriters' 'MANUAL' 'VSS writer state could not be read' @(('TimedOut=' + $vss.TimedOut),$vss.Error) -Recommendation 'Run "vssadmin list writers" manually; failed writers break application-consistent backups and snapshots.' -Kind 'Finding' -Source 'vssadmin list writers'
     }
     $failed = 0
+    $noError = Get-VssNoErrorText $writers
     foreach ($w in $writers) {
-        $st = Get-VssWriterStatus $w
+        $st = Get-VssWriterStatus $w $noError
         if ($st -eq 'ACTION') { $failed++ }
         Add-Result 'BACKUP' ('VSS writer: ' + $w.Name) $st ('[' + $w.StateCode + '] ' + $w.StateText) $w.LastError -Kind 'Evidence' -Source 'vssadmin list writers'
     }
@@ -4951,7 +5008,7 @@ Register-Check -Id 'drivers' -Name 'Non-Microsoft drivers' -Script {
     foreach ($d in @($pnp | Sort-Object DeviceName,DriverVersion -Unique)) {
         $date = [string]$d.DriverDate
         $driverDate = ConvertTo-DateTimeValue $d.DriverDate
-        if ($driverDate) { $date = $driverDate.ToString('yyyy-MM-dd') }
+        if ($driverDate) { $date = $driverDate.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) }
         Add-Result 'DRIVERS' ('Device: ' + $d.DeviceName) 'INFO' ('Provider=' + $d.DriverProviderName) @(('Version=' + $d.DriverVersion),('Date=' + $date),('Class=' + $d.DeviceClass),('Signed=' + $d.IsSigned)) -Source 'Win32_PnPSignedDriver'
         if ($d.IsSigned -eq $false) { $unsigned += $d.DeviceName }
     }
@@ -5029,19 +5086,19 @@ Register-Check -Id 'tasks' -Name 'Scheduled tasks' -Script {
         Add-Result 'TASKS' 'ScheduledTasks' 'INFO' 'Get-ScheduledTask unavailable' -Source 'ScheduledTasks module'
         return
     }
-    $builtIn = '^(SYSTEM|NT AUTHORITY\\.*|LOCAL SERVICE|NETWORK SERVICE|S-1-5-(18|19|20)|INTERACTIVE|Users|Administrators|BUILTIN\\.*|Everyone)$'
     $named = @(); $perUser = 0
     foreach ($t in @(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.TaskPath -notlike '\Microsoft\*' } | Sort-Object TaskPath,TaskName)) {
         $user = [string]$t.Principal.UserId
         if (-not $user) { $user = [string]$t.Principal.GroupId }
         $actions = @($t.Actions | ForEach-Object { (([string]$_.Execute) + ' ' + ([string]$_.Arguments)).Trim() } | Where-Object { $_ }) -join '; '
         $fullName = $t.TaskPath + $t.TaskName
-        if ($user -and $user -notmatch $builtIn) { Add-RedactionLiteral $user 'ACCOUNT' }
+        $isBuiltIn = Test-BuiltInTaskAccount $user ([string]$t.Principal.LogonType)
+        if ($user -and -not $isBuiltIn) { Add-RedactionLiteral $user 'ACCOUNT' }
         $script:Data.Snapshot.Tasks += $fullName
         # Windows' own per-user feed tasks: one line for all of them (#214).
         if (Test-WindowsPerUserTask $fullName) { $perUser++; continue }
         Add-Result 'TASKS' $fullName 'INFO' ('RunAs=' + $user) @(('State=' + $t.State),('Action=' + $actions)) -Source 'Get-ScheduledTask'
-        if ($user -and $user -notmatch $builtIn) { $named += ($fullName + ' (' + $user + ')') }
+        if ($user -and -not $isBuiltIn) { $named += ($fullName + ' (' + $user + ')') }
     }
     if ($perUser -gt 0) {
         Add-Result 'TASKS' 'WindowsPerUserTasks' 'INFO' ('Count=' + $perUser) 'User_Feed_Synchronization-{GUID}: created by Windows for each user who signed in; they run as that user.' -Recommendation 'Not relevant for the upgrade.' -Source 'Get-ScheduledTask'
@@ -5094,7 +5151,7 @@ Register-Check -Id 'printbackup' -Name 'Print server backup (PrintBrm)' -Phase '
         return
     }
     $timeout = [math]::Min($PrintBackupTimeoutMinutes * 60, $script:SlowSecondsLeft)
-    $dest = Join-Path (Initialize-EvidenceFolder 'Printers') ($script:SafeComputerName + '-IPU-Print-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    $dest = Join-Path (Initialize-EvidenceFolder 'Printers') ($script:SafeComputerName + '-IPU-Print-' + (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture))
     $null = Initialize-OutputFolder $dest
     $file = Join-Path $dest ($script:SafeComputerName + '-printers.printerExport')
     $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -5156,7 +5213,7 @@ Register-Check -Id 'sfc' -Name 'SFC protected file verification' -Phase 'Slow' -
     }
     if ($r.Error) { throw $r.Error }
     $cbs = @()
-    $stamp = $started.AddMinutes(-1).ToString('yyyy-MM-dd HH:mm')
+    $stamp = $started.AddMinutes(-1).ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)
     foreach ($line in (Read-FileTail (Join-Path $env:windir 'Logs\CBS\CBS.log'))) {
         if ($line.Length -ge 16 -and $line.Substring(0,16) -ge $stamp) { $cbs += $line }
     }
@@ -5267,7 +5324,7 @@ function Invoke-RdpPolicyAssessment {
     $review = New-Object System.Collections.Generic.List[string]
     $driveBlock = New-Object System.Collections.Generic.List[string]
 
-    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture)
     $root = Join-Path (Get-EvidenceFolderPath $EvidenceRoot 'Policy' $PolicyEvidenceRoot) ($script:SafeComputerName + '-IPU-Policy-' + $stamp)
     $lgpoRoot = Join-Path $root 'LGPO-Backup'
     $zip = $root + '.zip'
@@ -5640,7 +5697,7 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
 '@)
     [void]$sb.AppendLine('<div class="hero"><h1>' + (& $e $title) + '</h1>')
     [void]$sb.AppendLine('<p><strong>' + (& $e $script:ComputerName) + '</strong> &nbsp;&rarr;&nbsp; ' + (& $e $target) + '</p>')
-    [void]$sb.AppendLine('<p>Started ' + (& $e $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm')) + ' &nbsp;|&nbsp; Completed ' + (& $e $CompletedTime.ToString('yyyy-MM-dd HH:mm')) + ' &nbsp;|&nbsp; Runtime ' + (& $e $duration) + ' &nbsp;|&nbsp; Collector ' + (& $e $script:CollectorVersion) + '</p>')
+    [void]$sb.AppendLine('<p>Started ' + (& $e $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)) + ' &nbsp;|&nbsp; Completed ' + (& $e $CompletedTime.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)) + ' &nbsp;|&nbsp; Runtime ' + (& $e $duration) + ' &nbsp;|&nbsp; Collector ' + (& $e $script:CollectorVersion) + '</p>')
     [void]$sb.AppendLine('<p class="verdict">' + $(if ($isPost) { 'Overall post-upgrade result: ' } else { 'Overall IPU assessment: ' }) + (New-StatusBadge $OverallStatus) + '</p></div>')
     if ($Partial) {
         [void]$sb.AppendLine('<div class="partial">PARTIAL REPORT - the slow checks (DISM, SFC, Setup compatibility scan) had not finished when this was written. If this is the newest report, the SA job was stopped before they completed.</div>')
@@ -5810,8 +5867,8 @@ function New-AssessmentJsonObject {
         ComputerName        = $script:ComputerName
         Mode                = $AssessmentMode
         TargetServerVersion = $TargetServerVersion
-        Started             = $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss')
-        Completed           = $Completed.ToString('yyyy-MM-dd HH:mm:ss')
+        Started             = $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
+        Completed           = $Completed.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
         UtcOffset           = (Format-UtcOffset ([TimeZoneInfo]::Local.GetUtcOffset($Completed)))
         Partial             = [bool]$Partial
         Redacted            = $false
@@ -5897,7 +5954,7 @@ function Invoke-RedactExisting {
     $names = @()
     foreach ($jf in $jsonFiles) { try { $names += [string]([IO.File]::ReadAllText($jf.FullName) | ConvertFrom-Json).ComputerName } catch { Write-Swallowed $_ } }
     foreach ($n in @($names | Where-Object { $_ } | Sort-Object -Unique)) { $null = Get-RedactionPlaceholder $shared 'HOST' $n }
-    $stampAll = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $stampAll = (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture)
     $done = 0
     foreach ($jf in $jsonFiles) {
         try {
@@ -6000,7 +6057,7 @@ function Write-AssessmentJson {
         try {
             $existing = Get-Content -LiteralPath $script:JsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if (Test-BaselineKeepCopy $existing ([bool]$Partial) (Get-ReleaseDisplayName $script:Data.SourceRelease)) {
-                $kept = $script:JsonPath -replace '\.json$', ('-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.json')
+                $kept = $script:JsonPath -replace '\.json$', ('-' + (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture) + '.json')
                 Copy-Item -LiteralPath $script:JsonPath -Destination $kept -ErrorAction Stop
                 $script:BaselineKept = $kept
                 Write-AssessmentLog 'INFO' 'BASELINE' ('Kept the earlier pre-upgrade result as ' + $kept)
@@ -6133,7 +6190,7 @@ function Invoke-Assessment {
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
             $script:ComputerName,'FAILED','MANUAL','','','',0,
-            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss'),$now.ToString('yyyy-MM-dd HH:mm:ss'),
+            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),$now.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),
             (Format-Duration ($now - $script:CollectionStarted)),$script:CollectorVersion,
             ('Nothing was assessed: another assessment run on this server is using ' + $ReportDirectory + ' (' + $script:LogPath + '.lock). Wait for it to finish, or give this run another -ReportDirectory.')
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
@@ -6146,7 +6203,7 @@ function Invoke-Assessment {
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
             $script:ComputerName,'FAILED','MANUAL','','','',0,
-            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss'),$now.ToString('yyyy-MM-dd HH:mm:ss'),
+            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),$now.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),
             (Format-Duration ($now - $script:CollectionStarted)),$script:CollectorVersion,
             ('Nothing was assessed: the report folder cannot be written (' + $ReportDirectory + '): ' + $folderError + ' Give -ReportDirectory a folder the account can write to.')
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
@@ -6171,7 +6228,7 @@ function Invoke-Assessment {
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
             $script:ComputerName,'FAILED','MANUAL',$reportPath,$script:LogPath,'',$script:Results.Count,
-            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss'),$now.ToString('yyyy-MM-dd HH:mm:ss'),
+            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),$now.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),
             (Format-Duration ($now - $script:CollectionStarted)),$script:CollectorVersion,$missingText
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
         $script:ExitCode = 1
@@ -6244,7 +6301,7 @@ function Invoke-Assessment {
         [Console]::Out.WriteLine((@(
             $script:ComputerName,$runStatus,$final.Overall,$script:ReportPath,$script:LogPath,
             ([Math]::Round($final.Bytes/1KB,1)).ToString('N1',$script:NumberCulture),$records,
-            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss'),$final.Completed.ToString('yyyy-MM-dd HH:mm:ss'),
+            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),$final.Completed.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),
             (Format-Duration ($final.Completed - $script:CollectionStarted)),$script:CollectorVersion,$msg
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
         $script:ExitCode = $(if ($runFailure -or $runStatus -eq 'FAILED') { 1 } else { 0 })
@@ -6256,7 +6313,7 @@ function Invoke-Assessment {
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
             $script:ComputerName,'FAILED',(Get-OverallStatus $script:Results.ToArray()),$script:ReportPath,$script:LogPath,'',$records,
-            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss'),$now.ToString('yyyy-MM-dd HH:mm:ss'),
+            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),$now.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),
             (Format-Duration ($now - $script:CollectionStarted)),$script:CollectorVersion,$msg
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
         $script:ExitCode = 1

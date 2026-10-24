@@ -30,7 +30,7 @@ $script:SafeComputerName  = ($script:ComputerName -replace '[^A-Za-z0-9_.-]','_'
 $script:ReportSuffix      = $(if ($AssessmentMode -eq 'Post') { '-IPU-PostUpgrade' } else { '-IPU-Assessment' })
 $script:ReportBaseName    = $script:SafeComputerName + $script:ReportSuffix
 # A redacted report must not carry the computer name in its file name.
-if ($RedactReport) { $script:ReportBaseName = 'REDACTED-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + $script:ReportSuffix }
+if ($RedactReport) { $script:ReportBaseName = 'REDACTED-' + (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture) + $script:ReportSuffix }
 $script:ReportPath        = [IO.Path]::Combine($ReportDirectory, $script:ReportBaseName + '.html')
 $script:LogPath           = [IO.Path]::Combine($ReportDirectory, $script:SafeComputerName + $script:ReportSuffix + '.log')
 $script:JsonPath          = [IO.Path]::Combine($ReportDirectory, $script:ReportBaseName + '.json')
@@ -131,7 +131,7 @@ $script:AreaMap = @{
 function Write-AssessmentLog {
     param([string]$Level = 'INFO', [string]$Phase = '', [string]$Message = '')
     try {
-        $line = '{0};{1};{2};{3}{4}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),$Level,$Phase,(($Message -replace '[\r\n;]+',' | ')),[Environment]::NewLine
+        $line = '{0};{1};{2};{3}{4}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),$Level,$Phase,(($Message -replace '[\r\n;]+',' | ')),[Environment]::NewLine
         [IO.File]::AppendAllText($script:LogPath,$line,(New-Object System.Text.UTF8Encoding($false)))
     } catch {
         # The log itself cannot record this; count it so the report can say
@@ -431,6 +431,14 @@ function Initialize-EvidenceFolder {
     return $folder
 }
 
+function Read-ReAgentXml {
+    # The WinRE configuration file; empty text when it cannot be read (#246).
+    $path = Join-Path $env:windir 'System32\Recovery\ReAgent.xml'
+    try { if (Test-Path -LiteralPath $path -PathType Leaf) { return [string](Get-Content -LiteralPath $path -Raw -ErrorAction Stop) } }
+    catch { Write-Swallowed $_ }
+    return ''
+}
+
 function Get-GpResultXml {
     # Runs "gpresult /scope computer /x" into a temp file and returns the
     # XML text. Throws with gpresult's own message when it fails.
@@ -644,7 +652,7 @@ function Save-NetworkEvidence {
         if ($r.Error) { $failed += ($label + ': ' + $r.Error); continue }
         if ($r.TimedOut) { $failed += ($label + ': no answer within ' + $TimeoutSeconds + ' seconds'); continue }
         if ($r.ExitCode -ne 0 -or -not [string]$r.Output) { $failed += ($label + ': exit code ' + $r.ExitCode + ', no output'); continue }
-        $text = '# ' + $label + "`r`n# " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + "`r`n`r`n" + ([string]$r.Output -replace '\r?\n', "`r`n") + "`r`n"
+        $text = '# ' + $label + "`r`n# " + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture) + "`r`n`r`n" + ([string]$r.Output -replace '\r?\n', "`r`n") + "`r`n"
         [IO.File]::WriteAllText((Join-Path $Destination $c.File), $text, $utf8)
         $saved += $c.File
     }
@@ -904,7 +912,7 @@ function ConvertTo-DateTimeValue {
 function ConvertFrom-NativeByteArray {
     # Native tools write either UTF-16LE (sfc.exe, secedit) or the OEM code
     # page (dism.exe, netsh, vssadmin). Detect which and strip control chars.
-    param([byte[]]$Bytes)
+    param([byte[]]$Bytes, [int]$CodePage = 0)
     if ($null -eq $Bytes -or $Bytes.Length -eq 0) { return '' }
     $text = ''
     $isUnicode = $false
@@ -918,7 +926,9 @@ function ConvertFrom-NativeByteArray {
     if ($isUnicode) { $text = [Text.Encoding]::Unicode.GetString($Bytes) }
     else {
         $encoding = $null
-        try { $encoding = [Text.Encoding]::GetEncoding([Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage) } catch { Write-Swallowed $_ }
+        # The tools write the OEM code page of the system (the installed language), not of the account that runs the script (#246).
+        if ($CodePage -le 0) { $CodePage = [Globalization.CultureInfo]::InstalledUICulture.TextInfo.OEMCodePage }
+        try { $encoding = [Text.Encoding]::GetEncoding($CodePage) } catch { Write-Swallowed $_ }
         if ($null -eq $encoding) { $encoding = New-Object System.Text.UTF8Encoding($false) }
         $text = $encoding.GetString($Bytes)
     }
