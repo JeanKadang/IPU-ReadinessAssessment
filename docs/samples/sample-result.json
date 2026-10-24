@@ -199,6 +199,51 @@
       "LinkTitle": ""
     },
     {
+      "CheckId": "eolcandidates",
+      "Area": "APPLICATIONS",
+      "Item": "EOL candidate: eclipse-temurin",
+      "Status": "INFO",
+      "Kind": "Observation",
+      "Value": "17.0.12",
+      "Details": "Uninstall entry: Eclipse Temurin JRE with Hotspot 17.0.12",
+      "Recommendation": "",
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
+    },
+    {
+      "CheckId": "eolcandidates",
+      "Area": "APPLICATIONS",
+      "Item": "EOL candidate: mssqlserver",
+      "Status": "INFO",
+      "Kind": "Observation",
+      "Value": "14.0.3485.1",
+      "Details": "Uninstall entry: Microsoft SQL Server 2017 (64-bit)",
+      "Recommendation": "",
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
+    },
+    {
+      "CheckId": "eolcandidates",
+      "Area": "APPLICATIONS",
+      "Item": "EOL candidate: dotnetfx",
+      "Status": "INFO",
+      "Kind": "Observation",
+      "Value": "4.8",
+      "Details": "Registry: NDP\\v4\\Full Release",
+      "Recommendation": "",
+      "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
+    },
+    {
       "CheckId": "platform",
       "Area": "PLATFORM",
       "Item": "PhysicalOrVirtual",
@@ -616,6 +661,14 @@
       "Message": ""
     },
     {
+      "Id": "eolcandidates",
+      "Name": "Products for end-of-life checks",
+      "Phase": "Fast",
+      "Outcome": "Completed",
+      "Duration": "00:00:01",
+      "Message": ""
+    },
+    {
       "Id": "platform",
       "Name": "Platform and hardware",
       "Phase": "Fast",
@@ -718,6 +771,26 @@
       "Outcome": "Completed",
       "Duration": "00:11:05",
       "Message": ""
+    }
+  ],
+  "EolCandidates": [
+    {
+      "Product": "eclipse-temurin",
+      "Version": "17.0.12",
+      "Source": "Uninstall entry",
+      "Evidence": "Eclipse Temurin JRE with Hotspot 17.0.12"
+    },
+    {
+      "Product": "mssqlserver",
+      "Version": "14.0.3485.1",
+      "Source": "Uninstall entry",
+      "Evidence": "Microsoft SQL Server 2017 (64-bit)"
+    },
+    {
+      "Product": "dotnetfx",
+      "Version": "4.8",
+      "Source": "Registry",
+      "Evidence": "NDP\\v4\\Full Release"
     }
   ],
   "Snapshot": {},

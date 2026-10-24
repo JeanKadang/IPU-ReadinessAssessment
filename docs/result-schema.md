@@ -36,6 +36,7 @@ real script on Windows PowerShell 5.1 and PowerShell 7 and validates both files 
 | `Results` | array | Every row of the report (below) |
 | `CheckRuns` | array | One entry per check: did it complete (below) |
 | `Snapshot` | object | Server state used by the post-upgrade comparison (below) |
+| `EolCandidates` | array, optional | Products with an end-of-life date found on the server, from 4.6.0 (below). Files from older versions have none |
 
 ## `Facts`
 
@@ -85,6 +86,19 @@ Strings, empty or `null` when the check that sets them did not run.
 | `Outcome` | `Completed`; `Failed` (the check threw; a `MANUAL` row explains it); `Skipped` (switched off, no media, or time budget used up); `TimedOut` (DISM, SFC or Setup stopped at its time limit) |
 | `Duration` | `hh:mm:ss`, or `d.hh:mm:ss` |
 | `Message` | Error message for a failed check |
+
+## `EolCandidates`
+
+One entry per product and version that the `eolcandidates` check found (ADR 0003, #286). The merge step and the assessment
+compare them with an end-of-life snapshot (#275). A product that was not found is not listed, so an empty list means
+"none found where the check looks", not "none installed". The version is never read by running the product.
+
+| Field | Meaning |
+|---|---|
+| `Product` | [endoflife.date](https://endoflife.date) identifier: `mssqlserver`, `mysql`, `mariadb`, `postgresql`, `mongodb`, `oracle-database`, `ibm-db2`, `redis`, `apache-http-server`, `tomcat`, `nginx`, `php`, `dotnet`, `dotnetfx`, `powershell`, `python`, `nodejs`, `eclipse-temurin`, `oracle-jdk`, `amazon-corretto`, `microsoft-build-of-openjdk`, `openssl` |
+| `Version` | Dotted number, for example `8.2.12` |
+| `Source` | `Uninstall entry`, `Service file`, `File probe` or `Registry` |
+| `Evidence` | The application name, service name or file name that matched (no path, no host name) |
 
 ## `Snapshot`
 

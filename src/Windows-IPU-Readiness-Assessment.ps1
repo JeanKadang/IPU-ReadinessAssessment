@@ -349,6 +349,60 @@ $script:DetectionPatterns = @{
     )
 }
 
+# Products for the end-of-life check (#286, ADR 0003). One entry per endoflife.date
+# identifier in the snapshot, except windows-server (the operating system has its
+# own check). Routes, in order:
+#   App     - uninstall entry DisplayName; its DisplayVersion is the version
+#   Service - service short name; the service's executable must match Exe, and
+#             its version resource is the version
+#   Probe   - file locations for products that leave no uninstall entry (PHP,
+#             Apache HTTP Server and nginx are often just an unpacked folder).
+#             %Variables% are expanded, '*' stands for part of one folder name
+# The version comes from the uninstall entry or from a file's version resource.
+# A product is NEVER run to ask for its version (php.exe -v would execute it).
+# Not detected, by design: a product in an unusual folder with no service and no
+# uninstall entry; MySQL by service (mysqld.exe is also the old MariaDB service,
+# so only its uninstall entry counts); SQL Server by file (its file version is
+# 2019.150..., not the 15.0 the release table uses); other Java builds (Azul
+# Zulu, IBM Semeru) that endoflife.date does not track here. .NET Framework is
+# read from the registry (Release value), not from a file.
+$script:EolDetection = @(
+    @{ Product='mssqlserver';      Name='Microsoft SQL Server'; App='^Microsoft SQL Server \d{4}( \(\d+-bit\))?$' }
+    @{ Product='mysql';            Name='MySQL';                App='^MySQL Server \d' }
+    @{ Product='mariadb';          Name='MariaDB';              App='^MariaDB';        Service='^MariaDB';           Exe='^(mariadbd|mysqld)\.exe$' }
+    @{ Product='postgresql';       Name='PostgreSQL';           App='^PostgreSQL \d';  Service='^postgresql';        Exe='^(pg_ctl|postgres)\.exe$' }
+    @{ Product='mongodb';          Name='MongoDB';              App='^MongoDB';        Service='^MongoDB$';          Exe='^mongod\.exe$' }
+    @{ Product='oracle-database';  Name='Oracle Database';      App='^Oracle Database \d'; Service='^OracleService';  Exe='^oracle\.exe$' }
+    @{ Product='ibm-db2';          Name='IBM Db2';              App='^IBM Db2|^DB2 \d'; Service='^DB2';              Exe='^db2syscs\.exe$' }
+    @{ Product='redis';            Name='Redis';                App='^Redis';          Service='^Redis';             Exe='^redis-server\.exe$' }
+    @{ Product='apache-http-server'; Name='Apache HTTP Server'; App='^Apache HTTP Server|^Apache Lounge'; Service='^(Apache|httpd)'; Exe='^httpd\.exe$'
+       Probe=@('%SystemDrive%\Apache*\bin\httpd.exe', '%ProgramFiles%\Apache*\bin\httpd.exe', '%SystemDrive%\xampp\apache\bin\httpd.exe') }
+    @{ Product='tomcat';           Name='Apache Tomcat';        App='^Apache Tomcat';  Service='^Tomcat\d*$';        Exe='^tomcat\d*w?\.exe$' }
+    @{ Product='nginx';            Name='nginx';                Service='^nginx';      Exe='^nginx\.exe$'
+       Probe=@('%SystemDrive%\nginx*\nginx.exe', '%ProgramFiles%\nginx*\nginx.exe') }
+    @{ Product='php';              Name='PHP';                  App='^PHP \d'
+       Probe=@('%SystemDrive%\php*\php.exe', '%ProgramFiles%\PHP*\php.exe', '%ProgramFiles(x86)%\PHP*\php.exe', '%SystemDrive%\xampp\php\php.exe') }
+    @{ Product='dotnet';           Name='.NET';                 App='^Microsoft (\.NET (Runtime|Windows Desktop Runtime|SDK)|ASP\.NET Core \d)' }
+    @{ Product='powershell';       Name='PowerShell';           App='^PowerShell \d' }
+    @{ Product='python';           Name='Python';               App='^Python \d+\.\d+\.\d+'; AppExclude='^Python \d+\.\d+\.\d+ (Core|Standard|Documentation|Development|Executables|pip|Tcl|Test|Add)|Launcher' }
+    @{ Product='nodejs';           Name='Node.js';              App='^Node\.js' }
+    @{ Product='eclipse-temurin';  Name='Eclipse Temurin (Java)'; App='^(Eclipse Temurin|Adoptium)' }
+    @{ Product='oracle-jdk';       Name='Oracle JDK (Java)';    App='^(Java( \d+)? Update|Java\(TM\) SE|Java SE Development)' }
+    @{ Product='amazon-corretto';  Name='Amazon Corretto (Java)'; App='^Amazon Corretto' }
+    @{ Product='microsoft-build-of-openjdk'; Name='Microsoft Build of OpenJDK (Java)'; App='^Microsoft Build of OpenJDK' }
+    @{ Product='openssl';          Name='OpenSSL';              App='^OpenSSL'
+       Probe=@('%ProgramFiles%\OpenSSL*\bin\openssl.exe', '%SystemDrive%\OpenSSL*\bin\openssl.exe') }
+)
+
+# .NET Framework 4.x: the Release value under NDP\v4\Full -> the version it
+# means (Microsoft's "How to determine which versions are installed" table;
+# the smallest Release value of each version).
+$script:DotNetFrameworkReleases = @(
+    @{ Min=533320; Version='4.8.1' }, @{ Min=528040; Version='4.8' }, @{ Min=461808; Version='4.7.2' }, @{ Min=461308; Version='4.7.1' }
+    @{ Min=460798; Version='4.7' }, @{ Min=394802; Version='4.6.2' }, @{ Min=394254; Version='4.6.1' }, @{ Min=393295; Version='4.6' }
+    @{ Min=379893; Version='4.5.2' }, @{ Min=378675; Version='4.5.1' }, @{ Min=378389; Version='4.5' }
+)
+
 # Windows features removed or no longer developed, per Microsoft's
 # "Features removed or no longer developed" pages for the target release.
 # Removed  -> ACTION (Setup drops the feature; the dependent workload breaks).
@@ -544,6 +598,55 @@ function Test-NotFoundError {
     # category is used, never the message text, which is localised.
     param($ErrorRecord)
     return ($null -ne $ErrorRecord -and $null -ne $ErrorRecord.CategoryInfo -and [string]$ErrorRecord.CategoryInfo.Category -eq 'ObjectNotFound')
+}
+
+function Get-FileVersionText {
+    # (#286) The version in a file's version resource; reads the file, never
+    # runs it. Version is '' with an Error text when it cannot be read.
+    param([string]$Path)
+    try {
+        $info = (Get-Item -LiteralPath $Path -ErrorAction Stop).VersionInfo
+        $v = ConvertTo-EolVersionText ([string]$info.ProductVersion)
+        if (-not $v) { $v = ConvertTo-EolVersionText ([string]$info.FileVersion) }
+        if (-not $v) { return [pscustomobject]@{ Version = ''; Error = 'The file has no version resource.' } }
+        return [pscustomobject]@{ Version = $v; Error = '' }
+    } catch {
+        if (Test-NotFoundError $_) { return [pscustomobject]@{ Version = ''; Error = 'The file does not exist.' } }
+        return [pscustomobject]@{ Version = ''; Error = $_.Exception.Message }
+    }
+}
+
+function Resolve-EolProbePath {
+    # (#286) Expands %Variables% and a '*' in folder names of one probe path
+    # ('%SystemDrive%\php*\php.exe') to the files that exist. Folders that are
+    # not there are an empty answer; other errors (access denied) come back in
+    # Error so the check can say it could not look.
+    param([string]$Pattern)
+    $paths = @(); $errors = @()
+    $expanded = [Environment]::ExpandEnvironmentVariables($Pattern)
+    $parts = @($expanded -split '\\')
+    if ($parts.Count -lt 2) { return [pscustomobject]@{ Paths = @(); Error = '' } }
+    $current = @($parts[0] + '\')
+    for ($i = 1; $i -lt $parts.Count; $i++) {
+        $part = $parts[$i]; $next = @()
+        foreach ($dir in $current) {
+            if ($i -eq $parts.Count - 1) {
+                $candidate = [IO.Path]::Combine($dir, $part)
+                if ([IO.File]::Exists($candidate)) { $next += $candidate }
+            } elseif ($part.Contains('*')) {
+                try { $next += @([IO.Directory]::GetDirectories($dir, $part)) }
+                catch [IO.DirectoryNotFoundException] { Write-Swallowed $_ }
+                catch { $errors += $_.Exception.Message }
+            } else {
+                $candidate = [IO.Path]::Combine($dir, $part)
+                if ([IO.Directory]::Exists($candidate)) { $next += $candidate }
+            }
+        }
+        $current = $next
+        if ($current.Count -eq 0) { break }
+    }
+    if ($parts.Count -ge 2 -and $current.Count -gt 0) { $paths = @($current) }
+    return [pscustomobject]@{ Paths = @($paths); Error = ($errors -join ' ') }
 }
 
 function Find-DetectionMatch {
@@ -2934,6 +3037,89 @@ function Select-OsLicenseProduct {
     return [pscustomobject]@{ Primary = ($os | Select-Object -First 1); AddOns = $addOns }
 }
 
+function ConvertTo-EolVersionText {
+    # Pure (#286): the first dotted number in a version text ("16.2-1" ->
+    # "16.2", "3.12.1150.0" stays), or '' when there is none.
+    param([string]$Text)
+    if ($Text -match '(\d+(?:\.\d+){0,3})') { return $Matches[1] }
+    return ''
+}
+
+function Get-ExecutablePathFromCommand {
+    # Pure (#286): the executable in a service's command line, quoted or not
+    # ("C:\Program Files\X\x.exe" -k run, C:\X\x.exe SID). '' when there is none.
+    param([string]$Command)
+    if (-not $Command) { return '' }
+    $c = $Command.Trim()
+    if ($c.StartsWith('"')) {
+        $end = $c.IndexOf('"', 1)
+        if ($end -gt 1) { return $c.Substring(1, $end - 1) }
+        return ''
+    }
+    if ($c -match '^(.+?\.exe)(\s|$)') { return $Matches[1] }
+    return ''
+}
+
+function ConvertFrom-DotNetFrameworkRelease {
+    # Pure (#286): the Release value of .NET Framework 4.x -> its version, or ''.
+    param($Release)
+    $n = 0
+    if (-not [int]::TryParse([string]$Release, [ref]$n)) { return '' }
+    foreach ($row in $script:DotNetFrameworkReleases) { if ($n -ge $row.Min) { return [string]$row.Version } }
+    return ''
+}
+
+function Find-EolAppCandidate {
+    # Pure (#286): products found in the uninstall list. Version = DisplayVersion.
+    # An entry without a readable version is returned with Version '' so the
+    # check can say so (MANUAL) instead of staying silent.
+    param([object[]]$Detection, [object[]]$Apps)
+    $out = @()
+    foreach ($d in @($Detection)) {
+        if (-not $d.App) { continue }
+        foreach ($app in @($Apps)) {
+            if (-not $app -or [string]$app.Name -notmatch $d.App) { continue }
+            if ($d.AppExclude -and [string]$app.Name -match $d.AppExclude) { continue }
+            $out += [pscustomobject]@{ Product = [string]$d.Product; Name = [string]$d.Name; Version = (ConvertTo-EolVersionText ([string]$app.Version)); Source = 'Uninstall entry'; Evidence = [string]$app.Name }
+        }
+    }
+    return @($out)
+}
+
+function Get-EolServiceTarget {
+    # Pure (#286): services of a detected product and the executable whose
+    # version resource gives the version. A service whose executable is not the
+    # product's own (a wrapper such as nssm) is left out, never guessed.
+    param([object[]]$Detection, [object[]]$Services)
+    $out = @()
+    foreach ($d in @($Detection)) {
+        if (-not $d.Service -or -not $d.Exe) { continue }
+        foreach ($svc in @($Services)) {
+            if (-not $svc -or [string]$svc.Name -notmatch $d.Service) { continue }
+            $path = Get-ExecutablePathFromCommand ([string]$svc.PathName)
+            if (-not $path) { continue }
+            if ((Split-Path -Leaf $path) -notmatch $d.Exe) { continue }
+            $out += [pscustomobject]@{ Product = [string]$d.Product; Name = [string]$d.Name; Path = $path; Source = 'Service file'; Evidence = [string]$svc.Name }
+        }
+    }
+    return @($out)
+}
+
+function Merge-EolCandidate {
+    # Pure (#286): one entry per product and version (the first source wins),
+    # without the ones whose version is unknown, sorted by product.
+    param([object[]]$Candidates)
+    $seen = @{}; $out = @()
+    foreach ($c in @($Candidates)) {
+        if (-not $c -or -not $c.Version) { continue }
+        $key = $c.Product + '|' + $c.Version
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        $out += [pscustomobject]@{ Product = [string]$c.Product; Version = [string]$c.Version; Source = [string]$c.Source; Evidence = [string]$c.Evidence }
+    }
+    return @($out | Sort-Object Product, Version)
+}
+
 function Get-EolSnapshotSearchPath {
     # Pure (#285): where the assessment looks for eol-snapshot.json. An
     # explicit -EolSnapshotPath comes first (a folder gets the file name added),
@@ -5203,6 +5389,52 @@ Register-Check -Id 'eolsnapshot' -Name 'End-of-life snapshot' -Script {
     Add-Result 'APPLICATIONS' 'EOL snapshot' $d.Status $d.Value $d.Details -Recommendation $d.Recommendation -Kind $d.Kind -Source 'eol-snapshot.json'
 }
 
+Register-Check -Id 'eolcandidates' -Name 'Products for end-of-life checks' -Script {
+    # Which products with an end-of-life date are on the server (#286, ADR
+    # 0003). Only reads: uninstall entries, service command lines, file version
+    # resources, one registry value. A product is never run to ask its version.
+    $found = @(Find-EolAppCandidate $script:EolDetection $script:Data.Apps)
+    $targets = @(Get-EolServiceTarget $script:EolDetection $script:Data.Services)
+    foreach ($d in @($script:EolDetection)) {
+        if (-not $d.Probe) { continue }
+        foreach ($pattern in @($d.Probe)) {
+            $r = Resolve-EolProbePath $pattern
+            foreach ($p in @($r.Paths)) { $targets += [pscustomobject]@{ Product = [string]$d.Product; Name = [string]$d.Name; Path = $p; Source = 'File probe'; Evidence = (Split-Path -Leaf $p) } }
+            if ($r.Error) { $found += [pscustomobject]@{ Product = [string]$d.Product; Name = [string]$d.Name; Version = ''; Source = 'File probe'; Evidence = $pattern; Error = $r.Error } }
+        }
+    }
+    foreach ($t in $targets) {
+        $v = Get-FileVersionText $t.Path
+        $found += [pscustomobject]@{ Product = $t.Product; Name = $t.Name; Version = $v.Version; Source = $t.Source; Evidence = $t.Evidence; Error = $v.Error }
+    }
+    $netfxError = ''
+    try {
+        $nd = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full' -ErrorAction Stop
+        $fx = ConvertFrom-DotNetFrameworkRelease $nd.Release
+        if ($fx) { $found += [pscustomobject]@{ Product = 'dotnetfx'; Name = '.NET Framework'; Version = $fx; Source = 'Registry'; Evidence = 'NDP\v4\Full Release' } }
+    } catch { if (-not (Test-NotFoundError $_)) { $netfxError = $_.Exception.Message } }
+
+    $script:Data.EolCandidates = @(Merge-EolCandidate $found)
+    foreach ($c in $script:Data.EolCandidates) {
+        $name = @($script:EolDetection | Where-Object { $_.Product -eq $c.Product } | ForEach-Object { $_.Name })[0]
+        if (-not $name) { $name = $(if ($c.Product -eq 'dotnetfx') { '.NET Framework' } else { $c.Product }) }
+        Add-Result 'APPLICATIONS' ('EOL candidate: ' + $name) 'INFO' $c.Version ($c.Source + ': ' + $c.Evidence) -Kind 'Observation' -Source 'Uninstall registry, service files, file versions'
+    }
+    # A product seen but without a version is a MANUAL finding, not silence.
+    $have = @{}; foreach ($c in $script:Data.EolCandidates) { $have[$c.Product] = $true }
+    $reported = @{}
+    foreach ($f in @($found | Where-Object { -not $_.Version })) {
+        if ($have.ContainsKey($f.Product) -or $reported.ContainsKey($f.Product)) { continue }
+        $reported[$f.Product] = $true
+        $why = 'The version could not be read.'
+        if ($f.PSObject.Properties['Error'] -and $f.Error) { $why = [string]$f.Error }
+        Add-Result 'APPLICATIONS' ('EOL detection: ' + $f.Name) 'MANUAL' ($f.Name + ' found, version not known') ($f.Source + ': ' + $f.Evidence + '. ' + $why) -Recommendation ('Read the version of ' + $f.Name + ' by hand (its file properties or its own documentation) and check its end-of-life date. The assessment never runs a product to ask.') -Kind 'Finding' -Source $f.Source
+    }
+    if ($netfxError) {
+        Add-Result 'APPLICATIONS' 'EOL detection: .NET Framework' 'MANUAL' '.NET Framework version could not be read' $netfxError -Recommendation 'Check the .NET Framework version by hand (Release value under HKLM\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full).' -Kind 'Finding' -Source 'Registry'
+    }
+}
+
 Register-Check -Id 'checklist' -Name 'Standard change checklist' -Script {
     $isVM = ($script:Data.Platform.Type -eq 'Virtual')
     $fallback = 'Confirm a tested bare-metal recovery path and a recent successful backup.'
@@ -5985,6 +6217,7 @@ function New-AssessmentJsonObject {
         }
         Results             = @($Results | Select-Object CheckId,Area,Item,Status,Kind,Value,Details,Recommendation,Source,Command,CommandKind,Link,LinkTitle)
         CheckRuns           = @($script:CheckRuns.ToArray() | Select-Object Id,Name,Phase,Outcome,Duration,Message)
+        EolCandidates       = @($script:Data.EolCandidates | Where-Object { $_ } | Select-Object Product,Version,Source,Evidence)
         Snapshot            = [pscustomobject]$snapshot
         Special             = $(if ($script:Data.Special) { [pscustomobject][ordered]@{ Kind = $script:Data.Special.Kind; Title = $script:Data.Special.Title; Banner = $script:Data.Special.Banner; Facts = @($script:Data.Special.Facts); Risks = @($script:Data.Special.Risks); Options = @($script:Data.Special.Options | ForEach-Object { [pscustomobject][ordered]@{ Text = $_.Text; Url = $_.Url; Title = $_.Title } }) } } else { $null })
     }

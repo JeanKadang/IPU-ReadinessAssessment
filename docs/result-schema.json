@@ -107,6 +107,21 @@
         }
       }
     },
+    "EolCandidates": {
+      "type": "array",
+      "description": "Products with an end-of-life date found on the server (from 4.6.0, optional). A product that was not found is not listed. No host names.",
+      "items": {
+        "type": "object",
+        "required": ["Product", "Version", "Source", "Evidence"],
+        "properties": {
+          "Product": { "type": "string", "description": "endoflife.date identifier, for example php or mssqlserver" },
+          "Version": { "type": "string", "pattern": "^\\d+(\\.\\d+){0,3}$" },
+          "Source": { "enum": ["Uninstall entry", "Service file", "File probe", "Registry"], "description": "How it was found" },
+          "Evidence": { "type": "string", "description": "Application name, service name or file name that matched" }
+        },
+        "additionalProperties": false
+      }
+    },
     "Snapshot": {
       "type": "object",
       "description": "State compared by the post-upgrade run. Lists may be empty.",

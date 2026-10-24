@@ -1377,6 +1377,89 @@ function Select-OsLicenseProduct {
     return [pscustomobject]@{ Primary = ($os | Select-Object -First 1); AddOns = $addOns }
 }
 
+function ConvertTo-EolVersionText {
+    # Pure (#286): the first dotted number in a version text ("16.2-1" ->
+    # "16.2", "3.12.1150.0" stays), or '' when there is none.
+    param([string]$Text)
+    if ($Text -match '(\d+(?:\.\d+){0,3})') { return $Matches[1] }
+    return ''
+}
+
+function Get-ExecutablePathFromCommand {
+    # Pure (#286): the executable in a service's command line, quoted or not
+    # ("C:\Program Files\X\x.exe" -k run, C:\X\x.exe SID). '' when there is none.
+    param([string]$Command)
+    if (-not $Command) { return '' }
+    $c = $Command.Trim()
+    if ($c.StartsWith('"')) {
+        $end = $c.IndexOf('"', 1)
+        if ($end -gt 1) { return $c.Substring(1, $end - 1) }
+        return ''
+    }
+    if ($c -match '^(.+?\.exe)(\s|$)') { return $Matches[1] }
+    return ''
+}
+
+function ConvertFrom-DotNetFrameworkRelease {
+    # Pure (#286): the Release value of .NET Framework 4.x -> its version, or ''.
+    param($Release)
+    $n = 0
+    if (-not [int]::TryParse([string]$Release, [ref]$n)) { return '' }
+    foreach ($row in $script:DotNetFrameworkReleases) { if ($n -ge $row.Min) { return [string]$row.Version } }
+    return ''
+}
+
+function Find-EolAppCandidate {
+    # Pure (#286): products found in the uninstall list. Version = DisplayVersion.
+    # An entry without a readable version is returned with Version '' so the
+    # check can say so (MANUAL) instead of staying silent.
+    param([object[]]$Detection, [object[]]$Apps)
+    $out = @()
+    foreach ($d in @($Detection)) {
+        if (-not $d.App) { continue }
+        foreach ($app in @($Apps)) {
+            if (-not $app -or [string]$app.Name -notmatch $d.App) { continue }
+            if ($d.AppExclude -and [string]$app.Name -match $d.AppExclude) { continue }
+            $out += [pscustomobject]@{ Product = [string]$d.Product; Name = [string]$d.Name; Version = (ConvertTo-EolVersionText ([string]$app.Version)); Source = 'Uninstall entry'; Evidence = [string]$app.Name }
+        }
+    }
+    return @($out)
+}
+
+function Get-EolServiceTarget {
+    # Pure (#286): services of a detected product and the executable whose
+    # version resource gives the version. A service whose executable is not the
+    # product's own (a wrapper such as nssm) is left out, never guessed.
+    param([object[]]$Detection, [object[]]$Services)
+    $out = @()
+    foreach ($d in @($Detection)) {
+        if (-not $d.Service -or -not $d.Exe) { continue }
+        foreach ($svc in @($Services)) {
+            if (-not $svc -or [string]$svc.Name -notmatch $d.Service) { continue }
+            $path = Get-ExecutablePathFromCommand ([string]$svc.PathName)
+            if (-not $path) { continue }
+            if ((Split-Path -Leaf $path) -notmatch $d.Exe) { continue }
+            $out += [pscustomobject]@{ Product = [string]$d.Product; Name = [string]$d.Name; Path = $path; Source = 'Service file'; Evidence = [string]$svc.Name }
+        }
+    }
+    return @($out)
+}
+
+function Merge-EolCandidate {
+    # Pure (#286): one entry per product and version (the first source wins),
+    # without the ones whose version is unknown, sorted by product.
+    param([object[]]$Candidates)
+    $seen = @{}; $out = @()
+    foreach ($c in @($Candidates)) {
+        if (-not $c -or -not $c.Version) { continue }
+        $key = $c.Product + '|' + $c.Version
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        $out += [pscustomobject]@{ Product = [string]$c.Product; Version = [string]$c.Version; Source = [string]$c.Source; Evidence = [string]$c.Evidence }
+    }
+    return @($out | Sort-Object Product, Version)
+}
+
 function Get-EolSnapshotSearchPath {
     # Pure (#285): where the assessment looks for eol-snapshot.json. An
     # explicit -EolSnapshotPath comes first (a folder gets the file name added),

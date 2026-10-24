@@ -56,6 +56,60 @@ $script:DetectionPatterns = @{
     )
 }
 
+# Products for the end-of-life check (#286, ADR 0003). One entry per endoflife.date
+# identifier in the snapshot, except windows-server (the operating system has its
+# own check). Routes, in order:
+#   App     - uninstall entry DisplayName; its DisplayVersion is the version
+#   Service - service short name; the service's executable must match Exe, and
+#             its version resource is the version
+#   Probe   - file locations for products that leave no uninstall entry (PHP,
+#             Apache HTTP Server and nginx are often just an unpacked folder).
+#             %Variables% are expanded, '*' stands for part of one folder name
+# The version comes from the uninstall entry or from a file's version resource.
+# A product is NEVER run to ask for its version (php.exe -v would execute it).
+# Not detected, by design: a product in an unusual folder with no service and no
+# uninstall entry; MySQL by service (mysqld.exe is also the old MariaDB service,
+# so only its uninstall entry counts); SQL Server by file (its file version is
+# 2019.150..., not the 15.0 the release table uses); other Java builds (Azul
+# Zulu, IBM Semeru) that endoflife.date does not track here. .NET Framework is
+# read from the registry (Release value), not from a file.
+$script:EolDetection = @(
+    @{ Product='mssqlserver';      Name='Microsoft SQL Server'; App='^Microsoft SQL Server \d{4}( \(\d+-bit\))?$' }
+    @{ Product='mysql';            Name='MySQL';                App='^MySQL Server \d' }
+    @{ Product='mariadb';          Name='MariaDB';              App='^MariaDB';        Service='^MariaDB';           Exe='^(mariadbd|mysqld)\.exe$' }
+    @{ Product='postgresql';       Name='PostgreSQL';           App='^PostgreSQL \d';  Service='^postgresql';        Exe='^(pg_ctl|postgres)\.exe$' }
+    @{ Product='mongodb';          Name='MongoDB';              App='^MongoDB';        Service='^MongoDB$';          Exe='^mongod\.exe$' }
+    @{ Product='oracle-database';  Name='Oracle Database';      App='^Oracle Database \d'; Service='^OracleService';  Exe='^oracle\.exe$' }
+    @{ Product='ibm-db2';          Name='IBM Db2';              App='^IBM Db2|^DB2 \d'; Service='^DB2';              Exe='^db2syscs\.exe$' }
+    @{ Product='redis';            Name='Redis';                App='^Redis';          Service='^Redis';             Exe='^redis-server\.exe$' }
+    @{ Product='apache-http-server'; Name='Apache HTTP Server'; App='^Apache HTTP Server|^Apache Lounge'; Service='^(Apache|httpd)'; Exe='^httpd\.exe$'
+       Probe=@('%SystemDrive%\Apache*\bin\httpd.exe', '%ProgramFiles%\Apache*\bin\httpd.exe', '%SystemDrive%\xampp\apache\bin\httpd.exe') }
+    @{ Product='tomcat';           Name='Apache Tomcat';        App='^Apache Tomcat';  Service='^Tomcat\d*$';        Exe='^tomcat\d*w?\.exe$' }
+    @{ Product='nginx';            Name='nginx';                Service='^nginx';      Exe='^nginx\.exe$'
+       Probe=@('%SystemDrive%\nginx*\nginx.exe', '%ProgramFiles%\nginx*\nginx.exe') }
+    @{ Product='php';              Name='PHP';                  App='^PHP \d'
+       Probe=@('%SystemDrive%\php*\php.exe', '%ProgramFiles%\PHP*\php.exe', '%ProgramFiles(x86)%\PHP*\php.exe', '%SystemDrive%\xampp\php\php.exe') }
+    @{ Product='dotnet';           Name='.NET';                 App='^Microsoft (\.NET (Runtime|Windows Desktop Runtime|SDK)|ASP\.NET Core \d)' }
+    @{ Product='powershell';       Name='PowerShell';           App='^PowerShell \d' }
+    @{ Product='python';           Name='Python';               App='^Python \d+\.\d+\.\d+'; AppExclude='^Python \d+\.\d+\.\d+ (Core|Standard|Documentation|Development|Executables|pip|Tcl|Test|Add)|Launcher' }
+    @{ Product='nodejs';           Name='Node.js';              App='^Node\.js' }
+    @{ Product='eclipse-temurin';  Name='Eclipse Temurin (Java)'; App='^(Eclipse Temurin|Adoptium)' }
+    @{ Product='oracle-jdk';       Name='Oracle JDK (Java)';    App='^(Java( \d+)? Update|Java\(TM\) SE|Java SE Development)' }
+    @{ Product='amazon-corretto';  Name='Amazon Corretto (Java)'; App='^Amazon Corretto' }
+    @{ Product='microsoft-build-of-openjdk'; Name='Microsoft Build of OpenJDK (Java)'; App='^Microsoft Build of OpenJDK' }
+    @{ Product='openssl';          Name='OpenSSL';              App='^OpenSSL'
+       Probe=@('%ProgramFiles%\OpenSSL*\bin\openssl.exe', '%SystemDrive%\OpenSSL*\bin\openssl.exe') }
+)
+
+# .NET Framework 4.x: the Release value under NDP\v4\Full -> the version it
+# means (Microsoft's "How to determine which versions are installed" table;
+# the smallest Release value of each version).
+$script:DotNetFrameworkReleases = @(
+    @{ Min=533320; Version='4.8.1' }, @{ Min=528040; Version='4.8' }, @{ Min=461808; Version='4.7.2' }, @{ Min=461308; Version='4.7.1' }
+    @{ Min=460798; Version='4.7' }, @{ Min=394802; Version='4.6.2' }, @{ Min=394254; Version='4.6.1' }, @{ Min=393295; Version='4.6' }
+    @{ Min=379893; Version='4.5.2' }, @{ Min=378675; Version='4.5.1' }, @{ Min=378389; Version='4.5' }
+)
+
 # Windows features removed or no longer developed, per Microsoft's
 # "Features removed or no longer developed" pages for the target release.
 # Removed  -> ACTION (Setup drops the feature; the dependent workload breaks).

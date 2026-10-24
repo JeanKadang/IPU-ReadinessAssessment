@@ -398,6 +398,7 @@ function New-AssessmentJsonObject {
         }
         Results             = @($Results | Select-Object CheckId,Area,Item,Status,Kind,Value,Details,Recommendation,Source,Command,CommandKind,Link,LinkTitle)
         CheckRuns           = @($script:CheckRuns.ToArray() | Select-Object Id,Name,Phase,Outcome,Duration,Message)
+        EolCandidates       = @($script:Data.EolCandidates | Where-Object { $_ } | Select-Object Product,Version,Source,Evidence)
         Snapshot            = [pscustomobject]$snapshot
         Special             = $(if ($script:Data.Special) { [pscustomobject][ordered]@{ Kind = $script:Data.Special.Kind; Title = $script:Data.Special.Title; Banner = $script:Data.Special.Banner; Facts = @($script:Data.Special.Facts); Risks = @($script:Data.Special.Risks); Options = @($script:Data.Special.Options | ForEach-Object { [pscustomobject][ordered]@{ Text = $_.Text; Url = $_.Url; Title = $_.Title } }) } } else { $null })
     }

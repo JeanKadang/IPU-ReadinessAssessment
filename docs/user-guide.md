@@ -473,7 +473,7 @@ Most severe on the left. The **overall status is the most severe *finding***.
 
 The [checks reference](checks.md) lists every check with what it looks at and the results it can produce.
 
-37 checks. Fast checks run first; the slow ones (print server backup, DISM, SFC, Setup compatibility scan) run after the checkpoint report.
+38 checks. Fast checks run first; the slow ones (print server backup, DISM, SFC, Setup compatibility scan) run after the checkpoint report.
 
 ```mermaid
 mindmap
@@ -780,6 +780,7 @@ server, and is not part of the fleet overview yet ([ADR 0003](adr/0003-end-of-li
   snapshot older than six months, or one that cannot be read, is MANUAL. When SA deploys only the `.ps1`, copy
   `eol-snapshot.json` to the server next to it. The comparison of each installed product with the snapshot follows
   with #286 and #275.
+- **Which products.** The assessment records the products it finds in the result JSON as `EolCandidates` (check `eolcandidates`): SQL Server, MySQL, MariaDB, PostgreSQL, MongoDB, Oracle Database, Db2, Redis, Apache HTTP Server, Tomcat, nginx, PHP, .NET, .NET Framework, PowerShell, Python, Node.js, OpenSSL and the Java builds endoflife.date tracks. It reads uninstall entries, service executables, file version resources, the usual folders for PHP, Apache, nginx and OpenSSL, and the .NET Framework registry value. It never runs a product to ask for its version. A product in an unusual folder with no service and no uninstall entry is not found: an empty list means none found, not none installed.
 - **How old it may be.** A release is only published when the snapshot is at most six months old. A snapshot older than
   `-MaxAgeMonths` (default 6) cannot confirm that a release is still supported: that verdict becomes MANUAL, while
   end-of-life verdicts still show.
