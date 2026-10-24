@@ -528,6 +528,15 @@ function Write-Swallowed {
     }
 }
 
+function Test-NotFoundError {
+    # The storage, network and CIM-based cmdlets raise an ObjectNotFound error
+    # when a filter matches nothing (no listener on a port, no persistent
+    # route). That is an empty answer, not a failed query (#242). The error
+    # category is used, never the message text, which is localised.
+    param($ErrorRecord)
+    return ($null -ne $ErrorRecord -and $null -ne $ErrorRecord.CategoryInfo -and [string]$ErrorRecord.CategoryInfo.Category -eq 'ObjectNotFound')
+}
+
 function Find-DetectionMatch {
     # Pure: matches one pattern table (section 2) against the inventories and
     # returns one object per detected product with the evidence that matched.
@@ -2288,6 +2297,41 @@ $script:SnapshotListSources = [ordered]@{
     Printers = 'printers'; PrinterPorts = 'printers'; PrinterDrivers = 'printers'
 }
 
+function Get-SecureBootDecision {
+    # Pure (#242): what a failed Confirm-SecureBootUEFI means. The cmdlet
+    # raises PlatformNotSupportedException on a legacy BIOS machine; any other
+    # error (access denied, a driver fault) says nothing about the firmware, so
+    # it must not be reported as "legacy BIOS".
+    param([string]$ExceptionType, [string]$Message)
+    if ($ExceptionType -match 'PlatformNotSupported' -or $Message -match 'not supported on this platform|0xC0000002') {
+        return [pscustomobject]@{ Kind = 'LegacyBios'; Status = 'INFO'; Value = 'Not available (legacy BIOS or not supported)' }
+    }
+    return [pscustomobject]@{ Kind = 'Unreadable'; Status = 'MANUAL'; Value = 'Secure Boot state could not be read' }
+}
+
+function Get-CaTypeName {
+    # Pure (#242): CertSvc CAType number -> name. An unreadable or unknown
+    # value gives an empty name; a missing value must not become EnterpriseRoot
+    # (an empty value cast to [int] is 0).
+    param($CaType)
+    if ($null -eq $CaType -or [string]$CaType -notmatch '^\d+$') { return '' }
+    $names = @{ 0 = 'EnterpriseRoot'; 1 = 'EnterpriseSubordinate'; 3 = 'StandaloneRoot'; 4 = 'StandaloneSubordinate' }
+    $n = [int]$CaType
+    if ($names.ContainsKey($n)) { return $names[$n] }
+    return ''
+}
+
+function Get-PrinterReadFailureDecision {
+    # Pure (#242): the printer inventory failed. With the Print Server role it
+    # is a failure to look. Without the role, a disabled or missing Print
+    # Spooler explains the failure (many hardened servers turn it off): the
+    # server is not a print server. Anything else is unexplained.
+    param([bool]$Role, [string]$SpoolerStartMode, [bool]$SpoolerFound)
+    if ($Role) { return 'Manual' }
+    if (-not $SpoolerFound -or $SpoolerStartMode -eq 'Disabled') { return 'NotPrintServer' }
+    return 'Manual'
+}
+
 function Get-BaselineReleaseText {
     # Pure: the release a pre-upgrade result was taken on, from its CurrentOS
     # row ("Release=Windows Server 2016"). Empty when it cannot be read.
@@ -3993,6 +4037,7 @@ Register-Check -Id 'storage' -Name 'Storage' -Script {
             Add-Result 'STORAGE' 'WinREStatus' 'INFO' ($state + ', ' + $where) -Source 'reagentc /info'
         }
     }
+    # The first Get-Partition of this check (without SilentlyContinue) already stops the check when the layout cannot be read; it is then reported as not completed.
     $layout = @(Get-Partition -DiskNumber $cp.DiskNumber -ErrorAction SilentlyContinue | ForEach-Object {
         [pscustomobject]@{ PartitionNumber = $_.PartitionNumber; Offset = [double]$_.Offset; SizeMB = [double]$_.Size / 1MB; IsRecovery = (([string]$_.GptType -eq '{de94bba4-06d1-4d40-a16a-bfd50179d6ac}') -or ([string]$_.Type -eq 'Recovery') -or ([int]$_.MbrType -eq 39)) }
     })
@@ -4018,9 +4063,10 @@ Register-Check -Id 'storage' -Name 'Storage' -Script {
     foreach ($d in @(Get-Disk | Sort-Object Number)) {
         $total += [double]$d.Size
         $parts = @()
+        # SilentlyContinue: a disk without partitions (raw, offline) is normal; the disk row below still lists it.
         foreach ($p in @(Get-Partition -DiskNumber $d.Number -ErrorAction SilentlyContinue | Sort-Object Offset)) {
-            $vol = $null
-            try { $vol = $p | Get-Volume -ErrorAction Stop } catch { Write-Swallowed $_ }
+            $vol = $null; $volError = ''
+            try { $vol = $p | Get-Volume -ErrorAction Stop } catch { $volError = $_.Exception.Message; Write-Swallowed $_ }
             $t = 'P' + $p.PartitionNumber + ':' + $p.Type + ':' + [math]::Round($p.Size/1MB) + 'MB'
             if ($p.DriveLetter) { $t += ':' + $p.DriveLetter + ':' }
             $paths = @($p.AccessPaths | Where-Object { $_ -and $_ -notmatch '^\\\\\?\\Volume' -and $_ -notmatch '^[A-Z]:\\$' })
@@ -4032,6 +4078,12 @@ Register-Check -Id 'storage' -Name 'Storage' -Script {
             # System partition (EFI or System Reserved) and WinRE recovery
             # partition free space - Setup writes boot files and WinRE to them.
             $isRecovery = ([string]$p.GptType -eq $recoveryGuid) -or ([string]$p.Type -eq 'Recovery') -or ([int]$p.MbrType -eq 39)
+            if (($p.IsSystem -or $isRecovery) -and -not $vol) {
+                # Free space is what Setup needs here; a partition whose volume cannot be read is not "fine" (#242).
+                $unreadName = 'SystemPartition'
+                if ($isRecovery) { $unreadName = 'RecoveryPartition' }
+                Add-Result 'STORAGE' $unreadName 'MANUAL' ('Disk' + $d.Number + ' P' + $p.PartitionNumber + ': free space not readable') $volError -Recommendation 'Check the free space of this partition by hand (diskpart, or mountvol) before the change; Setup writes boot files and WinRE to it.' -Kind 'Finding' -Source 'Get-Partition, Get-Volume'
+            }
             if (($p.IsSystem -or $isRecovery) -and $vol -and $vol.Size -gt 0) {
                 $freeMB = [math]::Round($vol.SizeRemaining/1MB)
                 $kindName = 'SystemPartition'; $limit = $SystemPartitionMinFreeMB
@@ -4104,9 +4156,13 @@ Register-Check -Id 'network' -Name 'Network, teaming, hosts and routes' -Script 
             }
         } catch { Write-Swallowed $_ }
     }
-    $teams = @()
-    if (Test-CommandAvailable 'Get-NetLbfoTeam') { $teams = @(Get-NetLbfoTeam -ErrorAction SilentlyContinue) }
+    $teams = @(); $lbfoError = ''
+    if (Test-CommandAvailable 'Get-NetLbfoTeam') {
+        try { $teams = @(Get-NetLbfoTeam -ErrorAction Stop) }
+        catch { if (-not (Test-NotFoundError $_)) { $lbfoError = $_.Exception.Message; Write-Swallowed $_ } }
+    } else { $lbfoError = 'Get-NetLbfoTeam is not available (NetLbfo module)' }
     foreach ($t in $teams) {
+        # SilentlyContinue: only decides whether the team is bound to a vSwitch; no adapter means "not bound".
         $teamNic = Get-NetAdapter -Name $t.Name -ErrorAction SilentlyContinue
         $boundToVSwitch = ($teamNic -and $vSwitchDescriptions -contains [string]$teamNic.InterfaceDescription)
         $details = @(('Mode=' + $t.TeamingMode),('LoadBalancing=' + $t.LoadBalancingAlgorithm),('Members=' + (@($t.Members) -join ',')))
@@ -4116,7 +4172,10 @@ Register-Check -Id 'network' -Name 'Network, teaming, hosts and routes' -Script 
             Add-Result 'NETWORK' ('LBFO team: ' + $t.Name) 'ACTION' ('Status=' + $t.Status) $details -Recommendation 'Microsoft requires NIC Teaming to be disabled before IPU and re-enabled afterwards. Plan console access - the team carries the server''s IP configuration.' -Source 'Get-NetLbfoTeam' -Command (Get-RecommendationCommand 'LbfoTeams').Command -CommandKind 'Check'
         }
     }
-    if ($teams.Count -eq 0) { Add-Result 'NETWORK' 'NICTeaming' 'OK' 'No LBFO team detected' -Source 'Get-NetLbfoTeam' }
+    if ($lbfoError) {
+        # An LBFO team that was not seen is an upgrade blocker; never report "none" when the query failed (#242).
+        Add-Result 'NETWORK' 'NICTeaming' 'MANUAL' 'LBFO teams could not be read' $lbfoError -Recommendation 'Run Get-NetLbfoTeam (or look in Server Manager > NIC Teaming) by hand. Microsoft requires NIC Teaming to be disabled before IPU.' -Kind 'Finding' -Source 'Get-NetLbfoTeam'
+    } elseif ($teams.Count -eq 0) { Add-Result 'NETWORK' 'NICTeaming' 'OK' 'No LBFO team detected' -Source 'Get-NetLbfoTeam' }
 
     # Hosts file - active (non-comment) entries.
     $hostsPath = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
@@ -4143,13 +4202,20 @@ Register-Check -Id 'network' -Name 'Network, teaming, hosts and routes' -Script 
         Add-Result 'NETWORK_DEPENDENCY' 'StaticRoutes' 'MANUAL' 'Get-NetRoute unavailable' -Recommendation 'Run "route print" and document persistent routes manually.' -Source 'NetTCPIP'
         return
     }
-    $seen = @{}; $routes = @()
-    foreach ($r in @(Get-NetRoute -PolicyStore PersistentStore -ErrorAction SilentlyContinue)) {
+    $seen = @{}; $routes = @(); $routeError = ''
+    # No persistent route (or none matching) is an ObjectNotFound answer: empty, not failed (#242).
+    $persistentRoutes = @()
+    try { $persistentRoutes = @(Get-NetRoute -PolicyStore PersistentStore -ErrorAction Stop) }
+    catch { if (-not (Test-NotFoundError $_)) { $routeError = $_.Exception.Message; Write-Swallowed $_ } }
+    $activeRoutes = @()
+    try { $activeRoutes = @(Get-NetRoute -ErrorAction Stop | Where-Object { [string]$_.Protocol -eq 'NetMgmt' }) }
+    catch { if (-not (Test-NotFoundError $_)) { $routeError = $_.Exception.Message; Write-Swallowed $_ } }
+    foreach ($r in $persistentRoutes) {
         if ($r.DestinationPrefix -in @('0.0.0.0/0','::/0')) { continue }
         $k = [string]$r.DestinationPrefix + '|' + $r.NextHop + '|' + $r.InterfaceIndex
         if (-not $seen.ContainsKey($k)) { $seen[$k] = $true; $routes += [pscustomobject]@{ R=$r; Source='Persistent' } }
     }
-    foreach ($r in @(Get-NetRoute -ErrorAction SilentlyContinue | Where-Object { [string]$_.Protocol -eq 'NetMgmt' })) {
+    foreach ($r in $activeRoutes) {
         if ($r.DestinationPrefix -in @('0.0.0.0/0','::/0')) { continue }
         $k = [string]$r.DestinationPrefix + '|' + $r.NextHop + '|' + $r.InterfaceIndex
         if (-not $seen.ContainsKey($k)) { $seen[$k] = $true; $routes += [pscustomobject]@{ R=$r; Source='ActiveOnly' } }
@@ -4158,7 +4224,11 @@ Register-Check -Id 'network' -Name 'Network, teaming, hosts and routes' -Script 
         $script:Data.Snapshot.Routes += ([string]$x.R.DestinationPrefix + ' via ' + $x.R.NextHop)
         Add-Result 'NETWORK_DEPENDENCY' ('Route ' + $x.R.DestinationPrefix) 'INFO' ('NextHop=' + $x.R.NextHop) @(('Interface=' + $x.R.InterfaceAlias),('Metric=' + $x.R.RouteMetric),('Source=' + $x.Source)) -Source 'Get-NetRoute'
     }
-    if ($routes.Count -gt 0) {
+    if ($routeError) {
+        # The routes list is left out of the snapshot: the post-upgrade comparison then names it as not compared (#239).
+        $script:Data.Snapshot.Remove('Routes')
+        Add-Result 'NETWORK_DEPENDENCY' 'StaticRoutes' 'MANUAL' 'Static routes could not be read completely' @($routeError, ('Routes found=' + $routes.Count)) -Recommendation 'Run "route print" and Get-NetRoute -PolicyStore PersistentStore by hand and document the persistent routes.' -Kind 'Finding' -Source 'Get-NetRoute'
+    } elseif ($routes.Count -gt 0) {
         $activeOnly = @($routes | Where-Object { $_.Source -eq 'ActiveOnly' }).Count
         Add-Result 'NETWORK_DEPENDENCY' 'StaticRoutes' 'MANUAL' ('Routes=' + $routes.Count) ('ActiveOnly(non-persistent)=' + $activeOnly) -Recommendation 'Confirm each static route is still needed and test it after IPU. Active-only routes are lost at reboot; persistent routes break if the interface index changes (teaming/driver changes).' -Source 'Get-NetRoute'
     } else {
@@ -4308,7 +4378,13 @@ Register-Check -Id 'printers' -Name 'Print server: printers, ports and drivers' 
     $script:Data.PrintServer = $false
     try { $inv = Get-PrinterInventory }
     catch {
-        if ($role) { Add-Result 'PRINTING' 'Printers' 'MANUAL' 'Could not read the printers' $_.Exception.Message -Recommendation 'Check that the Print Spooler service runs, and list printers, ports and drivers in Print Management before the change.' -Kind 'Finding' -Source 'PrintManagement, Win32_Printer' }
+        $spooler = @($script:Data.Services | Where-Object { $_.Name -eq 'Spooler' }) | Select-Object -First 1
+        $startMode = ''; if ($spooler) { $startMode = [string]$spooler.StartMode }
+        if ((Get-PrinterReadFailureDecision $role $startMode ($null -ne $spooler)) -eq 'Manual') {
+            Add-Result 'PRINTING' 'Printers' 'MANUAL' 'Could not read the printers' $_.Exception.Message -Recommendation 'Check that the Print Spooler service runs, and list printers, ports and drivers in Print Management before the change.' -Kind 'Finding' -Source 'PrintManagement, Win32_Printer'
+        } else {
+            Add-Result 'PRINTING' 'PrintServer' 'OK' 'Not a print server' 'Print Server role not installed and the Print Spooler service is disabled or missing' -Source 'Win32_Service'
+        }
         return
     }
     $printers = @($inv.Printers | Where-Object { $_ -and [string]$_.DriverName -notmatch $script:VirtualPrinterDrivers } | Sort-Object Name)
@@ -4389,9 +4465,19 @@ Register-Check -Id 'iis' -Name 'IIS' -Script {
     } else {
         Add-Result 'IIS' 'ConfigurationCopy' 'INFO' 'Not taken (EnableIISConfigEvidence is off)' -Source 'SETTINGS'
     }
-    if (-not (Get-Module -ListAvailable WebAdministration)) { return }
-    Import-Module WebAdministration
-    foreach ($site in @(Get-Website)) {
+    $iisManual = 'List the sites and bindings by hand (appcmd list site, or IIS Manager) before the change.'
+    if (-not (Get-Module -ListAvailable WebAdministration)) {
+        Add-Result 'IIS' 'Sites' 'MANUAL' 'Sites and bindings not listed (WebAdministration module missing)' -Recommendation $iisManual -Kind 'Finding' -Source 'WebAdministration'
+        return
+    }
+    $sites = @()
+    try { Import-Module WebAdministration -ErrorAction Stop; $sites = @(Get-Website -ErrorAction Stop) }
+    catch {
+        Write-Swallowed $_
+        Add-Result 'IIS' 'Sites' 'MANUAL' 'Sites and bindings could not be read' $_.Exception.Message -Recommendation $iisManual -Kind 'Finding' -Source 'WebAdministration'
+        return
+    }
+    foreach ($site in $sites) {
         $bindings = @($site.Bindings.Collection | ForEach-Object { $_.protocol + ':' + $_.bindingInformation }) -join ' | '
         Add-Result 'IIS' ('Site: ' + $site.Name) 'INFO' ('State=' + $site.State) @(('Path=' + $site.PhysicalPath),('Bindings=' + $bindings)) -Source 'WebAdministration'
     }
@@ -4427,9 +4513,15 @@ Register-Check -Id 'pki' -Name 'PKI, certificates and TLS bindings' -Script {
         Add-Result 'PKI' 'CertificationAuthority' 'ACTION' 'Certification Authority detected' $adcs -Recommendation 'Engage the PKI team: verify CA database and private-key backup, AIA/CDP dependencies, and a tested recovery procedure before IPU.' -Source 'Get-WindowsFeature, CertSvc'
         $active = (Get-RegistryValueSafe 'HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration' 'Active').Value
         if ($active) {
-            $ca = Get-ItemProperty ('HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration\' + $active) -ErrorAction SilentlyContinue
-            $type = @{ 0='EnterpriseRoot'; 1='EnterpriseSubordinate'; 3='StandaloneRoot'; 4='StandaloneSubordinate' }[[int]$ca.CAType]
-            Add-Result 'PKI' ('CA: ' + $active) 'INFO' ('Type=' + $type) @(('DB=' + $ca.DBDirectory),('Log=' + $ca.DBLogDirectory)) -Source 'CertSvc configuration'
+            $ca = $null
+            try { $ca = Get-ItemProperty ('HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration\' + $active) -ErrorAction Stop } catch { Write-Swallowed $_ }
+            $type = ''; if ($ca) { $type = Get-CaTypeName $ca.CAType }
+            if ($type) {
+                Add-Result 'PKI' ('CA: ' + $active) 'INFO' ('Type=' + $type) @(('DB=' + $ca.DBDirectory),('Log=' + $ca.DBLogDirectory)) -Source 'CertSvc configuration'
+            } else {
+                # An unreadable configuration must not look like an enterprise root CA (#242).
+                Add-Result 'PKI' ('CA: ' + $active) 'MANUAL' 'The CA configuration or its type could not be read' -Recommendation 'Check the CA type, database and log folders by hand (certutil -getreg CA) before the change.' -Kind 'Finding' -Source 'CertSvc configuration'
+            }
         }
     } elseif ($adcs.Count -gt 0) {
         Add-Result 'PKI' 'ADCSRoleServices' 'ACTION' ($adcs -join ', ') -Recommendation 'Engage the PKI team and confirm configuration/recovery requirements before IPU.' -Source 'Get-WindowsFeature'
@@ -4438,6 +4530,7 @@ Register-Check -Id 'pki' -Name 'PKI, certificates and TLS bindings' -Script {
     # Certificate index across the stores that services bind from.
     $index = @{}
     foreach ($store in @('My','Remote Desktop','WebHosting')) {
+        # SilentlyContinue: the WebHosting and Remote Desktop stores do not exist until used; a missing store is empty.
         foreach ($cert in @(Get-ChildItem ('Cert:\LocalMachine\' + $store) -ErrorAction SilentlyContinue)) {
             $thumb = ConvertTo-NormalizedThumbprint $cert.Thumbprint
             if ($index.ContainsKey($thumb)) { continue }
@@ -4453,9 +4546,23 @@ Register-Check -Id 'pki' -Name 'PKI, certificates and TLS bindings' -Script {
     }
 
     # IIS HTTPS bindings.
-    if ((Get-FeatureState 'Web-Server') -eq $true -and (Get-Module -ListAvailable WebAdministration)) {
-        Import-Module WebAdministration
-        foreach ($b in @(Get-WebBinding -Protocol https -ErrorAction SilentlyContinue)) {
+    $httpsBindings = @()
+    if ((Get-FeatureState 'Web-Server') -eq $true) {
+        $bindingsManual = 'Check the HTTPS bindings and their certificates by hand (IIS Manager, or netsh http show sslcert) before the change.'
+        if (-not (Get-Module -ListAvailable WebAdministration)) {
+            Add-Result 'CERTIFICATES' 'IIS https bindings' 'MANUAL' 'HTTPS bindings not listed (WebAdministration module missing)' -Recommendation $bindingsManual -Kind 'Finding' -Source 'WebAdministration'
+        } else {
+            try { Import-Module WebAdministration -ErrorAction Stop; $httpsBindings = @(Get-WebBinding -Protocol https -ErrorAction Stop) }
+            catch {
+                if (-not (Test-NotFoundError $_)) {
+                    Write-Swallowed $_
+                    Add-Result 'CERTIFICATES' 'IIS https bindings' 'MANUAL' 'HTTPS bindings could not be read' $_.Exception.Message -Recommendation $bindingsManual -Kind 'Finding' -Source 'Get-WebBinding'
+                }
+            }
+        }
+    }
+    if ($httpsBindings.Count -gt 0) {
+        foreach ($b in $httpsBindings) {
             $thumb = ConvertTo-NormalizedThumbprint $b.certificateHash
             $entry = $null
             if ($thumb -and $index.ContainsKey($thumb)) { $entry = $index[$thumb] }
@@ -4597,21 +4704,25 @@ Register-Check -Id 'antivirus' -Name 'Antivirus, EDR and security tools' -Script
             $count = 0; foreach ($c in $policy.RuleCollections) { $count += [int]$c.Count }
             if ($count -gt 0) { Add-Result 'SECURITY' 'AppLocker' 'WARNING' ('EffectiveRules=' + $count) '' -Recommendation 'Confirm Windows Setup ($WINDOWS.~BT) and post-upgrade binaries are allowed.' -Source 'Get-AppLockerPolicy' }
             else { Add-Result 'SECURITY' 'AppLocker' 'INFO' 'No effective rules' -Source 'Get-AppLockerPolicy' }
-        } catch { Write-Swallowed $_ }
+        } catch { Write-Swallowed $_; Add-Result 'SECURITY' 'AppLocker' 'MANUAL' 'The effective AppLocker policy could not be read' $_.Exception.Message -Recommendation 'Check Local Security Policy > Application Control Policies by hand: Setup and the new binaries must be allowed.' -Kind 'Finding' -Source 'Get-AppLockerPolicy' }
     }
     if (Test-CommandAvailable 'Get-BitLockerVolume') {
         try {
             $bl = Get-BitLockerVolume -MountPoint 'C:' -ErrorAction Stop
             if ([string]$bl.ProtectionStatus -eq 'On') { Add-Result 'SECURITY' 'BitLocker C:' 'WARNING' ('Protection=On, Method=' + $bl.EncryptionMethod) '' -Recommendation 'Confirm the recovery key is escrowed and retrievable before IPU.' -Source 'Get-BitLockerVolume' }
             else { Add-Result 'SECURITY' 'BitLocker C:' 'INFO' ('Protection=' + $bl.ProtectionStatus) -Source 'Get-BitLockerVolume' }
-        } catch { Write-Swallowed $_ }
+        } catch { Write-Swallowed $_; Add-Result 'SECURITY' 'BitLocker C:' 'MANUAL' 'The BitLocker state of C: could not be read' $_.Exception.Message -Recommendation 'Run manage-bde -status C: by hand; confirm the recovery key is escrowed if protection is on.' -Kind 'Finding' -Source 'Get-BitLockerVolume' }
     }
     if (Test-CommandAvailable 'Confirm-SecureBootUEFI') {
         try { Add-Result 'SECURITY' 'SecureBoot' 'INFO' ('Enabled=' + (Confirm-SecureBootUEFI -ErrorAction Stop)) -Source 'Confirm-SecureBootUEFI' }
-        catch { Add-Result 'SECURITY' 'SecureBoot' 'INFO' 'Not available (legacy BIOS or not supported)' -Source 'Confirm-SecureBootUEFI' }
+        catch {
+            $sb = Get-SecureBootDecision $_.Exception.GetType().Name $_.Exception.Message
+            if ($sb.Kind -eq 'LegacyBios') { Add-Result 'SECURITY' 'SecureBoot' $sb.Status $sb.Value -Source 'Confirm-SecureBootUEFI' }
+            else { Write-Swallowed $_; Add-Result 'SECURITY' 'SecureBoot' $sb.Status $sb.Value $_.Exception.Message -Recommendation 'Run Confirm-SecureBootUEFI in an elevated session by hand.' -Kind 'Finding' -Source 'Confirm-SecureBootUEFI' }
+        }
     }
     if (Test-CommandAvailable 'Get-Tpm') {
-        try { $tpm = Get-Tpm -ErrorAction Stop; Add-Result 'SECURITY' 'TPM' 'INFO' ('Present=' + $tpm.TpmPresent) ('Ready=' + $tpm.TpmReady) -Source 'Get-Tpm' } catch { Write-Swallowed $_ }
+        try { $tpm = Get-Tpm -ErrorAction Stop; Add-Result 'SECURITY' 'TPM' 'INFO' ('Present=' + $tpm.TpmPresent) ('Ready=' + $tpm.TpmReady) -Source 'Get-Tpm' } catch { Write-Swallowed $_; Add-Result 'SECURITY' 'TPM' 'MANUAL' 'The TPM state could not be read' $_.Exception.Message -Recommendation 'Run Get-Tpm (or tpm.msc) by hand.' -Kind 'Finding' -Source 'Get-Tpm' }
     }
     if (@($script:Data.FilterDrivers).Count -gt 0) {
         Add-Result 'SECURITY' 'FileSystemFilterDrivers' 'INFO' ('Count=' + @($script:Data.FilterDrivers).Count) (@($script:Data.FilterDrivers) -join ', ') -Recommendation 'If a previous IPU failed with 0xC1900101 (driver), review the non-Microsoft filter drivers.' -Source 'fltmc filters'
@@ -4700,7 +4811,12 @@ Register-Check -Id 'vmware' -Name 'VMware guest readiness' -Script {
 # ---------------------------------------------------------------------------
 Register-Check -Id 'drivers' -Name 'Non-Microsoft drivers' -Script {
     $unsigned = @()
-    $pnp = @(Get-CimSafe 'Win32_PnPSignedDriver' | Where-Object { $_.DeviceName -and $_.DriverProviderName -and $_.DriverProviderName -notmatch '^Microsoft' })
+    $pnp = @(); $pnpError = ''
+    try { $pnp = @(Get-CimRequired 'Win32_PnPSignedDriver' | Where-Object { $_.DeviceName -and $_.DriverProviderName -and $_.DriverProviderName -notmatch '^Microsoft' }) }
+    catch {
+        $pnpError = $_.Exception.Message; Write-Swallowed $_
+        Add-Result 'DRIVERS' 'DeviceDrivers' 'MANUAL' 'The device driver list could not be read' $pnpError -Recommendation 'List the third-party drivers by hand (driverquery /v, or Device Manager) before the change; old drivers are the most common cause of IPU rollback.' -Kind 'Finding' -Source 'Win32_PnPSignedDriver'
+    }
     foreach ($d in @($pnp | Sort-Object DeviceName,DriverVersion -Unique)) {
         $date = [string]$d.DriverDate
         $driverDate = ConvertTo-DateTimeValue $d.DriverDate
@@ -4719,7 +4835,9 @@ Register-Check -Id 'drivers' -Name 'Non-Microsoft drivers' -Script {
             Add-Result 'DRIVERS' ('Kernel driver: ' + $drv.Name) 'INFO' ('Company=' + $info.CompanyName) @(('FileVersion=' + $info.FileVersion),('Path=' + $path)) -Source 'Win32_SystemDriver'
         }
     }
-    Add-Result 'DRIVERS' 'Summary' 'INFO' ('NonMicrosoftDevices=' + @($pnp | Sort-Object DeviceName -Unique).Count + ', NonMicrosoftKernelDrivers=' + $kernelCount) -Recommendation 'Old third-party drivers are the most common cause of IPU rollback (0xC1900101). Update them, especially storage, network and security drivers, before IPU.' -Source 'Win32_PnPSignedDriver, Win32_SystemDriver'
+    $devicesText = 'NonMicrosoftDevices=' + @($pnp | Sort-Object DeviceName -Unique).Count
+    if ($pnpError) { $devicesText = 'NonMicrosoftDevices=unknown' }
+    Add-Result 'DRIVERS' 'Summary' 'INFO' ($devicesText + ', NonMicrosoftKernelDrivers=' + $kernelCount) -Recommendation 'Old third-party drivers are the most common cause of IPU rollback (0xC1900101). Update them, especially storage, network and security drivers, before IPU.' -Source 'Win32_PnPSignedDriver, Win32_SystemDriver'
     if ($unsigned.Count -gt 0) {
         Add-Result 'DRIVERS' 'UnsignedDrivers' 'WARNING' ('Count=' + $unsigned.Count) ($unsigned -join ', ') -Recommendation 'Unsigned drivers may not load after the upgrade. Replace them with signed versions before IPU.' -Source 'Win32_PnPSignedDriver'
     }
@@ -4728,10 +4846,12 @@ Register-Check -Id 'drivers' -Name 'Non-Microsoft drivers' -Script {
 # ---------------------------------------------------------------------------
 Register-Check -Id 'ports' -Name 'Listening ports' -Script {
     if (-not (Test-CommandAvailable 'Get-NetTCPConnection')) {
-        Add-Result 'PORTS' 'ListeningPorts' 'INFO' 'Get-NetTCPConnection unavailable' -Source 'NetTCPIP'
+        $script:Data.Snapshot.Remove('Ports')
+        Add-Result 'PORTS' 'ListeningPorts' 'MANUAL' 'Get-NetTCPConnection unavailable' -Recommendation 'List the listening ports by hand (netstat -ano) for the post-upgrade test plan.' -Kind 'Finding' -Source 'NetTCPIP'
         return
     }
     $procNames = @{}
+    # SilentlyContinue: process names only label the owners; a process that ended meanwhile is normal.
     foreach ($proc in @(Get-Process -ErrorAction SilentlyContinue)) { $procNames[[int]$proc.Id] = $proc.ProcessName }
     $svcByPid = @{}
     foreach ($svc in $script:Data.Services) {
@@ -4743,9 +4863,14 @@ Register-Check -Id 'ports' -Name 'Listening ports' -Script {
     }
     $owners = @{}
     $endpoints = @()
-    foreach ($c in @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue)) { $endpoints += [pscustomobject]@{ Key=('TCP:' + $c.LocalPort); Port=[int]$c.LocalPort; ProcessId=[int]$c.OwningProcess } }
+    # A failed query stops the check (reported as not completed); only "nothing found" is an empty list (#242).
+    $tcpListeners = @()
+    try { $tcpListeners = @(Get-NetTCPConnection -State Listen -ErrorAction Stop) } catch { if (-not (Test-NotFoundError $_)) { throw } }
+    foreach ($c in $tcpListeners) { $endpoints += [pscustomobject]@{ Key=('TCP:' + $c.LocalPort); Port=[int]$c.LocalPort; ProcessId=[int]$c.OwningProcess } }
     if (Test-CommandAvailable 'Get-NetUDPEndpoint') {
-        foreach ($u in @(Get-NetUDPEndpoint -ErrorAction SilentlyContinue)) { $endpoints += [pscustomobject]@{ Key=('UDP:' + $u.LocalPort); Port=[int]$u.LocalPort; ProcessId=[int]$u.OwningProcess } }
+        $udpEndpoints = @()
+        try { $udpEndpoints = @(Get-NetUDPEndpoint -ErrorAction Stop) } catch { if (-not (Test-NotFoundError $_)) { throw } }
+        foreach ($u in $udpEndpoints) { $endpoints += [pscustomobject]@{ Key=('UDP:' + $u.LocalPort); Port=[int]$u.LocalPort; ProcessId=[int]$u.OwningProcess } }
     }
     # Ports from the Windows dynamic range (49152+) change between boots and
     # are left out so the before/after comparison stays meaningful.
@@ -5091,11 +5216,15 @@ function Invoke-RdpPolicyAssessment {
     elseif ($svc.StartMode -eq 'Disabled') { $hard.Add('TermService is disabled') }
     elseif ($svc.State -ne 'Running') { $review.Add('TermService is not running') }
 
-    $listening = $false
+    $listening = $false; $listenerUnknown = $false
     if (Test-CommandAvailable 'Get-NetTCPConnection') {
-        try { $listening = @(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction Stop).Count -gt 0 } catch { Write-Swallowed $_ }
+        try { $listening = @(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction Stop).Count -gt 0 }
+        catch {
+            # No listener raises ObjectNotFound; any other error means the query failed, which says nothing about the port (#242).
+            if (-not (Test-NotFoundError $_)) { $listenerUnknown = $true; Write-Swallowed $_; $review.Add('The listener query failed: ' + $_.Exception.Message) }
+        }
     }
-    if (-not $listening) { $hard.Add('Nothing listening on TCP/' + $port) }
+    if (-not $listening -and -not $listenerUnknown) { $hard.Add('Nothing listening on TCP/' + $port) }
 
     # Firewall: only relevant when at least one profile is enabled.
     if (Test-CommandAvailable 'Get-NetFirewallRule') {

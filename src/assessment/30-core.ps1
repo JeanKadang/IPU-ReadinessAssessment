@@ -167,6 +167,15 @@ function Write-Swallowed {
     }
 }
 
+function Test-NotFoundError {
+    # The storage, network and CIM-based cmdlets raise an ObjectNotFound error
+    # when a filter matches nothing (no listener on a port, no persistent
+    # route). That is an empty answer, not a failed query (#242). The error
+    # category is used, never the message text, which is localised.
+    param($ErrorRecord)
+    return ($null -ne $ErrorRecord -and $null -ne $ErrorRecord.CategoryInfo -and [string]$ErrorRecord.CategoryInfo.Category -eq 'ObjectNotFound')
+}
+
 function Find-DetectionMatch {
     # Pure: matches one pattern table (section 2) against the inventories and
     # returns one object per detected product with the evidence that matched.

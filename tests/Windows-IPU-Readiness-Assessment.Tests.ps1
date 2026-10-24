@@ -3713,3 +3713,51 @@ Describe 'Evidence folders named after their contents (#198)' {
         Test-Path -LiteralPath $EvidenceRoot | Should -BeFalse
     }
 }
+Describe 'Test-NotFoundError (#242)' {
+    It 'an ObjectNotFound error is an empty answer' {
+        $e = $null
+        try { Write-Error 'x' -Category ObjectNotFound -ErrorAction Stop } catch { $e = $_ }
+        Test-NotFoundError $e | Should -BeTrue
+    }
+    It 'any other category is a failure' {
+        $e = $null
+        try { Write-Error 'x' -Category InvalidOperation -ErrorAction Stop } catch { $e = $_ }
+        Test-NotFoundError $e | Should -BeFalse
+    }
+    It 'nothing is not a not-found error' { Test-NotFoundError $null | Should -BeFalse }
+}
+
+Describe 'Get-SecureBootDecision (#242)' {
+    It 'PlatformNotSupportedException is a legacy BIOS machine' {
+        $d = Get-SecureBootDecision 'PlatformNotSupportedException' 'x'
+        $d.Kind | Should -Be 'LegacyBios'; $d.Status | Should -Be 'INFO'
+    }
+    It 'the platform message alone is enough' { (Get-SecureBootDecision 'RuntimeException' 'Cmdlet not supported on this platform: 0xC0000002').Kind | Should -Be 'LegacyBios' }
+    It 'any other error says nothing about the firmware' {
+        $d = Get-SecureBootDecision 'UnauthorizedAccessException' 'Access is denied'
+        $d.Kind | Should -Be 'Unreadable'; $d.Status | Should -Be 'MANUAL'
+    }
+}
+
+Describe 'Get-CaTypeName (#242)' {
+    It 'names the known types' {
+        Get-CaTypeName 0 | Should -Be 'EnterpriseRoot'
+        Get-CaTypeName 1 | Should -Be 'EnterpriseSubordinate'
+        Get-CaTypeName 3 | Should -Be 'StandaloneRoot'
+        Get-CaTypeName 4 | Should -Be 'StandaloneSubordinate'
+        Get-CaTypeName '4' | Should -Be 'StandaloneSubordinate'
+    }
+    It 'a missing value is not an enterprise root CA' { Get-CaTypeName $null | Should -Be '' }
+    It 'text and unknown numbers have no name' {
+        Get-CaTypeName '' | Should -Be ''
+        Get-CaTypeName 'abc' | Should -Be ''
+        Get-CaTypeName 2 | Should -Be ''
+    }
+}
+
+Describe 'Get-PrinterReadFailureDecision (#242)' {
+    It 'with the Print Server role it is a failure to look' { Get-PrinterReadFailureDecision $true 'Disabled' $true | Should -Be 'Manual' }
+    It 'without the role, a disabled spooler explains it' { Get-PrinterReadFailureDecision $false 'Disabled' $true | Should -Be 'NotPrintServer' }
+    It 'without the role, a missing spooler explains it' { Get-PrinterReadFailureDecision $false '' $false | Should -Be 'NotPrintServer' }
+    It 'without the role but with a spooler that should run, it is unexplained' { Get-PrinterReadFailureDecision $false 'Auto' $true | Should -Be 'Manual' }
+}
