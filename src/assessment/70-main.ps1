@@ -5,12 +5,28 @@ function Invoke-Assessment {
     $header = 'ComputerName;RunStatus;AssessmentStatus;ReportPath;LogPath;ReportSizeKB;Records;Started;Completed;Duration;CollectorVersion;Message'
     # An output folder that cannot be written is found now, not after up to an
     # hour of checks (#250): the log file is the first thing written.
-    $folderError = ''
+    $folderError = ''; $runBusy = $false
     try {
         $script:OutputFolderState = Initialize-OutputFolder $ReportDirectory
-        [IO.File]::WriteAllText($script:LogPath,('Timestamp;Level;Phase;Message' + [Environment]::NewLine),(New-Object System.Text.UTF8Encoding($false)))
+        # Before the log is rewritten: a second run must not wipe the first run's log (#244).
+        $script:RunLock = Enter-RunLock ($script:LogPath + '.lock')
+        if ($script:RunLock) { [IO.File]::WriteAllText($script:LogPath,('Timestamp;Level;Phase;Message' + [Environment]::NewLine),(New-Object System.Text.UTF8Encoding($false))) }
+        else { $runBusy = $true }
     } catch { $folderError = $_.Exception.Message }
+    if ($runBusy) {
+        $now = Get-Date
+        [Console]::Out.WriteLine($header)
+        [Console]::Out.WriteLine((@(
+            $script:ComputerName,'FAILED','MANUAL','','','',0,
+            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss'),$now.ToString('yyyy-MM-dd HH:mm:ss'),
+            (Format-Duration ($now - $script:CollectionStarted)),$script:CollectorVersion,
+            ('Nothing was assessed: another assessment run on this server is using ' + $ReportDirectory + ' (' + $script:LogPath + '.lock). Wait for it to finish, or give this run another -ReportDirectory.')
+        ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
+        $script:ExitCode = 1
+        return
+    }
     if ($folderError) {
+        Exit-RunLock $script:RunLock
         $now = Get-Date
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
@@ -44,6 +60,7 @@ function Invoke-Assessment {
             (Format-Duration ($now - $script:CollectionStarted)),$script:CollectorVersion,$missingText
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
         $script:ExitCode = 1
+        Exit-RunLock $script:RunLock
         return
     }
 
@@ -77,14 +94,17 @@ function Invoke-Assessment {
 
         try { $null = Write-AssessmentReport -Partial } catch { Write-AssessmentLog 'WARNING' 'REPORT' ('Checkpoint report failed: ' + $_.Exception.Message) }
 
-        $budgetMinutes = Get-SlowCheckBudget $SlowCheckBudgetMinutes $CompatScanTimeoutMinutes $TargetMediaPath $AssessmentMode
+        # PrintBrm, DISM and SFC share one pool; the Setup scan has its own clock (#244).
+        $poolMinutes = Get-SlowCheckBudget $SlowCheckBudgetMinutes $PrintBackupTimeoutMinutes (Test-PrintBackupDue $AssessmentMode ([bool]$script:Data.PrintServer) ([bool]$EnablePrintBackup))
+        $compatMinutes = 0; if ($TargetMediaPath -and $AssessmentMode -eq 'Pre') { $compatMinutes = $CompatScanTimeoutMinutes }
         $slowWatch = [Diagnostics.Stopwatch]::StartNew()
         foreach ($check in @($script:Checks | Where-Object { $_.Phase -eq 'Slow' -and $skip -notcontains $_.Id })) {
-            $script:SlowSecondsLeft = Get-SlowSecondsLeft $budgetMinutes $slowWatch.Elapsed.TotalSeconds
-            if (Test-SlowCheckSkip $script:SlowSecondsLeft) {
-                Add-SkippedSlowCheck $check $budgetMinutes
+            $plan = Get-SlowCheckPlan $check.Id $poolMinutes $slowWatch.Elapsed.TotalSeconds $compatMinutes $script:CheckRuns.ToArray()
+            if ($plan.Skip) {
+                Add-SkippedSlowCheck $check $poolMinutes $plan.Reason
                 continue
             }
+            $script:SlowSecondsLeft = $plan.SecondsLeft
             Invoke-Check $check
         }
 
@@ -126,6 +146,7 @@ function Invoke-Assessment {
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
         $script:ExitCode = 1
     }
+    Exit-RunLock $script:RunLock
 }
 
 if ($env:IPU_ASSESSMENT_LIBRARY_ONLY -eq '1') { return }

@@ -176,10 +176,21 @@ These are project values, not Microsoft minimums (unless noted).
 | `RunSFCVerifyOnly` | `$true` | Run `SFC /verifyonly` (read-only) |
 | `DISMTimeoutMinutes` | 30 | Cap for the DISM scan |
 | `SFCTimeoutMinutes` | 30 | Cap for the SFC scan |
-| `SlowCheckBudgetMinutes` | 50 | One budget shared by DISM and SFC |
-| `CompatScanTimeoutMinutes` | 45 | Added to the budget when `TargetMediaPath` is set |
+| `SlowCheckBudgetMinutes` | 50 | One budget shared by DISM and SFC (and the print server export, which adds its own `PrintBackupTimeoutMinutes` to it when it applies) |
+| `CompatScanTimeoutMinutes` | 45 | The Setup scan has its own clock when `TargetMediaPath` is set: it always gets this long, whatever DISM and SFC used |
 
 When the budget runs out, remaining slow checks are reported as `MANUAL` (skipped), not silently dropped.
+
+If DISM or SFC hits its time limit, the scan can keep running: the work is done by `TiWorker.exe` under the
+TrustedInstaller service, outside the process the script stops. The remaining DISM/SFC check is then skipped with a
+`MANUAL` row ("a previous DISM or SFC scan timed out and may still be running"), because a second scan on top of the
+first gives wrong answers (for example SFC reporting a repair waiting for a reboot). A timeout row also says when the
+script could not stop the process at all. The Setup scan is still run.
+
+Only one run can use a report folder at a time. A second run for the same server stops at once with a `FAILED` SA line
+("another assessment run on this server is using ...") and writes nothing, so it cannot wipe the first run's log. The
+lock is an open file handle (`<Computer>-IPU-Assessment.log.lock`, empty), so a run that was killed releases it; a
+leftover file blocks nobody.
 
 ### Evidence copies
 
@@ -208,7 +219,7 @@ deliberately not inside the report folder, which is retrieved and shared.
 | `CreatePolicyEvidenceZip` | `$true` | Zip each evidence copy |
 | `EnableIISConfigEvidence` | `$true` | When IIS is installed, copy its configuration files into a restricted evidence folder and ZIP under `EvidenceRoot\IIS` (see [IIS configuration copy](#iis-configuration-copy)) |
 | `EnablePrintBackup` | `$true` | On a print server, export printers, ports and drivers with `PrintBrm -B` into a restricted evidence folder under `EvidenceRoot\Printers`; skipped (MANUAL, with the command) when the drive lacks 1.5 x the size of `spool\drivers` + 1 GB (see [Print server backup](#print-server-backup)) |
-| `PrintBackupTimeoutMinutes` | `30` | Time limit for the export; counted against the slow-check budget. A timeout is MANUAL |
+| `PrintBackupTimeoutMinutes` | `30` | Time limit for the export; added to the slow-check budget on a print server (so DISM and SFC keep theirs). A timeout is MANUAL |
 | `EnableNetworkEvidence` | `$true` | Save `ipconfig /all`, `route print` and the netsh interface configuration into a restricted evidence folder and ZIP under `EvidenceRoot\Network` (see [Network configuration copy](#network-configuration-copy)) |
 
 ### Output
@@ -775,7 +786,7 @@ The script is designed for SA Ad-Hoc Scripting, normally as the SA Agent (LocalS
 1. Paste or attach the script. If your job can pass arguments, use them; otherwise edit the defaults in the `param()` block.
 2. **Set the job timeout** above the slow-check budget:
 
-   `SlowCheckBudgetMinutes` (+ `CompatScanTimeoutMinutes` when `TargetMediaPath` is set) **+ about 15 minutes.**
+   `SlowCheckBudgetMinutes` (+ `PrintBackupTimeoutMinutes` on a print server, + `CompatScanTimeoutMinutes` when `TargetMediaPath` is set) **+ about 15 minutes.**
    With defaults that is roughly 65 minutes, or 110 with media.
 3. Read the single result line from the job output (`RunStatus`, `AssessmentStatus`).
 4. Retrieve the HTML through your approved SA file-retrieval process.

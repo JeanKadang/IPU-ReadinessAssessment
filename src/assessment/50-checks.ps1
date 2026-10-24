@@ -1536,7 +1536,7 @@ Register-Check -Id 'printbackup' -Name 'Print server backup (PrintBrm)' -Phase '
     if ($r.TimedOut) {
         # A cut-off export is not a backup; remove this run's partial file.
         if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
-        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' ('Stopped after ' + [math]::Round($timeout / 60) + ' minutes') @($duration, $space.Text) -Recommendation 'Run the export by hand outside the SA job, before the change, and keep the file off the server.' -Kind 'Finding' -Source 'PrintBrm.exe -B' -Command $cmd -CommandKind 'Check'
+        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' ('Stopped after ' + [math]::Round($timeout / 60) + ' minutes') @($duration, $space.Text, (Get-StopFailureText $r.StillRunning)) -Recommendation 'Run the export by hand outside the SA job, before the change, and keep the file off the server.' -Kind 'Finding' -Source 'PrintBrm.exe -B' -Command $cmd -CommandKind 'Check'
         $script:CurrentCheckOutcome = 'TimedOut'; return
     }
     if ($r.Error) { throw $r.Error }
@@ -1561,7 +1561,7 @@ Register-Check -Id 'dism' -Name 'DISM component store scan' -Phase 'Slow' -Scrip
     $sw.Stop()
     $duration = 'Duration=' + (Format-Duration $sw.Elapsed)
     if ($r.TimedOut) {
-        Add-Result 'WINDOWS_HEALTH' 'DISM ScanHealth' 'MANUAL' ('Stopped after ' + [math]::Round($timeout/60) + ' minutes') $duration -Recommendation 'Run "DISM /Online /Cleanup-Image /ScanHealth" manually outside the SA job.' -Source 'dism.exe'
+        Add-Result 'WINDOWS_HEALTH' 'DISM ScanHealth' 'MANUAL' ('Stopped after ' + [math]::Round($timeout/60) + ' minutes') @($duration, (Get-StopFailureText $r.StillRunning)) -Recommendation 'Run "DISM /Online /Cleanup-Image /ScanHealth" manually outside the SA job.' -Source 'dism.exe'
         $script:CurrentCheckOutcome = 'TimedOut'; return
     }
     if ($r.Error) { throw $r.Error }
@@ -1583,7 +1583,7 @@ Register-Check -Id 'sfc' -Name 'SFC protected file verification' -Phase 'Slow' -
     $sw.Stop()
     $duration = 'Duration=' + (Format-Duration $sw.Elapsed)
     if ($r.TimedOut) {
-        Add-Result 'WINDOWS_HEALTH' 'SFC VerifyOnly' 'MANUAL' ('Stopped after ' + [math]::Round($timeout/60) + ' minutes') $duration -Recommendation 'Run "sfc /verifyonly" manually outside the SA job.' -Source 'sfc.exe'
+        Add-Result 'WINDOWS_HEALTH' 'SFC VerifyOnly' 'MANUAL' ('Stopped after ' + [math]::Round($timeout/60) + ' minutes') @($duration, (Get-StopFailureText $r.StillRunning)) -Recommendation 'Run "sfc /verifyonly" manually outside the SA job.' -Source 'sfc.exe'
         $script:CurrentCheckOutcome = 'TimedOut'; return
     }
     if ($r.Error) { throw $r.Error }
@@ -1648,7 +1648,7 @@ Register-Check -Id 'compatscan' -Name 'Setup compatibility scan' -Phase 'Slow' -
         $r = Invoke-NativeCapture $setupExe $arguments $timeout
         $sw.Stop()
         if ($r.TimedOut) {
-            Add-Result 'COMPAT_SCAN' 'SetupCompatibilityScan' 'MANUAL' ('Stopped after ' + [math]::Round($timeout/60) + ' minutes') ('Duration=' + (Format-Duration $sw.Elapsed)) -Recommendation 'Run the scan manually: setup.exe /auto upgrade /quiet /compat scanonly /imageindex <n>.' -Source 'setup.exe'
+            Add-Result 'COMPAT_SCAN' 'SetupCompatibilityScan' 'MANUAL' ('Stopped after ' + [math]::Round($timeout/60) + ' minutes') @(('Duration=' + (Format-Duration $sw.Elapsed)), (Get-StopFailureText $r.StillRunning)) -Recommendation 'Run the scan manually: setup.exe /auto upgrade /quiet /compat scanonly /imageindex <n>.' -Source 'setup.exe'
             $script:CurrentCheckOutcome = 'TimedOut'; return
         }
         if ($r.Error) { throw $r.Error }

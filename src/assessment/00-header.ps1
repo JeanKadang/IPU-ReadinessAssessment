@@ -77,8 +77,11 @@
       Only when TargetMediaPath is set: an .iso is mounted and dismounted
       again, and Setup's compatibility scan creates C:\$WINDOWS.~BT (Setup
       manages that folder; the scan never starts an upgrade).
-    - Set the SA job timeout above SlowCheckBudgetMinutes (+ CompatScan-
-      TimeoutMinutes when TargetMediaPath is set) + about 15 minutes.
+    - Set the SA job timeout above SlowCheckBudgetMinutes (+ PrintBackup-
+      TimeoutMinutes on a print server, + CompatScanTimeoutMinutes when
+      TargetMediaPath is set) + about 15 minutes.
+    - One run at a time per server and report folder: a lock file
+      (<Computer>-IPU-Assessment.log.lock) is held open during the run.
 
 .TESTING OFF-SERVER
     Set IPU_ASSESSMENT_LIBRARY_ONLY=1 and dot-source the script: functions

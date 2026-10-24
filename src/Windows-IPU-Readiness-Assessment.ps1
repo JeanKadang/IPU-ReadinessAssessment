@@ -77,8 +77,11 @@
       Only when TargetMediaPath is set: an .iso is mounted and dismounted
       again, and Setup's compatibility scan creates C:\$WINDOWS.~BT (Setup
       manages that folder; the scan never starts an upgrade).
-    - Set the SA job timeout above SlowCheckBudgetMinutes (+ CompatScan-
-      TimeoutMinutes when TargetMediaPath is set) + about 15 minutes.
+    - Set the SA job timeout above SlowCheckBudgetMinutes (+ PrintBackup-
+      TimeoutMinutes on a print server, + CompatScanTimeoutMinutes when
+      TargetMediaPath is set) + about 15 minutes.
+    - One run at a time per server and report folder: a lock file
+      (<Computer>-IPU-Assessment.log.lock) is held open during the run.
 
 .TESTING OFF-SERVER
     Set IPU_ASSESSMENT_LIBRARY_ONLY=1 and dot-source the script: functions
@@ -747,6 +750,34 @@ function Initialize-OutputFolder {
     }
 }
 
+function Test-SharingViolation {
+    # Pure (#244): is this the HRESULT of a file that another process holds
+    # open (ERROR_SHARING_VIOLATION 32, ERROR_LOCK_VIOLATION 33)?
+    param([int]$HResult)
+    $win32 = $HResult -band 0xFFFF
+    return (($HResult -band 0x7FFF0000) -eq 0x00070000 -and ($win32 -eq 32 -or $win32 -eq 33))
+}
+
+function Enter-RunLock {
+    # One run per server and report folder (#244): two runs at once overwrite
+    # the log and collide on the .writing files. The lock is an open handle,
+    # never "the file exists": a run that is killed (an SA job timeout) releases
+    # it with the process, so a leftover file blocks nobody. Returns the
+    # handle, or $null when another run holds it. Any other failure throws.
+    param([string]$Path)
+    try {
+        return [IO.File]::Open($Path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    } catch [System.IO.IOException] {
+        if (Test-SharingViolation $_.Exception.HResult) { return $null }
+        throw
+    }
+}
+
+function Exit-RunLock {
+    param($Handle)
+    if ($Handle) { try { $Handle.Dispose() } catch { Write-Swallowed $_ } }
+}
+
 function Initialize-EvidenceFolder {
     # The topic folder for an evidence copy (#198), created with the same
     # restricted access as the report folder. The evidence root gets a
@@ -1300,7 +1331,7 @@ function Invoke-NativeCapture {
         [string[]]$ArgumentList = @(),
         [int]$TimeoutSeconds = 120
     )
-    $result = [pscustomobject]@{ ExitCode=$null; Output=''; Lines=@(); TimedOut=$false; Error='' }
+    $result = [pscustomobject]@{ ExitCode=$null; Output=''; Lines=@(); TimedOut=$false; StillRunning=$false; Error='' }
     $process = $null
     try {
         $quoted = @($ArgumentList | ForEach-Object { ConvertTo-NativeArgument $_ })
@@ -1322,8 +1353,18 @@ function Invoke-NativeCapture {
         )
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             $result.TimedOut = $true
-            try { $null = Invoke-NativeTreeKill $process.Id } catch { Write-Swallowed $_ }
+            $kill = $null
+            try { $kill = Invoke-NativeTreeKill $process.Id } catch { Write-Swallowed $_ }
             try { $null = $process.WaitForExit(15000) } catch { Write-Swallowed $_ }
+            # The process state decides whether the stop worked (#244).
+            $exited = $false
+            try { $exited = [bool]$process.HasExited } catch { Write-Swallowed $_ }
+            $killCode = $null
+            if ($kill) { try { $killCode = $kill.ExitCode } catch { Write-Swallowed $_ } }
+            $outcome = Get-NativeKillOutcome $exited $killCode
+            $result.StillRunning = $outcome.StillRunning
+            $level = 'INFO'; if ($outcome.StillRunning) { $level = 'WARNING' }
+            Write-AssessmentLog $level 'KILL' ((Split-Path -Leaf $FilePath) + ' timed out; ' + $outcome.Text)
         } else {
             $process.WaitForExit()
             $result.ExitCode = $process.ExitCode
@@ -1347,6 +1388,7 @@ function Invoke-NativeTreeKill {
     param([int]$ProcessId)
     $taskkill = Join-Path $env:windir 'System32\taskkill.exe'
     if (Test-Path -LiteralPath $taskkill) {
+        # SilentlyContinue: a failure to start taskkill is seen as a process that is still running (Get-NativeKillOutcome).
         $p = Start-Process -FilePath $taskkill -ArgumentList @('/PID',[string]$ProcessId,'/T','/F') -PassThru -NoNewWindow -Wait -ErrorAction SilentlyContinue
         return $p
     }
@@ -2932,13 +2974,20 @@ function ConvertTo-RelaunchArgumentText {
     return $text
 }
 
+function Test-PrintBackupDue {
+    # Pure (#244): the PrintBrm export runs on a print server before the
+    # upgrade, when it is switched on. Only then does it draw on the pool.
+    param([string]$Mode, [bool]$IsPrintServer, [bool]$Enabled)
+    return ($Mode -ne 'Post' -and $IsPrintServer -and $Enabled)
+}
+
 function Get-SlowCheckBudget {
-    # Pure: DISM and SFC share SlowCheckBudgetMinutes; the optional Setup
-    # compatibility scan adds its own timeout, but only when media is set and
-    # the run is a pre-upgrade run (the scan does not run after the upgrade).
-    param([int]$SlowCheckBudget, [int]$CompatScanTimeout, [string]$MediaPath, [string]$Mode)
+    # Pure (#244): minutes for the checks that share one clock: the print
+    # export (when it applies), DISM and SFC. The Setup compatibility scan is
+    # not in this pool: it has its own clock (Get-SlowCheckPlan).
+    param([int]$SlowCheckBudget, [int]$PrintBackupTimeout, [bool]$PrintBackupApplies)
     $minutes = $SlowCheckBudget
-    if ($MediaPath -and $Mode -eq 'Pre') { $minutes += $CompatScanTimeout }
+    if ($PrintBackupApplies) { $minutes += $PrintBackupTimeout }
     return $minutes
 }
 
@@ -2953,11 +3002,54 @@ function Test-SlowCheckSkip {
     return ($SecondsLeft -lt 60)
 }
 
+function Get-SlowCheckPlan {
+    # Pure (#244): what the main loop does with one slow check. The Setup
+    # compatibility scan always gets its own full timeout and is never skipped
+    # for budget: DISM, SFC and PrintBrm can overrun their own timeouts, so a
+    # reserve taken from a shared pool would shrink. The others share one pool
+    # and one clock. After a DISM or SFC timeout the scan may still be running
+    # (it works in TiWorker.exe under TrustedInstaller, outside the process
+    # tree that is stopped), so the later servicing check is skipped.
+    param([string]$CheckId, [int]$PoolMinutes, [double]$PoolElapsedSeconds, [int]$CompatScanMinutes, [object[]]$CheckRuns = @())
+    if ($CheckId -eq 'compatscan') { return [pscustomobject]@{ Skip = $false; Reason = ''; SecondsLeft = ($CompatScanMinutes * 60) } }
+    if (@('dism', 'sfc') -contains $CheckId) {
+        $timedOut = @(@($CheckRuns) | Where-Object { $_ -and @('dism', 'sfc') -contains $_.Id -and $_.Outcome -eq 'TimedOut' })
+        if ($timedOut.Count -gt 0) { return [pscustomobject]@{ Skip = $true; Reason = 'ServicingMayBeRunning'; SecondsLeft = 0 } }
+    }
+    $left = Get-SlowSecondsLeft $PoolMinutes $PoolElapsedSeconds
+    if (Test-SlowCheckSkip $left) { return [pscustomobject]@{ Skip = $true; Reason = 'BudgetUsedUp'; SecondsLeft = $left } }
+    return [pscustomobject]@{ Skip = $false; Reason = ''; SecondsLeft = $left }
+}
+
+function Get-StopFailureText {
+    # Pure (#244): added to a timeout row when the process could not be stopped.
+    param([bool]$StillRunning)
+    if ($StillRunning) { return 'The process could not be stopped and may still be running.' }
+    return ''
+}
+
+function Get-NativeKillOutcome {
+    # Pure (#244): was the process stopped after the time limit? The process
+    # state decides; taskkill's own exit code is only reported (128 = the
+    # process was already gone).
+    param([bool]$HasExited, $TaskkillExitCode)
+    $code = 'not run'; if ($null -ne $TaskkillExitCode) { $code = [string]$TaskkillExitCode }
+    if ($HasExited) { return [pscustomobject]@{ StillRunning = $false; Text = ('stopped (taskkill exit code ' + $code + ')') } }
+    return [pscustomobject]@{ StillRunning = $true; Text = ('still running after the stop (taskkill exit code ' + $code + ')') }
+}
+
 function Add-SkippedSlowCheck {
-    # Records a slow check that was not started because the budget ran out,
-    # as a MANUAL finding and a Skipped run, so the gap is visible.
-    param($Check, [int]$BudgetMinutes)
+    # Records a slow check that was not started, as a MANUAL finding and a
+    # Skipped run, so the gap is visible. Reason: BudgetUsedUp (default) or
+    # ServicingMayBeRunning (#244).
+    param($Check, [int]$BudgetMinutes, [string]$Reason = 'BudgetUsedUp')
     $script:CurrentCheckId = $Check.Id
+    if ($Reason -eq 'ServicingMayBeRunning') {
+        Add-Result 'WINDOWS_HEALTH' $Check.Name 'MANUAL' 'Skipped - a previous DISM or SFC scan timed out and may still be running' 'The scan works in TiWorker.exe under the TrustedInstaller service, outside the process this script stops.' -Recommendation 'Wait until TiWorker.exe is idle (or restart the server in the change window), then run this check by hand or run the assessment again. A result read while another scan runs can be wrong, for example SFC reporting a repair waiting for a reboot.' -Kind 'Finding' -Source 'Get-SlowCheckPlan'
+        $script:CheckRuns.Add([pscustomobject]@{ Id=$Check.Id; Name=$Check.Name; Phase='Slow'; Outcome='Skipped'; Duration='00:00:00'; Seconds=0; Message='A previous servicing scan may still be running' })
+        $script:CurrentCheckId = 'core'
+        return
+    }
     Add-Result 'WINDOWS_HEALTH' $Check.Name 'MANUAL' 'Skipped - slow-check time budget used up' ('Budget=' + $BudgetMinutes + ' min') -Recommendation 'Run this check manually, or raise SlowCheckBudgetMinutes (and the SA job timeout).'
     $script:CheckRuns.Add([pscustomobject]@{ Id=$Check.Id; Name=$Check.Name; Phase='Slow'; Outcome='Skipped'; Duration='00:00:00'; Seconds=0; Message='Time budget used up' })
     $script:CurrentCheckId = 'core'
@@ -5000,7 +5092,7 @@ Register-Check -Id 'printbackup' -Name 'Print server backup (PrintBrm)' -Phase '
     if ($r.TimedOut) {
         # A cut-off export is not a backup; remove this run's partial file.
         if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
-        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' ('Stopped after ' + [math]::Round($timeout / 60) + ' minutes') @($duration, $space.Text) -Recommendation 'Run the export by hand outside the SA job, before the change, and keep the file off the server.' -Kind 'Finding' -Source 'PrintBrm.exe -B' -Command $cmd -CommandKind 'Check'
+        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' ('Stopped after ' + [math]::Round($timeout / 60) + ' minutes') @($duration, $space.Text, (Get-StopFailureText $r.StillRunning)) -Recommendation 'Run the export by hand outside the SA job, before the change, and keep the file off the server.' -Kind 'Finding' -Source 'PrintBrm.exe -B' -Command $cmd -CommandKind 'Check'
         $script:CurrentCheckOutcome = 'TimedOut'; return
     }
     if ($r.Error) { throw $r.Error }
@@ -5025,7 +5117,7 @@ Register-Check -Id 'dism' -Name 'DISM component store scan' -Phase 'Slow' -Scrip
     $sw.Stop()
     $duration = 'Duration=' + (Format-Duration $sw.Elapsed)
     if ($r.TimedOut) {
-        Add-Result 'WINDOWS_HEALTH' 'DISM ScanHealth' 'MANUAL' ('Stopped after ' + [math]::Round($timeout/60) + ' minutes') $duration -Recommendation 'Run "DISM /Online /Cleanup-Image /ScanHealth" manually outside the SA job.' -Source 'dism.exe'
+        Add-Result 'WINDOWS_HEALTH' 'DISM ScanHealth' 'MANUAL' ('Stopped after ' + [math]::Round($timeout/60) + ' minutes') @($duration, (Get-StopFailureText $r.StillRunning)) -Recommendation 'Run "DISM /Online /Cleanup-Image /ScanHealth" manually outside the SA job.' -Source 'dism.exe'
         $script:CurrentCheckOutcome = 'TimedOut'; return
     }
     if ($r.Error) { throw $r.Error }
@@ -5047,7 +5139,7 @@ Register-Check -Id 'sfc' -Name 'SFC protected file verification' -Phase 'Slow' -
     $sw.Stop()
     $duration = 'Duration=' + (Format-Duration $sw.Elapsed)
     if ($r.TimedOut) {
-        Add-Result 'WINDOWS_HEALTH' 'SFC VerifyOnly' 'MANUAL' ('Stopped after ' + [math]::Round($timeout/60) + ' minutes') $duration -Recommendation 'Run "sfc /verifyonly" manually outside the SA job.' -Source 'sfc.exe'
+        Add-Result 'WINDOWS_HEALTH' 'SFC VerifyOnly' 'MANUAL' ('Stopped after ' + [math]::Round($timeout/60) + ' minutes') @($duration, (Get-StopFailureText $r.StillRunning)) -Recommendation 'Run "sfc /verifyonly" manually outside the SA job.' -Source 'sfc.exe'
         $script:CurrentCheckOutcome = 'TimedOut'; return
     }
     if ($r.Error) { throw $r.Error }
@@ -5112,7 +5204,7 @@ Register-Check -Id 'compatscan' -Name 'Setup compatibility scan' -Phase 'Slow' -
         $r = Invoke-NativeCapture $setupExe $arguments $timeout
         $sw.Stop()
         if ($r.TimedOut) {
-            Add-Result 'COMPAT_SCAN' 'SetupCompatibilityScan' 'MANUAL' ('Stopped after ' + [math]::Round($timeout/60) + ' minutes') ('Duration=' + (Format-Duration $sw.Elapsed)) -Recommendation 'Run the scan manually: setup.exe /auto upgrade /quiet /compat scanonly /imageindex <n>.' -Source 'setup.exe'
+            Add-Result 'COMPAT_SCAN' 'SetupCompatibilityScan' 'MANUAL' ('Stopped after ' + [math]::Round($timeout/60) + ' minutes') @(('Duration=' + (Format-Duration $sw.Elapsed)), (Get-StopFailureText $r.StillRunning)) -Recommendation 'Run the scan manually: setup.exe /auto upgrade /quiet /compat scanonly /imageindex <n>.' -Source 'setup.exe'
             $script:CurrentCheckOutcome = 'TimedOut'; return
         }
         if ($r.Error) { throw $r.Error }
@@ -6016,12 +6108,28 @@ function Invoke-Assessment {
     $header = 'ComputerName;RunStatus;AssessmentStatus;ReportPath;LogPath;ReportSizeKB;Records;Started;Completed;Duration;CollectorVersion;Message'
     # An output folder that cannot be written is found now, not after up to an
     # hour of checks (#250): the log file is the first thing written.
-    $folderError = ''
+    $folderError = ''; $runBusy = $false
     try {
         $script:OutputFolderState = Initialize-OutputFolder $ReportDirectory
-        [IO.File]::WriteAllText($script:LogPath,('Timestamp;Level;Phase;Message' + [Environment]::NewLine),(New-Object System.Text.UTF8Encoding($false)))
+        # Before the log is rewritten: a second run must not wipe the first run's log (#244).
+        $script:RunLock = Enter-RunLock ($script:LogPath + '.lock')
+        if ($script:RunLock) { [IO.File]::WriteAllText($script:LogPath,('Timestamp;Level;Phase;Message' + [Environment]::NewLine),(New-Object System.Text.UTF8Encoding($false))) }
+        else { $runBusy = $true }
     } catch { $folderError = $_.Exception.Message }
+    if ($runBusy) {
+        $now = Get-Date
+        [Console]::Out.WriteLine($header)
+        [Console]::Out.WriteLine((@(
+            $script:ComputerName,'FAILED','MANUAL','','','',0,
+            $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss'),$now.ToString('yyyy-MM-dd HH:mm:ss'),
+            (Format-Duration ($now - $script:CollectionStarted)),$script:CollectorVersion,
+            ('Nothing was assessed: another assessment run on this server is using ' + $ReportDirectory + ' (' + $script:LogPath + '.lock). Wait for it to finish, or give this run another -ReportDirectory.')
+        ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
+        $script:ExitCode = 1
+        return
+    }
     if ($folderError) {
+        Exit-RunLock $script:RunLock
         $now = Get-Date
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
@@ -6055,6 +6163,7 @@ function Invoke-Assessment {
             (Format-Duration ($now - $script:CollectionStarted)),$script:CollectorVersion,$missingText
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
         $script:ExitCode = 1
+        Exit-RunLock $script:RunLock
         return
     }
 
@@ -6088,14 +6197,17 @@ function Invoke-Assessment {
 
         try { $null = Write-AssessmentReport -Partial } catch { Write-AssessmentLog 'WARNING' 'REPORT' ('Checkpoint report failed: ' + $_.Exception.Message) }
 
-        $budgetMinutes = Get-SlowCheckBudget $SlowCheckBudgetMinutes $CompatScanTimeoutMinutes $TargetMediaPath $AssessmentMode
+        # PrintBrm, DISM and SFC share one pool; the Setup scan has its own clock (#244).
+        $poolMinutes = Get-SlowCheckBudget $SlowCheckBudgetMinutes $PrintBackupTimeoutMinutes (Test-PrintBackupDue $AssessmentMode ([bool]$script:Data.PrintServer) ([bool]$EnablePrintBackup))
+        $compatMinutes = 0; if ($TargetMediaPath -and $AssessmentMode -eq 'Pre') { $compatMinutes = $CompatScanTimeoutMinutes }
         $slowWatch = [Diagnostics.Stopwatch]::StartNew()
         foreach ($check in @($script:Checks | Where-Object { $_.Phase -eq 'Slow' -and $skip -notcontains $_.Id })) {
-            $script:SlowSecondsLeft = Get-SlowSecondsLeft $budgetMinutes $slowWatch.Elapsed.TotalSeconds
-            if (Test-SlowCheckSkip $script:SlowSecondsLeft) {
-                Add-SkippedSlowCheck $check $budgetMinutes
+            $plan = Get-SlowCheckPlan $check.Id $poolMinutes $slowWatch.Elapsed.TotalSeconds $compatMinutes $script:CheckRuns.ToArray()
+            if ($plan.Skip) {
+                Add-SkippedSlowCheck $check $poolMinutes $plan.Reason
                 continue
             }
+            $script:SlowSecondsLeft = $plan.SecondsLeft
             Invoke-Check $check
         }
 
@@ -6137,6 +6249,7 @@ function Invoke-Assessment {
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
         $script:ExitCode = 1
     }
+    Exit-RunLock $script:RunLock
 }
 
 if ($env:IPU_ASSESSMENT_LIBRARY_ONLY -eq '1') { return }

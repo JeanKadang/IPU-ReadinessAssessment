@@ -90,6 +90,7 @@ BeforeAll {
             Output   = $output
             Lines    = @($output -split '\r?\n' | Where-Object { $_ -ne '' })
             TimedOut = [bool]$spec.TimedOut
+            StillRunning = [bool]$spec.StillRunning
             Error    = [string]$spec.Error
         }
     }
@@ -2031,6 +2032,14 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $script:Fake.Native['dism.exe'] = @{ ExitCode = 0; Output = 'The component store is repairable.' }
             $null = Invoke-TestCheck 'dism'
             (Get-Row 'WINDOWS_HEALTH' 'DISM ScanHealth')[0].Status | Should -Be 'ACTION'
+        }
+        It 'a timeout that could not stop the process says so (#244)' {
+            $script:Fake.Native['dism.exe'] = @{ TimedOut = $true; StillRunning = $true; ExitCode = $null; Output = '' }
+            (Invoke-TestCheck 'dism').Outcome | Should -Be 'TimedOut'
+            (Get-Row 'WINDOWS_HEALTH' 'DISM ScanHealth')[0].Details | Should -Match 'could not be stopped'
+            $script:Fake.Native['dism.exe'] = @{ TimedOut = $true; ExitCode = $null; Output = '' }
+            $null = Invoke-TestCheck 'dism'
+            (Get-Row 'WINDOWS_HEALTH' 'DISM ScanHealth')[0].Details | Should -Not -Match 'could not be stopped'
         }
         It 'a timeout is MANUAL and marks the run TimedOut' {
             $script:Fake.Native['dism.exe'] = @{ TimedOut = $true; ExitCode = $null; Output = '' }

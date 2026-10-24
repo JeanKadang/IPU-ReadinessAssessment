@@ -1434,13 +1434,20 @@ function ConvertTo-RelaunchArgumentText {
     return $text
 }
 
+function Test-PrintBackupDue {
+    # Pure (#244): the PrintBrm export runs on a print server before the
+    # upgrade, when it is switched on. Only then does it draw on the pool.
+    param([string]$Mode, [bool]$IsPrintServer, [bool]$Enabled)
+    return ($Mode -ne 'Post' -and $IsPrintServer -and $Enabled)
+}
+
 function Get-SlowCheckBudget {
-    # Pure: DISM and SFC share SlowCheckBudgetMinutes; the optional Setup
-    # compatibility scan adds its own timeout, but only when media is set and
-    # the run is a pre-upgrade run (the scan does not run after the upgrade).
-    param([int]$SlowCheckBudget, [int]$CompatScanTimeout, [string]$MediaPath, [string]$Mode)
+    # Pure (#244): minutes for the checks that share one clock: the print
+    # export (when it applies), DISM and SFC. The Setup compatibility scan is
+    # not in this pool: it has its own clock (Get-SlowCheckPlan).
+    param([int]$SlowCheckBudget, [int]$PrintBackupTimeout, [bool]$PrintBackupApplies)
     $minutes = $SlowCheckBudget
-    if ($MediaPath -and $Mode -eq 'Pre') { $minutes += $CompatScanTimeout }
+    if ($PrintBackupApplies) { $minutes += $PrintBackupTimeout }
     return $minutes
 }
 
@@ -1455,11 +1462,54 @@ function Test-SlowCheckSkip {
     return ($SecondsLeft -lt 60)
 }
 
+function Get-SlowCheckPlan {
+    # Pure (#244): what the main loop does with one slow check. The Setup
+    # compatibility scan always gets its own full timeout and is never skipped
+    # for budget: DISM, SFC and PrintBrm can overrun their own timeouts, so a
+    # reserve taken from a shared pool would shrink. The others share one pool
+    # and one clock. After a DISM or SFC timeout the scan may still be running
+    # (it works in TiWorker.exe under TrustedInstaller, outside the process
+    # tree that is stopped), so the later servicing check is skipped.
+    param([string]$CheckId, [int]$PoolMinutes, [double]$PoolElapsedSeconds, [int]$CompatScanMinutes, [object[]]$CheckRuns = @())
+    if ($CheckId -eq 'compatscan') { return [pscustomobject]@{ Skip = $false; Reason = ''; SecondsLeft = ($CompatScanMinutes * 60) } }
+    if (@('dism', 'sfc') -contains $CheckId) {
+        $timedOut = @(@($CheckRuns) | Where-Object { $_ -and @('dism', 'sfc') -contains $_.Id -and $_.Outcome -eq 'TimedOut' })
+        if ($timedOut.Count -gt 0) { return [pscustomobject]@{ Skip = $true; Reason = 'ServicingMayBeRunning'; SecondsLeft = 0 } }
+    }
+    $left = Get-SlowSecondsLeft $PoolMinutes $PoolElapsedSeconds
+    if (Test-SlowCheckSkip $left) { return [pscustomobject]@{ Skip = $true; Reason = 'BudgetUsedUp'; SecondsLeft = $left } }
+    return [pscustomobject]@{ Skip = $false; Reason = ''; SecondsLeft = $left }
+}
+
+function Get-StopFailureText {
+    # Pure (#244): added to a timeout row when the process could not be stopped.
+    param([bool]$StillRunning)
+    if ($StillRunning) { return 'The process could not be stopped and may still be running.' }
+    return ''
+}
+
+function Get-NativeKillOutcome {
+    # Pure (#244): was the process stopped after the time limit? The process
+    # state decides; taskkill's own exit code is only reported (128 = the
+    # process was already gone).
+    param([bool]$HasExited, $TaskkillExitCode)
+    $code = 'not run'; if ($null -ne $TaskkillExitCode) { $code = [string]$TaskkillExitCode }
+    if ($HasExited) { return [pscustomobject]@{ StillRunning = $false; Text = ('stopped (taskkill exit code ' + $code + ')') } }
+    return [pscustomobject]@{ StillRunning = $true; Text = ('still running after the stop (taskkill exit code ' + $code + ')') }
+}
+
 function Add-SkippedSlowCheck {
-    # Records a slow check that was not started because the budget ran out,
-    # as a MANUAL finding and a Skipped run, so the gap is visible.
-    param($Check, [int]$BudgetMinutes)
+    # Records a slow check that was not started, as a MANUAL finding and a
+    # Skipped run, so the gap is visible. Reason: BudgetUsedUp (default) or
+    # ServicingMayBeRunning (#244).
+    param($Check, [int]$BudgetMinutes, [string]$Reason = 'BudgetUsedUp')
     $script:CurrentCheckId = $Check.Id
+    if ($Reason -eq 'ServicingMayBeRunning') {
+        Add-Result 'WINDOWS_HEALTH' $Check.Name 'MANUAL' 'Skipped - a previous DISM or SFC scan timed out and may still be running' 'The scan works in TiWorker.exe under the TrustedInstaller service, outside the process this script stops.' -Recommendation 'Wait until TiWorker.exe is idle (or restart the server in the change window), then run this check by hand or run the assessment again. A result read while another scan runs can be wrong, for example SFC reporting a repair waiting for a reboot.' -Kind 'Finding' -Source 'Get-SlowCheckPlan'
+        $script:CheckRuns.Add([pscustomobject]@{ Id=$Check.Id; Name=$Check.Name; Phase='Slow'; Outcome='Skipped'; Duration='00:00:00'; Seconds=0; Message='A previous servicing scan may still be running' })
+        $script:CurrentCheckId = 'core'
+        return
+    }
     Add-Result 'WINDOWS_HEALTH' $Check.Name 'MANUAL' 'Skipped - slow-check time budget used up' ('Budget=' + $BudgetMinutes + ' min') -Recommendation 'Run this check manually, or raise SlowCheckBudgetMinutes (and the SA job timeout).'
     $script:CheckRuns.Add([pscustomobject]@{ Id=$Check.Id; Name=$Check.Name; Phase='Slow'; Outcome='Skipped'; Duration='00:00:00'; Seconds=0; Message='Time budget used up' })
     $script:CurrentCheckId = 'core'

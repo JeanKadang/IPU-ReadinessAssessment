@@ -386,6 +386,34 @@ function Initialize-OutputFolder {
     }
 }
 
+function Test-SharingViolation {
+    # Pure (#244): is this the HRESULT of a file that another process holds
+    # open (ERROR_SHARING_VIOLATION 32, ERROR_LOCK_VIOLATION 33)?
+    param([int]$HResult)
+    $win32 = $HResult -band 0xFFFF
+    return (($HResult -band 0x7FFF0000) -eq 0x00070000 -and ($win32 -eq 32 -or $win32 -eq 33))
+}
+
+function Enter-RunLock {
+    # One run per server and report folder (#244): two runs at once overwrite
+    # the log and collide on the .writing files. The lock is an open handle,
+    # never "the file exists": a run that is killed (an SA job timeout) releases
+    # it with the process, so a leftover file blocks nobody. Returns the
+    # handle, or $null when another run holds it. Any other failure throws.
+    param([string]$Path)
+    try {
+        return [IO.File]::Open($Path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    } catch [System.IO.IOException] {
+        if (Test-SharingViolation $_.Exception.HResult) { return $null }
+        throw
+    }
+}
+
+function Exit-RunLock {
+    param($Handle)
+    if ($Handle) { try { $Handle.Dispose() } catch { Write-Swallowed $_ } }
+}
+
 function Initialize-EvidenceFolder {
     # The topic folder for an evidence copy (#198), created with the same
     # restricted access as the report folder. The evidence root gets a
@@ -939,7 +967,7 @@ function Invoke-NativeCapture {
         [string[]]$ArgumentList = @(),
         [int]$TimeoutSeconds = 120
     )
-    $result = [pscustomobject]@{ ExitCode=$null; Output=''; Lines=@(); TimedOut=$false; Error='' }
+    $result = [pscustomobject]@{ ExitCode=$null; Output=''; Lines=@(); TimedOut=$false; StillRunning=$false; Error='' }
     $process = $null
     try {
         $quoted = @($ArgumentList | ForEach-Object { ConvertTo-NativeArgument $_ })
@@ -961,8 +989,18 @@ function Invoke-NativeCapture {
         )
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             $result.TimedOut = $true
-            try { $null = Invoke-NativeTreeKill $process.Id } catch { Write-Swallowed $_ }
+            $kill = $null
+            try { $kill = Invoke-NativeTreeKill $process.Id } catch { Write-Swallowed $_ }
             try { $null = $process.WaitForExit(15000) } catch { Write-Swallowed $_ }
+            # The process state decides whether the stop worked (#244).
+            $exited = $false
+            try { $exited = [bool]$process.HasExited } catch { Write-Swallowed $_ }
+            $killCode = $null
+            if ($kill) { try { $killCode = $kill.ExitCode } catch { Write-Swallowed $_ } }
+            $outcome = Get-NativeKillOutcome $exited $killCode
+            $result.StillRunning = $outcome.StillRunning
+            $level = 'INFO'; if ($outcome.StillRunning) { $level = 'WARNING' }
+            Write-AssessmentLog $level 'KILL' ((Split-Path -Leaf $FilePath) + ' timed out; ' + $outcome.Text)
         } else {
             $process.WaitForExit()
             $result.ExitCode = $process.ExitCode
@@ -986,6 +1024,7 @@ function Invoke-NativeTreeKill {
     param([int]$ProcessId)
     $taskkill = Join-Path $env:windir 'System32\taskkill.exe'
     if (Test-Path -LiteralPath $taskkill) {
+        # SilentlyContinue: a failure to start taskkill is seen as a process that is still running (Get-NativeKillOutcome).
         $p = Start-Process -FilePath $taskkill -ArgumentList @('/PID',[string]$ProcessId,'/T','/F') -PassThru -NoNewWindow -Wait -ErrorAction SilentlyContinue
         return $p
     }
