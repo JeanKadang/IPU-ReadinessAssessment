@@ -212,6 +212,79 @@ Describe 'ConvertTo-EolStaleDecision' {
     }
 }
 
+Describe 'Test-EolSnapshotFile' {
+    BeforeAll {
+        function New-ShippedSnapshot([string]$Path, [string]$AsOf = '2026-10-01', [string[]]$Leave = @(), [hashtable]$Override = @{}) {
+            $products = @{}
+            foreach ($slug in $script:EolProducts.Keys) { if ($Leave -notcontains $slug) { $products[$slug] = @((New-Cycle '1' '2030-01-01')) } }
+            $s = New-EolSnapshotObject -Products $products -AsOf $AsOf
+            foreach ($k in $Override.Keys) { $s[$k] = $Override[$k] }
+            [IO.File]::WriteAllText($Path, (ConvertTo-Json -InputObject $s -Depth 6), (New-Object Text.UTF8Encoding($false)))
+        }
+        $script:Dir = Join-Path $TestDrive 'shipped'; New-Item -ItemType Directory -Path $script:Dir | Out-Null
+    }
+    It 'a complete, recent snapshot passes' {
+        $p = Join-Path $script:Dir 'ok.json'; New-ShippedSnapshot $p
+        $r = Test-EolSnapshotFile -Path $p -Today ([datetime]'2026-10-23')
+        $r.Ok | Should -BeTrue; $r.Age.State | Should -Be 'Fresh'
+    }
+    It 'an old snapshot is stale, which the release refuses' {
+        $p = Join-Path $script:Dir 'old.json'; New-ShippedSnapshot $p -AsOf '2026-03-01'
+        $r = Test-EolSnapshotFile -Path $p -Today ([datetime]'2026-10-23') -MaxAgeMonths 6
+        $r.Age.State | Should -Be 'Stale'; $r.Age.Text | Should -Match 'limit 6'
+    }
+    It 'the age limit follows MaxAgeMonths' {
+        $p = Join-Path $script:Dir 'limit.json'; New-ShippedSnapshot $p -AsOf '2026-03-01'
+        (Test-EolSnapshotFile -Path $p -Today ([datetime]'2026-10-23') -MaxAgeMonths 12).Age.State | Should -Be 'Fresh'
+    }
+    It 'a product without releases is named' {
+        $p = Join-Path $script:Dir 'partial.json'; New-ShippedSnapshot $p -Leave @('php')
+        $r = Test-EolSnapshotFile -Path $p -Today ([datetime]'2026-10-23')
+        $r.Ok | Should -BeFalse; ($r.Problems -join ' ') | Should -Match 'No releases for php'
+    }
+    It 'a missing licence notice is a problem' {
+        $p = Join-Path $script:Dir 'nolicence.json'; New-ShippedSnapshot $p -Override @{ licenseNotice = $null }
+        (Test-EolSnapshotFile -Path $p -Today ([datetime]'2026-10-23')).Problems -join ' ' | Should -Match 'licence notice'
+    }
+    It 'no date is a problem and counts as too old' {
+        $p = Join-Path $script:Dir 'nodate.json'; New-ShippedSnapshot $p -AsOf ''
+        $r = Test-EolSnapshotFile -Path $p -Today ([datetime]'2026-10-23')
+        $r.Ok | Should -BeFalse; $r.Age.State | Should -Be 'Unknown'
+    }
+    It 'text that is not JSON is a problem' {
+        $p = Join-Path $script:Dir 'bad.json'; Set-Content -LiteralPath $p -Value 'not json {'
+        $r = Test-EolSnapshotFile -Path $p
+        $r.Ok | Should -BeFalse; $r.Problems[0] | Should -Match 'not valid JSON'
+    }
+    It 'a missing file is a problem' {
+        $r = Test-EolSnapshotFile -Path (Join-Path $script:Dir 'nothing.json')
+        $r.Ok | Should -BeFalse; $r.Age.State | Should -Be 'Unknown'
+    }
+    It 'the snapshot committed in data/ has the structure the release needs (age is checked at release time)' {
+        $r = Test-EolSnapshotFile -Path (Join-Path $PSScriptRoot '..\data\eol-snapshot.json')
+        $r.Problems | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Get-EolRefreshDecision' {
+    BeforeAll {
+        function New-Doc([string]$AsOf, [string]$Eol) { [pscustomobject]@{ asOf = $AsOf; products = [pscustomobject]@{ php = @([pscustomobject]@{ cycle = '8.4'; eol = $Eol }) } } }
+        $script:T = [datetime]'2026-10-23'
+    }
+    It 'changed data opens a pull request' { (Get-EolRefreshDecision (New-Doc '2026-10-01' '2028-12-31') (New-Doc '2026-10-23' '2027-12-31') $script:T).Action | Should -Be 'PullRequest' }
+    It 'unchanged data does nothing' {
+        $r = Get-EolRefreshDecision (New-Doc '2026-10-01' '2028-12-31') (New-Doc '2026-10-23' '2028-12-31') $script:T
+        $r.Action | Should -Be 'None'
+    }
+    It 'unchanged data with an old date renews the date' {
+        $r = Get-EolRefreshDecision (New-Doc '2026-06-01' '2028-12-31') (New-Doc '2026-10-23' '2028-12-31') $script:T
+        $r.Action | Should -Be 'PullRequest'; $r.Reason | Should -Match 'renew'
+    }
+    It 'the renewal age follows KeepDays' { (Get-EolRefreshDecision (New-Doc '2026-06-01' '2028-12-31') (New-Doc '2026-10-23' '2028-12-31') $script:T -KeepDays 200).Action | Should -Be 'None' }
+    It 'no current snapshot opens a pull request' { (Get-EolRefreshDecision $null (New-Doc '2026-10-23' '2028-12-31') $script:T).Action | Should -Be 'PullRequest' }
+    It 'a current snapshot without a date renews it' { (Get-EolRefreshDecision (New-Doc '' '2028-12-31') (New-Doc '2026-10-23' '2028-12-31') $script:T).Action | Should -Be 'PullRequest' }
+}
+
 Describe 'Save-EolSnapshot' {
     BeforeEach { $script:OutPath = Join-Path ([IO.Path]::GetTempPath()) ('eol-out-' + [guid]::NewGuid().ToString('N') + '.json') }
     AfterEach { Remove-Item -LiteralPath $script:OutPath -ErrorAction SilentlyContinue }

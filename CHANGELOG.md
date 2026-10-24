@@ -4,6 +4,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- The end-of-life script and its data now ship: `data/eol-snapshot.json` (endoflife.date, MIT notice inside) is committed, and the release zip and release assets contain `Get-IPUEolStatus.ps1` and `eol-snapshot.json` next to the scripts, with SHA-256 sums. The release stops when the snapshot is older than six months (`build/Test-EolSnapshot.ps1 -CheckAge`). The "EOL snapshot" workflow refreshes the file monthly and opens a pull request when the data changed (or when its date is over 90 days old); it needs the repository setting that lets Actions create pull requests. The assessment does not read the snapshot yet (#285, part of #266).
+
 ## [4.5.4] - 2026-10-23
 
 Fixes from the 4.5.3 script evaluation: failures that read as a clean result, time limits for the fast phase, a trustworthy post-upgrade comparison and clear SA result lines. It also lays the groundwork for end-of-life checks (ADR 0003, a separate script that is not wired into the assessment yet).
