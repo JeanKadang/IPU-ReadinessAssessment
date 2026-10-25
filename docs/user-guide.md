@@ -365,6 +365,10 @@ names, ports, WMI filter query text, and the country code of certificate subject
 subject fields (`L=`, `S=`, `STREET=`, `PostalCode=`, `E=`, `SERIALNUMBER=`) are replaced too: a city can identify
 a customer (#212).
 
+A four-part number is kept as a version when its surroundings say so: after *version*, *ver*, *build*, *release*,
+*rev* or *update* (also in a `Version=` field), before `(x64)` or `x86`, or when it starts with 0. A bare four-part
+number after a product name looks exactly like an address and is replaced (#243).
+
 > **Redaction is best effort.** It recognises the patterns above and the names the script itself collected
 > (accounts, GPO names). Company words inside product, task or file names, or an unusual format, can stay visible.
 > **Read a redacted report before you share it.**

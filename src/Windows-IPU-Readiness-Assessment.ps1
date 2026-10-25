@@ -3857,6 +3857,39 @@ function Get-RedactionDomainKey {
     return $Name
 }
 
+function Get-RedactionLiteralRegex {
+    # The collected names (#100) as ONE compiled pattern, longest first, cached
+    # in the context and rebuilt when names were added or removed (#243). The
+    # old loop built one regex per name for every text: with 500 names the .NET
+    # regex cache (15 entries) thrashed and each text took 170 ms. $null when
+    # there are no names. The kind of a name is looked up when it matches, so a
+    # changed kind needs no rebuild.
+    param([hashtable]$Context)
+    if (-not $Context.Literals -or $Context.Literals.Count -eq 0) { return $null }
+    if ($Context.ContainsKey('LiteralRegex') -and $Context.LiteralRegex -and $Context.LiteralCount -eq $Context.Literals.Count) { return $Context.LiteralRegex }
+    $names = @($Context.Literals.Keys | Sort-Object { $_.Length } -Descending | ForEach-Object { [regex]::Escape($_) })
+    $options = [Text.RegularExpressions.RegexOptions]::IgnoreCase
+    $regex = New-Object Text.RegularExpressions.Regex(('(?<![\w.-])(?:' + ($names -join '|') + ')(?![\w-])'), $options)
+    $Context.LiteralRegex = $regex
+    $Context.LiteralCount = $Context.Literals.Count
+    return $regex
+}
+
+function Test-FourPartVersionContext {
+    # Pure (#243, SE-43): is a four-part number in free text a product version
+    # rather than an IPv4 address? Only the surroundings can tell, and only some
+    # surroundings do: a version word before it (version, ver, build, release,
+    # rev, update), an architecture after it ("(x64)", "x86"), or a first part
+    # of 0, which no host address has. A bare number after a product name is
+    # indistinguishable from an address and stays redacted: too much is better
+    # than a leaked address.
+    param([string]$Before, [string]$After, [string]$First)
+    if ($Before -match '(?i)\b(?:version|ver\.?|build|release|rev(?:ision)?|update)[=: ]*$') { return $true }
+    if ($After -match '(?i)^\s*\((?:x64|x86|amd64|arm64|64-bit|32-bit)\)' -or $After -match '(?i)^\s+(?:x64|x86|amd64|arm64)\b') { return $true }
+    if ($First -eq '0') { return $true }
+    return $false
+}
+
 function Protect-ReportText {
     # Best-effort redaction of one text. Well-known names (BUILTIN, NT
     # AUTHORITY, S-1-5-32-*, 127.0.0.1, 0.0.0.0), versions and file paths are
@@ -3869,11 +3902,9 @@ function Protect-ReportText {
 
     # Names collected during the run (#100), longest first so a GPO name is
     # replaced as a whole before word-level rules see its parts.
-    if ($ctx.Literals) {
-        foreach ($lit in @($ctx.Literals.Keys | Sort-Object { $_.Length } -Descending)) {
-            $kind = $ctx.Literals[$lit]
-            $t = [regex]::Replace($t, '(?<![\w.-])' + [regex]::Escape($lit) + '(?![\w-])', { param($m) Get-RedactionPlaceholder $ctx $kind $m.Value }, $ic)
-        }
+    $literalRegex = Get-RedactionLiteralRegex $ctx
+    if ($literalRegex) {
+        $t = $literalRegex.Replace($t, { param($m) Get-RedactionPlaceholder $ctx $ctx.Literals[$m.Value] $m.Value })
     }
 
     # Local group members: "name [WinNT://DOMAIN/name]"
@@ -3981,6 +4012,9 @@ function Protect-ReportText {
         $before2 = $(if ($m.Index -ge 2) { $text[$m.Index - 2] } else { [char]0 })
         $after = $(if ($m.Index + $m.Length -lt $text.Length) { $text[$m.Index + $m.Length] } else { [char]0 })
         if ($before -eq [char]'\' -and $before2 -ne [char]'\' -and $after -eq [char]'\') { return $m.Value }
+        $lead = $text.Substring([math]::Max(0, $m.Index - 12), [math]::Min(12, $m.Index))
+        $trail = $text.Substring($m.Index + $m.Length, [math]::Min(12, $text.Length - $m.Index - $m.Length))
+        if (Test-FourPartVersionContext $lead $trail $m.Groups[1].Value) { return $m.Value }
         $o = @(1..4 | ForEach-Object { [int]$m.Groups[$_].Value })
         if (@($o | Where-Object { $_ -gt 255 }).Count -gt 0) { return $m.Value }
         if ($o[0] -eq 255 -or $m.Value -eq '0.0.0.0' -or $o[0] -eq 127) { return $m.Value }
