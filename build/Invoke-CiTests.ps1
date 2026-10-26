@@ -44,15 +44,17 @@ if ($Coverage) {
 $result = Invoke-Pester -Configuration $config
 
 $level = 'error'; if ($StrictModeFinder) { $level = 'warning' }
-foreach ($t in @($result.Failed)) {
+# The finder groups its failures instead (below): GitHub keeps only ten
+# warning annotations per step.
+foreach ($t in @($result.Failed | Where-Object { -not $StrictModeFinder })) {
     $msg = (@($t.ErrorRecord) | ForEach-Object { $_.Exception.Message }) -join ' | '
     Write-Annotation $level ($t.ExpandedPath) $msg
 }
-foreach ($b in @($result.FailedBlocks)) {
+foreach ($b in @($result.FailedBlocks | Where-Object { -not $StrictModeFinder })) {
     $msg = (@($b.ErrorRecord) | ForEach-Object { $_.Exception.Message }) -join ' | '
     Write-Annotation $level ('Block ' + $b.ExpandedPath) $msg
 }
-foreach ($c in @($result.FailedContainers)) {
+foreach ($c in @($result.FailedContainers | Where-Object { -not $StrictModeFinder })) {
     $msg = (@($c.ErrorRecord) | ForEach-Object { $_.Exception.Message }) -join ' | '
     Write-Annotation $level ('Container ' + $c.Item) $msg
 }
@@ -88,8 +90,25 @@ if ($Coverage -and $result.CodeCoverage) {
 }
 if ($env:GITHUB_STEP_SUMMARY) { $lines -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8 }
 if ($StrictModeFinder) {
-    # Findings only (#256): each failure above is a lead to check by hand.
-    Write-Annotation 'notice' 'Strict-mode finder' ('{0} tests and {1} blocks fail under Set-StrictMode -Version 2; each is a warning annotation. Real defects become their own issue.' -f $result.FailedCount, @($result.FailedBlocks).Count)
+    # Findings only (#256). Failures are grouped by error and by where it
+    # was raised, so one root cause is one lead: the nine largest groups as
+    # annotations, every group in the job summary.
+    $groups = @(@($result.Failed) | ForEach-Object {
+        $er = @($_.ErrorRecord)[0]
+        $where = ''
+        if ($er -and $er.ScriptStackTrace) { $where = ((([string]$er.ScriptStackTrace) -split '\r?\n')[0]).Trim() -replace '^at ', '' -replace '.*[\\/]', '' }
+        $what = ''; if ($er) { $what = [string]$er.Exception.Message }
+        [pscustomobject]@{ Key = ($what + ' [' + $where + ']'); Test = [string]$_.ExpandedPath }
+    } | Group-Object Key | Sort-Object Count -Descending)
+    foreach ($g in @($groups | Select-Object -First 9)) {
+        Write-Annotation 'warning' ('Strict mode: ' + $g.Count + ' test(s)') ($g.Name + "`n" + 'For example: ' + $g.Group[0].Test)
+    }
+    Write-Annotation 'notice' 'Strict-mode finder' ('{0} tests and {1} blocks fail under Set-StrictMode -Version 2, in {2} groups by error and place; the job summary lists every group. Real defects become their own issue.' -f $result.FailedCount, @($result.FailedBlocks).Count, $groups.Count)
+    if ($env:GITHUB_STEP_SUMMARY) {
+        $sum = @('### Strict-mode finder (#256)', '', '| Tests | Error [raised at] | Example test |', '|---:|---|---|')
+        foreach ($g in $groups) { $sum += ('| {0} | {1} | {2} |' -f $g.Count, ($g.Name -replace '\|', '/'), ($g.Group[0].Test -replace '\|', '/')) }
+        $sum -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+    }
     exit 0
 }
 if ($result.Result -ne 'Passed' -or $gateFailed) { exit 1 }
