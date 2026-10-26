@@ -57,7 +57,7 @@
                                or override them with -PatternFile.
     3. CORE                  - result model, check runner, helpers, logging.
     4. DECISION RULES        - pure functions (no system access); unit-tested
-                               by Windows-IPU-Readiness-Assessment.Tests.ps1.
+                               in tests/decision-rules/.
     5. CHECKS                - one Register-Check block per area.
     6. HTML/JSON REPORT
     7. MAIN

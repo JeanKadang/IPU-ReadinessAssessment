@@ -13,7 +13,7 @@ How to read the tables:
   (see [result kinds](user-guide.md#result-kinds)).
 - Thresholds in italics are parameters (see the [user guide](user-guide.md#4-parameters)).
 
-Every check has tests in `tests/Checks.Tests.ps1` that run it against a fake server; a test fails if a
+Every check has tests in `tests/checks/` (one file per chapter below) that run it against a fake server; a test fails if a
 check is added without one.
 
 ## Upgrade path, licensing and Windows health
