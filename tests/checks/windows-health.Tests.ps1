@@ -100,6 +100,17 @@ Describe 'Checks on a fake server: windows health' -Skip:($env:OS -ne 'Windows_N
             $life.Status | Should -Be 'INFO'
             $life.Value | Should -Match 'supported until 2027-01-12'
         }
+        It 'a 2012 R2 CA server is not told to go to 2025 (#322)' {
+            $script:Fake.Cim['Win32_OperatingSystem'].BuildNumber = '9600'
+            $script:Fake.Cim['Win32_OperatingSystem'].Caption = 'Microsoft Windows Server 2012 R2 Standard'
+            $script:Fake.Cim['Win32_Service'] = @($script:Fake.Cim['Win32_Service']) + @(New-FakeService 'CertSvc')
+            Reset-FakeServerKeep
+            $TargetServerVersion = '2022'
+            $null = Invoke-TestCheck 'upgradepath'
+            $r = (Get-Row 'UPGRADE_PATH' 'TargetUpgradePath')[0]
+            $r.Status | Should -Be 'BLOCKER'
+            $r.Value | Should -Match 'PKI site policy does not allow'
+        }
         It 'a 2012 R2 source is out of support: WARNING observation, not a finding (#102)' {
             $script:Fake.Cim['Win32_OperatingSystem'].BuildNumber = '9600'
             $script:Fake.Cim['Win32_OperatingSystem'].Caption = 'Microsoft Windows Server 2012 R2 Standard'
