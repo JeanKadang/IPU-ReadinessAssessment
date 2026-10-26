@@ -670,3 +670,9 @@ Describe 'Test-NotFoundError (#242)' {
     }
     It 'nothing is not a not-found error' { Test-NotFoundError $null | Should -BeFalse }
 }
+
+Describe 'Strict-mode finder (#256)' {
+    It 'with IPU_TEST_STRICT_MODE set, strict mode is in effect where the tests call the script' -Skip:(-not $env:IPU_TEST_STRICT_MODE) {
+        { $null = $NoSuchVariable256 } | Should -Throw
+    }
+}

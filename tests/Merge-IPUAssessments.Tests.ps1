@@ -2,6 +2,8 @@
 # Synthetic results only - no real host data.
 
 BeforeAll {
+    # Strict-mode finder (#256): see tests/TestSetup.ps1.
+    if ($env:IPU_TEST_STRICT_MODE) { Set-StrictMode -Version $env:IPU_TEST_STRICT_MODE }
     $script:MergeScript = Join-Path $PSScriptRoot '..\src\Merge-IPUAssessments.ps1'
 
     function New-FakeResult {
