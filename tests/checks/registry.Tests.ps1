@@ -26,7 +26,8 @@ Describe 'Check registry' {
         Microsoft.PowerShell.Utility\Test-Json -Json $json -Schema $schema | Should -BeTrue
     }
     It 'every registered check has a test in this folder' {
-        $text = (Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.Tests.ps1' | ForEach-Object { [IO.File]::ReadAllText($_.FullName) }) -join "`n"
+        # The real cmdlet: FakeServer.ps1 shadows Get-ChildItem for system paths.
+        $text = (Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.Tests.ps1' | ForEach-Object { [IO.File]::ReadAllText($_.FullName) }) -join "`n"
         foreach ($c in $script:AllChecks) { $text | Should -Match ("Invoke-TestCheck '" + $c.Id + "'") -Because ('check ' + $c.Id + ' needs a test') }
     }
 }
