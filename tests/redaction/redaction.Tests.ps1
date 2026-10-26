@@ -207,6 +207,88 @@ Describe 'Redaction keeps version numbers (#194)' {
     }
 }
 
+Describe 'Redaction: collected names in one pass (#243, SE-7)' {
+    BeforeEach { $script:LitCtx = New-RedactionContext 'SRV01' 'corp.example.test' }
+    It 'replaces every collected name with the placeholder of its kind, whatever the case' {
+        $script:LitCtx.Literals['Print Queue East'] = 'NAME'
+        $script:LitCtx.Literals['svc-backup'] = 'ACCOUNT'
+        $out = Protect-ReportText 'Queue PRINT QUEUE EAST runs as svc-Backup; again print queue east.' $script:LitCtx
+        $out | Should -Be 'Queue NAME-1 runs as ACCOUNT-1; again NAME-1.'
+    }
+    It 'the longest name wins over a shorter one it contains' {
+        $script:LitCtx.Literals['Finance'] = 'NAME'
+        $script:LitCtx.Literals['Finance Servers Policy'] = 'GPO'
+        Protect-ReportText 'GPO: Finance Servers Policy and Finance' $script:LitCtx | Should -Be 'GPO: GPO-1 and NAME-1'
+    }
+    It 'a name inside a longer word or a dotted name is left alone' {
+        $script:LitCtx.Literals['Backup'] = 'NAME'
+        Protect-ReportText 'Backups and my-Backup.exe and Backup' $script:LitCtx | Should -Be 'Backups and my-Backup.exe and NAME-1'
+    }
+    It 'names added after the first text are used (the cache follows the names)' {
+        $script:LitCtx.Literals['alpha-one'] = 'NAME'
+        Protect-ReportText 'alpha-one' $script:LitCtx | Should -Be 'NAME-1'
+        $script:LitCtx.Literals['beta-two'] = 'NAME'
+        Protect-ReportText 'beta-two and alpha-one' $script:LitCtx | Should -Be 'NAME-2 and NAME-1'
+    }
+    It 'a name with regex characters is matched as text' {
+        $script:LitCtx.Literals['Queue (HP) [2nd]'] = 'NAME'
+        Protect-ReportText 'Using Queue (HP) [2nd] now' $script:LitCtx | Should -Be 'Using NAME-1 now'
+    }
+    It 'no names, no pattern' {
+        Get-RedactionLiteralRegex $script:LitCtx | Should -BeNullOrEmpty
+        Protect-ReportText 'plain text' $script:LitCtx | Should -Be 'plain text'
+    }
+    It 'the pattern is built once and reused while the names stay the same' {
+        $script:LitCtx.Literals['one-name'] = 'NAME'
+        $a = Get-RedactionLiteralRegex $script:LitCtx
+        [object]::ReferenceEquals($a, (Get-RedactionLiteralRegex $script:LitCtx)) | Should -BeTrue
+        $script:LitCtx.Literals['two-name'] = 'NAME'
+        [object]::ReferenceEquals($a, (Get-RedactionLiteralRegex $script:LitCtx)) | Should -BeFalse
+    }
+    It '500 names and 100 texts take seconds, not minutes (was 173 ms per text)' {
+        foreach ($i in 1..500) { $script:LitCtx.Literals[('Queue-' + $i.ToString('000') + '-Name')] = 'NAME' }
+        $texts = @(1..100 | ForEach-Object { 'Printer on Queue-' + ($_ * 3).ToString('000') + '-Name uses port 9100 and driver Example Driver ' + $_ })
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        $out = @($texts | ForEach-Object { Protect-ReportText $_ $script:LitCtx })
+        $watch.Stop()
+        $out[0] | Should -Match 'NAME-\d+'
+        $out[0] | Should -Not -Match 'Queue-003-Name'
+        $watch.Elapsed.TotalSeconds | Should -BeLessThan 5
+    }
+}
+
+Describe 'Redaction: four-part versions in free text (#243, SE-43)' {
+    BeforeEach { $script:V4Ctx = New-RedactionContext 'SRV01' 'corp.example.test' }
+    It 'keeps <What>' -TestCases @(
+        @{ What = 'a version after the word build'; In = 'Example Agent build 5.8.3.123 installed' }
+        @{ What = 'a version after Release'; In = 'Example Suite Release 12.4.7.9' }
+        @{ What = 'a version after "ver."'; In = 'Example Tool ver. 2.1.0.45' }
+        @{ What = 'a version after "update"'; In = 'Example Runtime update: 8.0.3910.11' }
+        @{ What = 'a version followed by (x64)'; In = 'Example Agent 5.8.3.123 (x64) is running' }
+        @{ What = 'a version followed by x86'; In = 'Example Agent 5.8.3.123 x86' }
+        @{ What = 'a number that starts with 0'; In = 'Example Library 0.9.8.1 loaded' }
+    ) {
+        Protect-ReportText $In $script:V4Ctx | Should -Be $In
+    }
+    It 'still replaces <What>' -TestCases @(
+        @{ What = 'an address after a product name'; In = 'Agent 10.1.2.3 is up'; Out = 'Agent IP-1 is up' }
+        @{ What = 'an address in brackets'; In = 'Server [10.1.2.3] answers'; Out = 'Server [IP-1] answers' }
+        @{ What = 'an address followed by a port'; In = 'Listening on 192.168.1.20:443'; Out = 'Listening on IP-1:443' }
+        @{ What = 'an address followed by a word in brackets'; In = 'DNS 10.20.1.10 (primary)'; Out = 'DNS IP-1 (primary)' }
+        @{ What = 'an address that follows the word versions elsewhere'; In = 'Agent version 5.8.3.123 talks to 10.9.9.9'; Out = 'Agent version 5.8.3.123 talks to IP-1' }
+    ) {
+        Protect-ReportText $In $script:V4Ctx | Should -Be $Out
+    }
+    It 'Test-FourPartVersionContext: version words, architecture and a leading 0' {
+        Test-FourPartVersionContext 'Agent build ' '' '5' | Should -BeTrue
+        Test-FourPartVersionContext 'x ' ' (x64) y' '5' | Should -BeTrue
+        Test-FourPartVersionContext 'x ' ' x86' '5' | Should -BeTrue
+        Test-FourPartVersionContext 'x ' ' y' '0' | Should -BeTrue
+        Test-FourPartVersionContext 'Agent ' ' is up' '10' | Should -BeFalse
+        Test-FourPartVersionContext 'rebuild ' '' '5' | Should -BeFalse
+    }
+}
+
 Describe 'Redaction key (#211)' {
     It 'records each placeholder with its kind and first-seen original' {
         $ctx = New-RedactionContext 'SRV-KEY01' 'corp.example.test'
