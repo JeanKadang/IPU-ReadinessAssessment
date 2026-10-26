@@ -653,6 +653,15 @@ Changes that come with the new Windows release are listed as INFO, not as proble
 If the pre-upgrade JSON is missing, you get a `MANUAL` finding and must compare by hand with the pre-upgrade
 HTML. The checklist and Setup compatibility scan are skipped in Post mode.
 
+A list is only compared when both runs actually read it. A list that is not compared is named in a `MANUAL` row, never
+shown as "nothing lost" or as "everything lost":
+
+- `BaselineCoverage`: the pre-upgrade run did not collect it (its check did not complete, or the run was a SPECIAL short report).
+- `CurrentCoverage`: this run could not read it (its check failed or timed out, or the query behind the list failed). Fix the
+  cause shown in the COLLECTOR rows and run Post again, or compare that list by hand.
+
+`Comparison OK` appears only when every list was compared and nothing was lost.
+
 > Keep the pre-upgrade `.json`. It is the baseline.
 
 ### Recovery partition after an upgrade

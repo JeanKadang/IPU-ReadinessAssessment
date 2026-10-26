@@ -500,6 +500,7 @@ function Get-GpResultXml {
         if (-not (Test-Path -LiteralPath $file)) { throw ('gpresult wrote no result (exit ' + $r.ExitCode + '): ' + (@($r.Lines) -join ' ')) }
         return [IO.File]::ReadAllText($file)
     } finally {
+        # SilentlyContinue: Clean-up of our own temp file; a leftover file is harmless.
         Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
     }
 }
@@ -513,6 +514,7 @@ function Get-GpoListRegistryEntry {
     # The subkeys are numbered in hexadecimal (0..9, a, b, ...); [int]'a'
     # failed and, inside a check, stopped the whole read (#223).
     foreach ($k in @(Get-ChildItem -LiteralPath $root -ErrorAction Stop | Sort-Object { ConvertFrom-GpoListKeyName ([string]$_.PSChildName) })) {
+        # SilentlyContinue: A GPO-List subkey without values is skipped; the list itself is read with Stop above.
         $p = Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction SilentlyContinue
         if ($p) { $list += [pscustomobject]@{ DisplayName = [string]$p.DisplayName; GPOName = [string]$p.GPOName; Link = [string]$p.Link } }
     }
@@ -743,12 +745,15 @@ function Get-PrintMonitorInventory {
     $items = @()
     $monitors = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Monitors'
     foreach ($k in @(Get-ChildItem -LiteralPath $monitors -ErrorAction Stop)) {
+        # SilentlyContinue: A monitor without a Driver value is still listed, with an empty driver.
         $drv = [string](Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction SilentlyContinue).Driver
         $path = $(if ($drv -and [IO.Path]::IsPathRooted($drv)) { $drv } elseif ($drv) { Join-Path $sys $drv } else { '' })
         $items += [pscustomobject]@{ Type = 'PortMonitor'; Name = [string]$k.PSChildName; Driver = $drv; Company = (Get-FileCompanyName $path) }
     }
     $processors = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Environments\Windows x64\Print Processors'
+    # SilentlyContinue: No x64 print processors key means none are registered (absence is normal).
     foreach ($k in @(Get-ChildItem -LiteralPath $processors -ErrorAction SilentlyContinue)) {
+        # SilentlyContinue: A processor without a Driver value is still listed, with an empty driver.
         $drv = [string](Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction SilentlyContinue).Driver
         $path = $(if ($drv -and [IO.Path]::IsPathRooted($drv)) { $drv } elseif ($drv) { Join-Path $sys ('spool\prtprocs\x64\' + $drv) } else { '' })
         $items += [pscustomobject]@{ Type = 'PrintProcessor'; Name = [string]$k.PSChildName; Driver = $drv; Company = (Get-FileCompanyName $path) }
@@ -761,6 +766,7 @@ function Get-PrintDriverStoreSize {
     # every driver package, so this is the estimate for the backup.
     $root = Join-Path $env:windir 'System32\spool\drivers'
     $sum = [long]0
+    # SilentlyContinue: An estimate for the free-space check: an unreadable file only lowers it.
     foreach ($f in @(Get-ChildItem -LiteralPath $root -Recurse -File -Force -ErrorAction SilentlyContinue)) { $sum += [long]$f.Length }
     return $sum
 }
@@ -854,6 +860,7 @@ function Get-PrerequisiteState {
     } catch { Write-Swallowed $_ }
     $missing = @()
     foreach ($m in @($script:OptionalModules.Keys)) {
+        # SilentlyContinue: Not found is the answer we want here: the module is reported as missing.
         if (-not (Get-Module -ListAvailable -Name $m -ErrorAction SilentlyContinue)) { $missing += $m }
     }
     return [pscustomobject]@{ PowerShellVersion = $PSVersionTable.PSVersion; DotNetRelease = $release; IsElevated = $elevated; MissingModules = $missing }
@@ -881,6 +888,7 @@ function Test-CommandAvailable {
     # True when a cmdlet or function exists on this server. One place, so
     # tests can simulate servers with and without optional modules.
     param([string]$Name)
+    # SilentlyContinue: A presence test: not found means not available.
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
@@ -1089,12 +1097,14 @@ function Invoke-NativeTreeKill {
         $p = Start-Process -FilePath $taskkill -ArgumentList @('/PID',[string]$ProcessId,'/T','/F') -PassThru -NoNewWindow -Wait -ErrorAction SilentlyContinue
         return $p
     }
+    # SilentlyContinue: The process may already have ended; Get-NativeKillOutcome checks what is left.
     Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
 }
 
 function Get-InstalledApplication {
     $items = @()
     foreach ($path in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*')) {
+        # SilentlyContinue: One unreadable uninstall entry must not hide the others; Wow6432Node is absent on 32-bit Windows.
         foreach ($entry in @(Get-ItemProperty $path -ErrorAction SilentlyContinue)) {
             if ($entry.DisplayName -and -not $entry.SystemComponent) {
                 $items += [pscustomobject]@{
@@ -1189,17 +1199,24 @@ function Get-SpecialServerFact {
         try {
             $c = Get-Cluster -ErrorAction Stop
             $facts += ('Cluster: ' + $c.Name)
-            $nodes = @(Get-ClusterNode -ErrorAction SilentlyContinue)
-            $facts += ('Nodes (' + $nodes.Count + '): ' + (@($nodes | ForEach-Object { [string]$_.Name + ' (' + $_.State + ')' }) -join ', '))
-            $groups = @(Get-ClusterGroup -ErrorAction SilentlyContinue | Where-Object { [string]$_.GroupType -notmatch '^(Cluster|AvailableStorage)$' })
-            $types = @($groups | Group-Object { [string]$_.GroupType } | ForEach-Object { $_.Name + ' x' + $_.Count })
-            $facts += ('Roles: ' + $(if ($types.Count) { $types -join ', ' } else { 'none' }))
-            $sql = @(Get-ClusterResource -ErrorAction SilentlyContinue | Where-Object { [string]$_.ResourceType -eq 'SQL Server' })
-            if ($sql.Count -gt 0) { $facts += ('SQL Server failover cluster instances: ' + $sql.Count) }
-            $q = Get-ClusterQuorum -ErrorAction SilentlyContinue
-            if ($q) { $facts += ('Quorum: ' + $q.QuorumType + $(if ($q.QuorumResource) { ' (witness ' + $q.QuorumResource + ')' } else { '' })) }
-            $csv = @(Get-ClusterSharedVolume -ErrorAction SilentlyContinue)
-            $facts += ('Cluster Shared Volumes: ' + $csv.Count)
+            # Each fact is read on its own; one that cannot be read says so
+            # instead of showing a count of 0 (#306).
+            $nodes = $null; try { $nodes = @(Get-ClusterNode -ErrorAction Stop) } catch { Write-Swallowed $_ }
+            $facts += $(if ($null -eq $nodes) { 'Nodes: not readable' } else { 'Nodes (' + $nodes.Count + '): ' + (@($nodes | ForEach-Object { [string]$_.Name + ' (' + $_.State + ')' }) -join ', ') })
+            $groups = $null; try { $groups = @(Get-ClusterGroup -ErrorAction Stop | Where-Object { [string]$_.GroupType -notmatch '^(Cluster|AvailableStorage)$' }) } catch { Write-Swallowed $_ }
+            if ($null -eq $groups) { $facts += 'Roles: not readable' }
+            else {
+                $types = @($groups | Group-Object { [string]$_.GroupType } | ForEach-Object { $_.Name + ' x' + $_.Count })
+                $facts += ('Roles: ' + $(if ($types.Count) { $types -join ', ' } else { 'none' }))
+            }
+            $sql = $null; try { $sql = @(Get-ClusterResource -ErrorAction Stop | Where-Object { [string]$_.ResourceType -eq 'SQL Server' }) } catch { Write-Swallowed $_ }
+            if ($null -eq $sql) { $facts += 'SQL Server failover cluster instances: not readable' }
+            elseif ($sql.Count -gt 0) { $facts += ('SQL Server failover cluster instances: ' + $sql.Count) }
+            $q = $null; $qRead = $true; try { $q = Get-ClusterQuorum -ErrorAction Stop } catch { $qRead = $false; Write-Swallowed $_ }
+            if (-not $qRead) { $facts += 'Quorum: not readable' }
+            elseif ($q) { $facts += ('Quorum: ' + $q.QuorumType + $(if ($q.QuorumResource) { ' (witness ' + $q.QuorumResource + ')' } else { '' })) }
+            $csv = $null; try { $csv = @(Get-ClusterSharedVolume -ErrorAction Stop) } catch { Write-Swallowed $_ }
+            $facts += $(if ($null -eq $csv) { 'Cluster Shared Volumes: not readable' } else { 'Cluster Shared Volumes: ' + $csv.Count })
             if (Test-CommandAvailable 'Get-ClusterStorageSpacesDirect') {
                 try { $s2d = Get-ClusterStorageSpacesDirect -ErrorAction Stop; if ($s2d) { $facts += ('Storage Spaces Direct: ' + $s2d.State) } } catch { Write-Swallowed $_ }
             }

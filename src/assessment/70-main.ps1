@@ -136,6 +136,7 @@ function Invoke-Assessment {
     } catch {
         $msg = $_.Exception.GetType().Name + ': ' + $_.Exception.Message
         Write-AssessmentLog 'ERROR' 'FAILED' $msg
+        # SilentlyContinue: Clean-up of our own temp file while reporting a failure.
         Remove-Item -LiteralPath ($script:ReportPath + '.writing') -Force -ErrorAction SilentlyContinue
         $now = Get-Date
         [Console]::Out.WriteLine($header)

@@ -149,6 +149,7 @@ Register-Check -Id 'licensing' -Name 'Windows activation' -Script {
                 Where-Object { $_.PartialProductKey })
         } catch { $queryError = $_.Exception.Message }
     }
+    # SilentlyContinue: Optional: no KMS host set on the server is the normal case (DNS discovery).
     $spp = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform' -ErrorAction SilentlyContinue
     $kms = 'Not set on this server (a KMS client finds its host via DNS)'
     if ($spp.KeyManagementServiceName) { $kms = [string]$spp.KeyManagementServiceName; if ($spp.KeyManagementServicePort) { $kms += ':' + $spp.KeyManagementServicePort } }
@@ -242,6 +243,7 @@ Register-Check -Id 'pendingreboot' -Name 'Pending reboot and uptime' -Script {
 
 # ---------------------------------------------------------------------------
 Register-Check -Id 'patchlevel' -Name 'Patch level' -Script {
+    # SilentlyContinue: An empty or failed list is reported as MANUAL below ('No dated update history').
     $fixes = @(Get-HotFix -ErrorAction SilentlyContinue | Where-Object { $_.InstalledOn })
     $latest = $null
     foreach ($f in $fixes) { try { $d = [datetime]$f.InstalledOn; if (-not $latest -or $d -gt $latest.Date) { $latest = [pscustomobject]@{ Date=$d; Id=$f.HotFixID } } } catch { Write-Swallowed $_ } }
@@ -267,8 +269,10 @@ Register-Check -Id 'patchlevel' -Name 'Patch level' -Script {
 # ---------------------------------------------------------------------------
 Register-Check -Id 'history' -Name 'Previous upgrade history' -Script {
     $found = $false
-    foreach ($key in @(Get-ChildItem 'HKLM:\SYSTEM\Setup' -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -like 'Source OS*' } | Sort-Object PSChildName)) {
-        $p = Get-ItemProperty $key.PSPath -ErrorAction SilentlyContinue
+    # HKLM\SYSTEM\Setup always exists: a failed read fails the check (#306),
+    # it must not look like a server that was never upgraded.
+    foreach ($key in @(Get-ChildItem 'HKLM:\SYSTEM\Setup' -ErrorAction Stop | Where-Object { $_.PSChildName -like 'Source OS*' } | Sort-Object PSChildName)) {
+        $p = Get-ItemProperty $key.PSPath -ErrorAction Stop
         $found = $true
         $installed = ''
         if ($p.InstallDate) { try { $installed = (New-Object DateTime 1970,1,1,0,0,0,([DateTimeKind]::Utc)).AddSeconds([int64]$p.InstallDate).ToLocalTime().ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) } catch { Write-Swallowed $_ } }
@@ -539,12 +543,17 @@ Register-Check -Id 'cluster' -Name 'Failover clustering' -Script {
     Add-RedactionLiteral ([string]$cluster.Name) 'HOST'
     $script:Data.ClusterName = [string]$cluster.Name
     Add-Result 'CLUSTER' 'ClusterMembership' 'INFO' ('Cluster=' + $cluster.Name) -Recommendation 'Cluster node: not a standard in-place upgrade - see the SPECIAL section.' -Source 'Get-Cluster'
-    foreach ($n in @(Get-ClusterNode -ErrorAction SilentlyContinue)) { Add-RedactionLiteral ([string]$n.Name) 'HOST'; Add-Result 'CLUSTER' ('Node: ' + $n.Name) 'INFO' ('State=' + $n.State) -Source 'Get-ClusterNode' }
-    foreach ($g in @(Get-ClusterGroup -ErrorAction SilentlyContinue | Sort-Object Name)) { Add-Result 'CLUSTER' ('Group: ' + $g.Name) 'INFO' ('State=' + $g.State) ('Owner=' + $g.OwnerNode) -Source 'Get-ClusterGroup' }
-    $q = Get-ClusterQuorum -ErrorAction SilentlyContinue
-    if ($q) { Add-Result 'CLUSTER' 'Quorum' 'INFO' ('Type=' + $q.QuorumType) ('Resource=' + $q.QuorumResource) -Source 'Get-ClusterQuorum' }
-    foreach ($csv in @(Get-ClusterSharedVolume -ErrorAction SilentlyContinue)) { Add-Result 'CLUSTER' ('CSV: ' + $csv.Name) 'INFO' ('State=' + $csv.State) ('Owner=' + $csv.OwnerNode) -Source 'Get-ClusterSharedVolume' }
-    foreach ($r in @(Get-ClusterResource -ErrorAction SilentlyContinue | Where-Object { [string]$_.ResourceType -eq 'Physical Disk' })) { Add-Result 'CLUSTER' ('Disk: ' + $r.Name) 'INFO' ('State=' + $r.State) ('Group=' + $r.OwnerGroup) -Source 'Get-ClusterResource' }
+    # The details are optional, but one that cannot be read is named, never
+    # left out silently (#306).
+    $unread = @()
+    try { foreach ($n in @(Get-ClusterNode -ErrorAction Stop)) { Add-RedactionLiteral ([string]$n.Name) 'HOST'; Add-Result 'CLUSTER' ('Node: ' + $n.Name) 'INFO' ('State=' + $n.State) -Source 'Get-ClusterNode' } } catch { $unread += ('nodes: ' + $_.Exception.Message) }
+    try { foreach ($g in @(Get-ClusterGroup -ErrorAction Stop | Sort-Object Name)) { Add-Result 'CLUSTER' ('Group: ' + $g.Name) 'INFO' ('State=' + $g.State) ('Owner=' + $g.OwnerNode) -Source 'Get-ClusterGroup' } } catch { $unread += ('roles: ' + $_.Exception.Message) }
+    try { $q = Get-ClusterQuorum -ErrorAction Stop; if ($q) { Add-Result 'CLUSTER' 'Quorum' 'INFO' ('Type=' + $q.QuorumType) ('Resource=' + $q.QuorumResource) -Source 'Get-ClusterQuorum' } } catch { $unread += ('quorum: ' + $_.Exception.Message) }
+    try { foreach ($csv in @(Get-ClusterSharedVolume -ErrorAction Stop)) { Add-Result 'CLUSTER' ('CSV: ' + $csv.Name) 'INFO' ('State=' + $csv.State) ('Owner=' + $csv.OwnerNode) -Source 'Get-ClusterSharedVolume' } } catch { $unread += ('shared volumes: ' + $_.Exception.Message) }
+    try { foreach ($r in @(Get-ClusterResource -ErrorAction Stop | Where-Object { [string]$_.ResourceType -eq 'Physical Disk' })) { Add-Result 'CLUSTER' ('Disk: ' + $r.Name) 'INFO' ('State=' + $r.State) ('Group=' + $r.OwnerGroup) -Source 'Get-ClusterResource' } } catch { $unread += ('disks: ' + $_.Exception.Message) }
+    if ($unread.Count -gt 0) {
+        Add-Result 'CLUSTER' 'ClusterDetails' 'MANUAL' ('Not readable: ' + $unread.Count + ' of 5 detail lists') $unread -Recommendation 'Read the nodes, roles, quorum and storage in Failover Cluster Manager before planning; the SPECIAL plan depends on them.' -Source 'Failover Clustering cmdlets'
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -827,9 +836,11 @@ Register-Check -Id 'sql' -Name 'SQL Server' -Script {
     $instances = @()
     foreach ($root in @('HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server','HKLM:\SOFTWARE\Wow6432Node\Microsoft\Microsoft SQL Server')) {
         foreach ($type in @('SQL','RS','OLAP')) {
+            # SilentlyContinue: No Instance Names key means no instance of this type (absence is normal).
             $names = Get-ItemProperty (Join-Path $root ('Instance Names\' + $type)) -ErrorAction SilentlyContinue
             if (-not $names) { continue }
             foreach ($prop in @($names.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' })) {
+                # SilentlyContinue: A missing Setup key leaves the version empty, which is reported as MANUAL below.
                 $setup = Get-ItemProperty (Join-Path $root ([string]$prop.Value + '\Setup')) -ErrorAction SilentlyContinue
                 $version = [string]$setup.Version
                 if (-not $version) { $version = [string]$setup.PatchLevel }
@@ -1740,6 +1751,7 @@ Register-Check -Id 'compatscan' -Name 'Setup compatibility scan' -Phase 'Slow' -
         $evidence = Join-Path $ReportDirectory ($script:SafeComputerName + '-CompatData')
         $blocks = @()
         $panther = 'C:\$WINDOWS.~BT\Sources\Panther'
+        # SilentlyContinue: Setup writes no CompatData file when it finds nothing; the verdict comes from the exit code.
         $xmlFiles = @(Get-ChildItem -LiteralPath $panther -Filter 'CompatData*.xml' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge (Get-Date).AddSeconds(-1 * ($sw.Elapsed.TotalSeconds + 60)) })
         if ($xmlFiles.Count -gt 0) {
             $null = Initialize-OutputFolder $evidence
@@ -1909,6 +1921,7 @@ function Invoke-RdpPolicyAssessment {
     $tcpCdm = Get-RegistryValueSafe $tcpPath 'fDisableCdm'
     if ($polCdm.Exists -and [int]$polCdm.Value -eq 1) { $driveBlock.Add('Machine policy fDisableCdm=1') }
     if ($tcpCdm.Exists -and [int]$tcpCdm.Value -eq 1) { $driveBlock.Add('RDP-Tcp fDisableCdm=1') }
+    # SilentlyContinue: Loaded user hives only add per-user policy evidence; the machine settings are read above.
     foreach ($sid in @(Get-ChildItem Registry::HKEY_USERS -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^S-1-5-21-[\d-]+$' } | ForEach-Object { $_.PSChildName })) {
         $u = Get-RegistryValueSafe ('Registry::HKEY_USERS\' + $sid + '\Software\Policies\Microsoft\Windows NT\Terminal Services') 'fDisableCdm'
         if ($u.Exists -and [int]$u.Value -eq 1) { $driveBlock.Add('User ' + (Resolve-PolicyAccountName $sid) + ' fDisableCdm=1') }

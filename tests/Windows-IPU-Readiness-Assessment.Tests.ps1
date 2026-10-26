@@ -1746,6 +1746,47 @@ Describe 'Invoke-PostUpgradeComparison (#34)' {
         (Get-Row 'Listening ports missing after upgrade')[0].Details | Should -Be 'TCP:1433'
         (Get-Row 'Comparison').Count | Should -Be 0
     }
+    It 'a list this run could not read is not reported as lost (#306)' {
+        $path = Join-Path $TestDrive 'routes-now-unread.json'
+        Save-Baseline -Path $path -Snapshot @{ Routes = @('10.50.0.0/16 via 10.0.0.1') }
+        Set-PostScenario -BaselinePath $path
+        $script:Data.Snapshot.Remove('Routes')
+        Invoke-PostUpgradeComparison
+        (Get-Row 'Static routes missing after upgrade').Count | Should -Be 0
+        $r = Get-Row 'CurrentCoverage'
+        $r[0].Status | Should -Be 'MANUAL'; $r[0].Kind | Should -Be 'Finding'
+        (@($r[0].Details) -join ' ') | Should -Match 'Routes \(this run could not read it\)'
+        (Get-Row 'Comparison').Count | Should -Be 0
+    }
+    It 'a list whose check failed in this run is not reported as lost (#306)' {
+        $path = Join-Path $TestDrive 'tasks-now-failed.json'
+        Save-Baseline -Path $path -Snapshot @{ Tasks = @('\Vendor\Nightly export') }
+        Set-PostScenario -BaselinePath $path
+        $script:CheckRuns.Add([pscustomobject]@{ Id = 'tasks'; Outcome = 'Failed' })
+        Invoke-PostUpgradeComparison
+        (Get-Row 'Scheduled tasks missing after upgrade').Count | Should -Be 0
+        (@((Get-Row 'CurrentCoverage')[0].Details) -join ' ') | Should -Match 'Tasks \(the tasks check failed in this run\)'
+    }
+    It 'GPOs and AD groups this run could not read are not reported as lost (#306)' {
+        $path = Join-Path $TestDrive 'gpos-now-unread.json'
+        Save-Baseline -Path $path -Snapshot @{ Gpos = @('Server baseline'); Groups = @('Patch ring 2') }
+        Set-PostScenario -BaselinePath $path
+        Invoke-PostUpgradeComparison
+        (Get-Row 'Applied GPOs missing after upgrade').Count | Should -Be 0
+        (Get-Row 'AD groups missing after upgrade').Count | Should -Be 0
+        $text = (@((Get-Row 'CurrentCoverage')[0].Details) -join ' ')
+        $text | Should -Match 'Gpos'
+        $text | Should -Match 'Groups'
+    }
+    It 'lists that were read are still compared next to one that was not (#306)' {
+        $path = Join-Path $TestDrive 'mixed.json'
+        Save-Baseline -Path $path -Snapshot @{ Ports = @('TCP:443', 'TCP:1433'); Routes = @('10.50.0.0/16 via 10.0.0.1') }
+        Set-PostScenario -BaselinePath $path
+        $script:Data.Snapshot.Remove('Routes')
+        Invoke-PostUpgradeComparison
+        (Get-Row 'Listening ports missing after upgrade')[0].Details | Should -Be 'TCP:1433'
+        (Get-Row 'Static routes missing after upgrade').Count | Should -Be 0
+    }
     It 'an error becomes a MANUAL finding and a Failed check run' {
         $path = Join-Path $TestDrive 'broken.json'
         Set-Content -LiteralPath $path -Value '{ this is not json'
@@ -3581,7 +3622,7 @@ Describe 'RedactExisting recovers every name the collector registers (#172)' {
             'foreach ($s in @($script:Data.Services | Where-Object { $_.StartName })) { Add-RedactionLiteral ([string]$s.StartName) ''ACCOUNT'' }',
             'if ($user -and -not $isBuiltIn) { Add-RedactionLiteral $user ''ACCOUNT'' }',
             'Add-RedactionLiteral ([string]$cluster.Name) ''HOST''',
-            'foreach ($n in @(Get-ClusterNode -ErrorAction SilentlyContinue)) { Add-RedactionLiteral ([string]$n.Name) ''HOST''; Add-Result ''CLUSTER'' (''Node: '' + $n.Name) ''INFO'' (''State='' + $n.State) -Source ''Get-ClusterNode'' }',
+            'try { foreach ($n in @(Get-ClusterNode -ErrorAction Stop)) { Add-RedactionLiteral ([string]$n.Name) ''HOST''; Add-Result ''CLUSTER'' (''Node: '' + $n.Name) ''INFO'' (''State='' + $n.State) -Source ''Get-ClusterNode'' } } catch { $unread += (''nodes: '' + $_.Exception.Message) }',
             'if ($act.KmsHost) { foreach ($h in @($act.KmsHost, ($act.KmsHost -split ''\.'')[0]) | Select-Object -Unique) { Add-RedactionLiteral $h ''HOST'' }; $script:Data.KmsEndpoint = $act.KmsEndpoint } elseif ($script:Data.ActivationKind -eq ''KMS'') { $script:Data.KmsEndpoint = ''found via DNS'' }',
             'foreach ($p in $printers) { Add-RedactionLiteral $p.Name ''NAME''; if ($p.ShareName) { Add-RedactionLiteral $p.ShareName ''NAME'' } }',
             'foreach ($pt in $ports) { Add-RedactionLiteral $pt.Name ''NAME''; if ($pt.Address -and $pt.Address -notmatch ''^[0-9.:]+$'') { Add-RedactionLiteral $pt.Address ''HOST'' } }',
@@ -4330,4 +4371,73 @@ Describe 'Get-PrinterReadFailureDecision (#242)' {
     It 'without the role, a disabled spooler explains it' { Get-PrinterReadFailureDecision $false 'Disabled' $true | Should -Be 'NotPrintServer' }
     It 'without the role, a missing spooler explains it' { Get-PrinterReadFailureDecision $false '' $false | Should -Be 'NotPrintServer' }
     It 'without the role but with a spooler that should run, it is unexplained' { Get-PrinterReadFailureDecision $false 'Auto' $true | Should -Be 'Manual' }
+}
+
+Describe 'Get-CurrentListGap (#306)' {
+    BeforeAll {
+        function New-Snap([hashtable]$H) { [pscustomobject]$H }
+    }
+    It 'a list the baseline has and this run lacks is a gap: <List>' -TestCases @(
+        @{ List = 'Services' }, @{ List = 'Apps' }, @{ List = 'Features' }, @{ List = 'Ports' }
+        @{ List = 'IPv4' }, @{ List = 'Dns' }, @{ List = 'Adapters' }, @{ List = 'Hosts' }, @{ List = 'Routes' }
+        @{ List = 'Tasks' }, @{ List = 'Shares' }, @{ List = 'Printers' }, @{ List = 'PrinterPorts' }, @{ List = 'PrinterDrivers' }
+        @{ List = 'Gpos' }, @{ List = 'Groups' }
+    ) {
+        $before = New-Snap @{ $List = @('entry') }
+        $gaps = @(Get-CurrentListGap $before (New-Snap @{}) @())
+        $gaps.Count | Should -Be 1
+        $gaps[0].List | Should -Be $List
+        $gaps[0].Reason | Should -Be 'this run could not read it'
+    }
+    It 'a list whose source check did not complete in this run is a gap, even when present' {
+        $runs = @([pscustomobject]@{ Id = 'network'; Outcome = 'TimedOut' })
+        $gaps = @(Get-CurrentListGap (New-Snap @{ Routes = @('r1'); IPv4 = @('10.0.0.5') }) (New-Snap @{ Routes = @(); IPv4 = @() }) $runs)
+        (@($gaps | ForEach-Object { $_.List }) -join ',') | Should -Be 'IPv4,Routes'
+        $gaps[0].Reason | Should -Be 'the network check timed out in this run'
+    }
+    It 'reads a hashtable snapshot as well as an object' {
+        @(Get-CurrentListGap (New-Snap @{ Ports = @('TCP:443') }) @{ Ports = @() } @()).Count | Should -Be 0
+        @(Get-CurrentListGap (New-Snap @{ Ports = @('TCP:443') }) @{ } @()).Count | Should -Be 1
+    }
+    It 'no gap when the baseline list is empty or missing' {
+        @(Get-CurrentListGap (New-Snap @{ Routes = @() }) (New-Snap @{}) @()).Count | Should -Be 0
+        @(Get-CurrentListGap (New-Snap @{}) (New-Snap @{}) @()).Count | Should -Be 0
+    }
+    It 'no gap when the list was read and its check completed' {
+        $runs = @([pscustomobject]@{ Id = 'ports'; Outcome = 'Completed' })
+        @(Get-CurrentListGap (New-Snap @{ Ports = @('TCP:443') }) (New-Snap @{ Ports = @() }) $runs).Count | Should -Be 0
+    }
+    It 'no baseline gives no gaps' {
+        @(Get-CurrentListGap $null (New-Snap @{}) @()).Count | Should -Be 0
+    }
+}
+
+Describe 'Get-SnapshotWithoutList (#306)' {
+    It 'leaves out the named lists and keeps the rest, without changing the original' {
+        $snap = [pscustomobject]@{ Ports = @('TCP:443'); Routes = @('r1'); Nla = 'On' }
+        $copy = Get-SnapshotWithoutList $snap @('Routes')
+        (@($copy.PSObject.Properties | ForEach-Object { $_.Name }) -join ',') | Should -Be 'Ports,Nla'
+        $copy.Nla | Should -Be 'On'
+        @($snap.PSObject.Properties).Count | Should -Be 3
+    }
+}
+
+Describe 'SilentlyContinue has a reason in the source parts (#306)' {
+    It 'every -ErrorAction SilentlyContinue carries a comment on its line or the line above' {
+        $parts = Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot '..\src\assessment') -Filter '*.ps1'
+        $bare = @()
+        foreach ($part in $parts) {
+            $tokens = $null; $errors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($part.FullName, [ref]$tokens, [ref]$errors)
+            $commentLines = @{}
+            foreach ($t in $tokens) { if ($t.Kind -eq 'Comment') { for ($l = $t.Extent.StartLineNumber; $l -le $t.Extent.EndLineNumber; $l++) { $commentLines[$l] = $true } } }
+            for ($i = 0; $i -lt $tokens.Count - 1; $i++) {
+                if ($tokens[$i].Kind -eq 'Parameter' -and $tokens[$i].Text -ieq '-ErrorAction' -and $tokens[$i + 1].Text -ieq 'SilentlyContinue') {
+                    $line = $tokens[$i].Extent.StartLineNumber
+                    if (-not ($commentLines[$line] -or $commentLines[$line - 1])) { $bare += ($part.Name + ':' + $line) }
+                }
+            }
+        }
+        $bare | Should -BeNullOrEmpty
+    }
 }
