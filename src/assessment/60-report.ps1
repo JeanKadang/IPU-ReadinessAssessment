@@ -448,6 +448,7 @@ function Invoke-RedactExisting {
     if ($item.PSIsContainer) {
         $jsonFiles = @(Get-ChildItem -LiteralPath $Path -File | Where-Object { $_.Name -match '-IPU-(Assessment|PostUpgrade)\.json$' -and $_.Name -notlike 'REDACTED-*' })
     } elseif ($item.Name -match '-IPU-(Assessment|PostUpgrade)\.(json|html)$') {
+        # SilentlyContinue: No JSON beside the HTML is reported just below (no report found).
         $jsonFiles = @(Get-Item -LiteralPath ([IO.Path]::ChangeExtension($item.FullName, '.json')) -ErrorAction SilentlyContinue)
     } else { $jsonFiles = @() }
     if ($jsonFiles.Count -eq 0) { [Console]::Out.WriteLine('RedactExisting: no *-IPU-Assessment.json or *-IPU-PostUpgrade.json report found in ' + $Path); return 1 }
@@ -605,6 +606,7 @@ function Import-SiteDataFile {
             $obj = ConvertFrom-SiteDataJson $text 'IPU-Profile/1'
             $attributes = @{}
             foreach ($n in $script:ProfileSettingNames) {
+                # SilentlyContinue: A setting name without a variable has no attributes to check.
                 $v = Get-Variable -Name $n -ErrorAction SilentlyContinue
                 if ($v) { $attributes[$n] = @($v.Attributes) }
             }
@@ -664,9 +666,17 @@ function Invoke-PostUpgradeComparison {
         # taken after the upgrade. "Comparison OK" only when nothing is left out.
         $coverage = @(Get-BaselineCoverageRow $baseline $script:ComputerName (Get-ReleaseDisplayName $TargetServerVersion))
         foreach ($c in $coverage) { Add-Result 'POST_UPGRADE' $c.Item $c.Status $c.Value $c.Details -Recommendation $c.Recommendation -Kind 'Finding' -Source 'Pre-upgrade result' }
-        $diffs = Compare-IPUSnapshot $before ([pscustomobject]$script:Data.Snapshot)
+        # And what THIS run could not read (#306): such a list is left out of
+        # the comparison, not read as empty, which would call every entry lost.
+        $after = [pscustomobject]$script:Data.Snapshot
+        $gaps = @(Get-CurrentListGap $before $after $script:CheckRuns.ToArray())
+        if ($gaps.Count -gt 0) {
+            Add-Result 'POST_UPGRADE' 'CurrentCoverage' 'MANUAL' ($gaps.Count.ToString() + ' list(s) could not be read in this run') @($gaps | ForEach-Object { $_.List + ' (' + $_.Reason + ')' }) -Recommendation 'These lists were read before the upgrade but not now, so they are left out of the comparison instead of showing every entry as lost. See the COLLECTOR rows for the check that failed, fix the cause and run Post again, or compare these lists by hand with the pre-upgrade report.' -Kind 'Finding' -Source 'This run'
+            $before = Get-SnapshotWithoutList $before @($gaps | ForEach-Object { $_.List })
+        }
+        $diffs = Compare-IPUSnapshot $before $after
         foreach ($d in $diffs) { Add-Result 'POST_UPGRADE' $d.Item $d.Status $d.Value $d.Details -Recommendation $d.Recommendation -Source 'Pre-upgrade snapshot vs now' }
-        if ($diffs.Count -eq 0 -and $coverage.Count -eq 0) { Add-Result 'POST_UPGRADE' 'Comparison' 'OK' 'No lost services, ports, routes, IP/DNS settings, hosts entries, applications, features or tasks' -Source 'Pre-upgrade snapshot vs now' }
+        if ($diffs.Count -eq 0 -and $coverage.Count -eq 0 -and $gaps.Count -eq 0) { Add-Result 'POST_UPGRADE' 'Comparison' 'OK' 'No lost services, ports, routes, IP/DNS settings, hosts entries, applications, features or tasks' -Source 'Pre-upgrade snapshot vs now' }
     } catch {
         $outcome = 'Failed'; $message = $_.Exception.Message
         Add-Result 'COLLECTOR' 'Post-upgrade comparison' 'MANUAL' 'Check did not complete' $message -Recommendation 'Compare manually with the pre-upgrade report.' -Kind 'Finding'

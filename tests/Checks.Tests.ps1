@@ -194,6 +194,7 @@ BeforeAll {
     function Get-ChildItem {
         [CmdletBinding()] param([Parameter(Position = 0)][string]$Path, [string]$LiteralPath, [string]$Filter, [switch]$File, [switch]$Recurse)
         $p = Get-PathArg $Path $LiteralPath
+        if (Write-FakeFailure ('Get-ChildItem:' + $p)) { return }
         if (Test-RealPath $p) {
             if ($Filter) { return Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $p -Filter $Filter }
             return Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $p
@@ -297,9 +298,9 @@ BeforeAll {
 
     # ------------------------------------------- cluster, IIS, media cmdlets
     function Get-Cluster { [CmdletBinding()] param() if (-not $script:Fake.Cluster) { throw 'Simulated: not a cluster member' } return $script:Fake.Cluster }
-    function Get-ClusterNode { [CmdletBinding()] param() return @($script:Fake.ClusterNodes) }
+    function Get-ClusterNode { [CmdletBinding()] param() if (Write-FakeFailure 'Get-ClusterNode') { return } return @($script:Fake.ClusterNodes) }
     function Get-ClusterGroup { [CmdletBinding()] param() return @($script:Fake.ClusterGroups) }
-    function Get-ClusterQuorum { [CmdletBinding()] param() return $script:Fake.ClusterQuorum }
+    function Get-ClusterQuorum { [CmdletBinding()] param() if (Write-FakeFailure 'Get-ClusterQuorum') { return } return $script:Fake.ClusterQuorum }
     function Get-ClusterSharedVolume { [CmdletBinding()] param() return @($script:Fake.ClusterCsv) }
     function Get-ClusterResource { [CmdletBinding()] param() return @($script:Fake.ClusterResources) }
     function Get-Website { [CmdletBinding()] param() if (Write-FakeFailure 'Get-Website') { return } return @($script:Fake.Websites) }
@@ -965,6 +966,11 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $r.Status | Should -Be 'INFO'
             $r.Recommendation | Should -Match 'just been upgraded'
         }
+        It 'an unreadable Setup key fails the check instead of reporting a clean install (#306)' {
+            $script:Fake.Fail['Get-ChildItem:HKLM:\SYSTEM\Setup'] = 'Error'
+            (Invoke-TestCheck 'history').Outcome | Should -Be 'Failed'
+            (Get-Row 'UPGRADE_HISTORY' 'PreviousUpgradeEvidence').Count | Should -Be 0
+        }
         It 'a leftover Setup working folder is shown' {
             $script:Fake.Paths['C:\$WINDOWS.~BT'] = $true
             $null = Invoke-TestCheck 'history'
@@ -1066,6 +1072,17 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $script:Data.Special.Facts | Should -Contain 'Nodes (2): SRV01 (Up), SRV02 (Up)'
             $script:Data.Special.Facts | Should -Contain 'SQL Server failover cluster instances: 1'
             $script:Data.Special.Facts | Should -Contain 'Roles: Unknown x1'
+        }
+        It 'a cluster fact that cannot be read says so instead of a count of 0 (#306)' {
+            $script:Fake.MissingCommands = @('Get-VMSwitch')
+            $script:Fake.Features['Failover-Clustering'] = $true
+            $script:Fake.Cluster = [pscustomobject]@{ Name = 'CL01' }
+            $script:Fake.Fail['Get-ClusterNode'] = 'Error'
+            Reset-FakeServerKeep
+            $script:Data.SpecialKind = 'Cluster'
+            (Invoke-TestCheck 'special').Outcome | Should -Be 'Completed'
+            $script:Data.Special.Facts | Should -Contain 'Nodes: not readable'
+            @($script:Data.Special.Facts | Where-Object { $_ -like 'Nodes (0)*' }).Count | Should -Be 0
         }
         It 'a domain controller gets the SPECIAL row; facts that cannot be read say so' {
             $script:Fake.Cim['Win32_ComputerSystem'].DomainRole = 5
@@ -1296,6 +1313,20 @@ Describe 'Checks on a fake server' -Skip:($env:OS -ne 'Windows_NT') {
             $script:Data.RedactLiterals.ContainsKey('CL01') | Should -BeTrue
             $script:Data.RedactLiterals.ContainsKey('SRV02') | Should -BeTrue
             (Get-Row 'CLUSTER' 'Quorum').Count | Should -Be 1
+            (Get-Row 'CLUSTER' 'ClusterDetails').Count | Should -Be 0
+        }
+        It 'cluster details that cannot be read are named as MANUAL, not left out (#306)' {
+            $script:Fake.Features['Failover-Clustering'] = $true
+            $script:Fake.MissingCommands = @('Get-VMSwitch')
+            $script:Fake.Cluster = [pscustomobject]@{ Name = 'CL01' }
+            $script:Fake.Fail['Get-ClusterNode'] = 'Error'
+            $script:Fake.Fail['Get-ClusterQuorum'] = 'Error'
+            Reset-FakeServerKeep
+            (Invoke-TestCheck 'cluster').Outcome | Should -Be 'Completed'
+            $r = (Get-Row 'CLUSTER' 'ClusterDetails')[0]
+            $r.Status | Should -Be 'MANUAL'
+            (@($r.Details) -join ' ') | Should -Match 'nodes'
+            (@($r.Details) -join ' ') | Should -Match 'quorum'
         }
     }
 
