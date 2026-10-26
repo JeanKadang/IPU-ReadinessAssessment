@@ -57,7 +57,7 @@
                                or override them with -PatternFile.
     3. CORE                  - result model, check runner, helpers, logging.
     4. DECISION RULES        - pure functions (no system access); unit-tested
-                               by Windows-IPU-Readiness-Assessment.Tests.ps1.
+                               in tests/decision-rules/.
     5. CHECKS                - one Register-Check block per area.
     6. HTML/JSON REPORT
     7. MAIN
@@ -1163,6 +1163,7 @@ function Get-GpResultXml {
         if (-not (Test-Path -LiteralPath $file)) { throw ('gpresult wrote no result (exit ' + $r.ExitCode + '): ' + (@($r.Lines) -join ' ')) }
         return [IO.File]::ReadAllText($file)
     } finally {
+        # SilentlyContinue: Clean-up of our own temp file; a leftover file is harmless.
         Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
     }
 }
@@ -1176,6 +1177,7 @@ function Get-GpoListRegistryEntry {
     # The subkeys are numbered in hexadecimal (0..9, a, b, ...); [int]'a'
     # failed and, inside a check, stopped the whole read (#223).
     foreach ($k in @(Get-ChildItem -LiteralPath $root -ErrorAction Stop | Sort-Object { ConvertFrom-GpoListKeyName ([string]$_.PSChildName) })) {
+        # SilentlyContinue: A GPO-List subkey without values is skipped; the list itself is read with Stop above.
         $p = Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction SilentlyContinue
         if ($p) { $list += [pscustomobject]@{ DisplayName = [string]$p.DisplayName; GPOName = [string]$p.GPOName; Link = [string]$p.Link } }
     }
@@ -1406,12 +1408,15 @@ function Get-PrintMonitorInventory {
     $items = @()
     $monitors = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Monitors'
     foreach ($k in @(Get-ChildItem -LiteralPath $monitors -ErrorAction Stop)) {
+        # SilentlyContinue: A monitor without a Driver value is still listed, with an empty driver.
         $drv = [string](Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction SilentlyContinue).Driver
         $path = $(if ($drv -and [IO.Path]::IsPathRooted($drv)) { $drv } elseif ($drv) { Join-Path $sys $drv } else { '' })
         $items += [pscustomobject]@{ Type = 'PortMonitor'; Name = [string]$k.PSChildName; Driver = $drv; Company = (Get-FileCompanyName $path) }
     }
     $processors = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Environments\Windows x64\Print Processors'
+    # SilentlyContinue: No x64 print processors key means none are registered (absence is normal).
     foreach ($k in @(Get-ChildItem -LiteralPath $processors -ErrorAction SilentlyContinue)) {
+        # SilentlyContinue: A processor without a Driver value is still listed, with an empty driver.
         $drv = [string](Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction SilentlyContinue).Driver
         $path = $(if ($drv -and [IO.Path]::IsPathRooted($drv)) { $drv } elseif ($drv) { Join-Path $sys ('spool\prtprocs\x64\' + $drv) } else { '' })
         $items += [pscustomobject]@{ Type = 'PrintProcessor'; Name = [string]$k.PSChildName; Driver = $drv; Company = (Get-FileCompanyName $path) }
@@ -1424,6 +1429,7 @@ function Get-PrintDriverStoreSize {
     # every driver package, so this is the estimate for the backup.
     $root = Join-Path $env:windir 'System32\spool\drivers'
     $sum = [long]0
+    # SilentlyContinue: An estimate for the free-space check: an unreadable file only lowers it.
     foreach ($f in @(Get-ChildItem -LiteralPath $root -Recurse -File -Force -ErrorAction SilentlyContinue)) { $sum += [long]$f.Length }
     return $sum
 }
@@ -1517,6 +1523,7 @@ function Get-PrerequisiteState {
     } catch { Write-Swallowed $_ }
     $missing = @()
     foreach ($m in @($script:OptionalModules.Keys)) {
+        # SilentlyContinue: Not found is the answer we want here: the module is reported as missing.
         if (-not (Get-Module -ListAvailable -Name $m -ErrorAction SilentlyContinue)) { $missing += $m }
     }
     return [pscustomobject]@{ PowerShellVersion = $PSVersionTable.PSVersion; DotNetRelease = $release; IsElevated = $elevated; MissingModules = $missing }
@@ -1544,6 +1551,7 @@ function Test-CommandAvailable {
     # True when a cmdlet or function exists on this server. One place, so
     # tests can simulate servers with and without optional modules.
     param([string]$Name)
+    # SilentlyContinue: A presence test: not found means not available.
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
@@ -1752,12 +1760,14 @@ function Invoke-NativeTreeKill {
         $p = Start-Process -FilePath $taskkill -ArgumentList @('/PID',[string]$ProcessId,'/T','/F') -PassThru -NoNewWindow -Wait -ErrorAction SilentlyContinue
         return $p
     }
+    # SilentlyContinue: The process may already have ended; Get-NativeKillOutcome checks what is left.
     Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
 }
 
 function Get-InstalledApplication {
     $items = @()
     foreach ($path in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*')) {
+        # SilentlyContinue: One unreadable uninstall entry must not hide the others; Wow6432Node is absent on 32-bit Windows.
         foreach ($entry in @(Get-ItemProperty $path -ErrorAction SilentlyContinue)) {
             if ($entry.DisplayName -and -not $entry.SystemComponent) {
                 $items += [pscustomobject]@{
@@ -1852,17 +1862,24 @@ function Get-SpecialServerFact {
         try {
             $c = Get-Cluster -ErrorAction Stop
             $facts += ('Cluster: ' + $c.Name)
-            $nodes = @(Get-ClusterNode -ErrorAction SilentlyContinue)
-            $facts += ('Nodes (' + $nodes.Count + '): ' + (@($nodes | ForEach-Object { [string]$_.Name + ' (' + $_.State + ')' }) -join ', '))
-            $groups = @(Get-ClusterGroup -ErrorAction SilentlyContinue | Where-Object { [string]$_.GroupType -notmatch '^(Cluster|AvailableStorage)$' })
-            $types = @($groups | Group-Object { [string]$_.GroupType } | ForEach-Object { $_.Name + ' x' + $_.Count })
-            $facts += ('Roles: ' + $(if ($types.Count) { $types -join ', ' } else { 'none' }))
-            $sql = @(Get-ClusterResource -ErrorAction SilentlyContinue | Where-Object { [string]$_.ResourceType -eq 'SQL Server' })
-            if ($sql.Count -gt 0) { $facts += ('SQL Server failover cluster instances: ' + $sql.Count) }
-            $q = Get-ClusterQuorum -ErrorAction SilentlyContinue
-            if ($q) { $facts += ('Quorum: ' + $q.QuorumType + $(if ($q.QuorumResource) { ' (witness ' + $q.QuorumResource + ')' } else { '' })) }
-            $csv = @(Get-ClusterSharedVolume -ErrorAction SilentlyContinue)
-            $facts += ('Cluster Shared Volumes: ' + $csv.Count)
+            # Each fact is read on its own; one that cannot be read says so
+            # instead of showing a count of 0 (#306).
+            $nodes = $null; try { $nodes = @(Get-ClusterNode -ErrorAction Stop) } catch { Write-Swallowed $_ }
+            $facts += $(if ($null -eq $nodes) { 'Nodes: not readable' } else { 'Nodes (' + $nodes.Count + '): ' + (@($nodes | ForEach-Object { [string]$_.Name + ' (' + $_.State + ')' }) -join ', ') })
+            $groups = $null; try { $groups = @(Get-ClusterGroup -ErrorAction Stop | Where-Object { [string]$_.GroupType -notmatch '^(Cluster|AvailableStorage)$' }) } catch { Write-Swallowed $_ }
+            if ($null -eq $groups) { $facts += 'Roles: not readable' }
+            else {
+                $types = @($groups | Group-Object { [string]$_.GroupType } | ForEach-Object { $_.Name + ' x' + $_.Count })
+                $facts += ('Roles: ' + $(if ($types.Count) { $types -join ', ' } else { 'none' }))
+            }
+            $sql = $null; try { $sql = @(Get-ClusterResource -ErrorAction Stop | Where-Object { [string]$_.ResourceType -eq 'SQL Server' }) } catch { Write-Swallowed $_ }
+            if ($null -eq $sql) { $facts += 'SQL Server failover cluster instances: not readable' }
+            elseif ($sql.Count -gt 0) { $facts += ('SQL Server failover cluster instances: ' + $sql.Count) }
+            $q = $null; $qRead = $true; try { $q = Get-ClusterQuorum -ErrorAction Stop } catch { $qRead = $false; Write-Swallowed $_ }
+            if (-not $qRead) { $facts += 'Quorum: not readable' }
+            elseif ($q) { $facts += ('Quorum: ' + $q.QuorumType + $(if ($q.QuorumResource) { ' (witness ' + $q.QuorumResource + ')' } else { '' })) }
+            $csv = $null; try { $csv = @(Get-ClusterSharedVolume -ErrorAction Stop) } catch { Write-Swallowed $_ }
+            $facts += $(if ($null -eq $csv) { 'Cluster Shared Volumes: not readable' } else { 'Cluster Shared Volumes: ' + $csv.Count })
             if (Test-CommandAvailable 'Get-ClusterStorageSpacesDirect') {
                 try { $s2d = Get-ClusterStorageSpacesDirect -ErrorAction Stop; if ($s2d) { $facts += ('Storage Spaces Direct: ' + $s2d.State) } } catch { Write-Swallowed $_ }
             }
@@ -2773,6 +2790,53 @@ $script:SnapshotListSources = [ordered]@{
     Tasks = 'tasks'
     Shares = 'fileshares'
     Printers = 'printers'; PrinterPorts = 'printers'; PrinterDrivers = 'printers'
+}
+
+# Lists the comparison also reads that come from checks a baseline may not
+# record per list; checked on the current side only (#306).
+$script:SnapshotCurrentListSources = [ordered]@{ Gpos = 'grouppolicy'; Groups = 'grouppolicy' }
+
+function Get-CurrentListGap {
+    # Pure (#306): the snapshot lists THIS run could not read, so the
+    # comparison must not read them as empty and call every baseline entry
+    # lost. A list is a gap when the baseline has entries for it and either
+    # the check that collects it did not complete in this run, or the current
+    # snapshot has no such list (a check leaves a list out when its query
+    # fails, see #242). Returns objects with List and Reason.
+    param($Before, $After, [object[]]$CheckRuns)
+    if (-not $Before) { return }
+    $afterNames = @()
+    if ($After -is [System.Collections.IDictionary]) { $afterNames = @($After.Keys | ForEach-Object { [string]$_ }) }
+    elseif ($After) { $afterNames = @($After.PSObject.Properties | ForEach-Object { $_.Name }) }
+    $sources = [ordered]@{}
+    foreach ($k in $script:SnapshotListSources.Keys) { $sources[$k] = $script:SnapshotListSources[$k] }
+    foreach ($k in $script:SnapshotCurrentListSources.Keys) { $sources[$k] = $script:SnapshotCurrentListSources[$k] }
+    $gaps = New-Object System.Collections.Generic.List[object]
+    foreach ($list in $sources.Keys) {
+        if (-not $Before.PSObject.Properties[$list]) { continue }
+        if (@($Before.$list | Where-Object { $_ }).Count -eq 0) { continue }
+        $source = $sources[$list]
+        $run = @($CheckRuns | Where-Object { $_ -and $_.Id -eq $source }) | Select-Object -First 1
+        $why = ''
+        if ($run -and [string]$run.Outcome -ne 'Completed') {
+            $why = 'the ' + $source + ' check ' + ([string]$run.Outcome -creplace '([a-z])([A-Z])', '$1 $2').ToLower() + ' in this run'
+        } elseif ($afterNames -notcontains $list) {
+            $why = 'this run could not read it'
+        }
+        if ($why) { $gaps.Add([pscustomobject]@{ List = $list; Reason = $why }) }
+    }
+    return $gaps.ToArray()
+}
+
+function Get-SnapshotWithoutList {
+    # Pure (#306): a copy of a snapshot without the named lists, so the
+    # comparison leaves them out. The original object is not changed.
+    param($Snapshot, [string[]]$Name)
+    $copy = New-Object psobject
+    foreach ($p in @($Snapshot.PSObject.Properties)) {
+        if (@($Name) -notcontains $p.Name) { $copy | Add-Member -NotePropertyName $p.Name -NotePropertyValue $p.Value }
+    }
+    return $copy
 }
 
 function Get-SecureBootDecision {
@@ -4298,6 +4362,7 @@ Register-Check -Id 'licensing' -Name 'Windows activation' -Script {
                 Where-Object { $_.PartialProductKey })
         } catch { $queryError = $_.Exception.Message }
     }
+    # SilentlyContinue: Optional: no KMS host set on the server is the normal case (DNS discovery).
     $spp = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform' -ErrorAction SilentlyContinue
     $kms = 'Not set on this server (a KMS client finds its host via DNS)'
     if ($spp.KeyManagementServiceName) { $kms = [string]$spp.KeyManagementServiceName; if ($spp.KeyManagementServicePort) { $kms += ':' + $spp.KeyManagementServicePort } }
@@ -4391,6 +4456,7 @@ Register-Check -Id 'pendingreboot' -Name 'Pending reboot and uptime' -Script {
 
 # ---------------------------------------------------------------------------
 Register-Check -Id 'patchlevel' -Name 'Patch level' -Script {
+    # SilentlyContinue: An empty or failed list is reported as MANUAL below ('No dated update history').
     $fixes = @(Get-HotFix -ErrorAction SilentlyContinue | Where-Object { $_.InstalledOn })
     $latest = $null
     foreach ($f in $fixes) { try { $d = [datetime]$f.InstalledOn; if (-not $latest -or $d -gt $latest.Date) { $latest = [pscustomobject]@{ Date=$d; Id=$f.HotFixID } } } catch { Write-Swallowed $_ } }
@@ -4416,8 +4482,10 @@ Register-Check -Id 'patchlevel' -Name 'Patch level' -Script {
 # ---------------------------------------------------------------------------
 Register-Check -Id 'history' -Name 'Previous upgrade history' -Script {
     $found = $false
-    foreach ($key in @(Get-ChildItem 'HKLM:\SYSTEM\Setup' -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -like 'Source OS*' } | Sort-Object PSChildName)) {
-        $p = Get-ItemProperty $key.PSPath -ErrorAction SilentlyContinue
+    # HKLM\SYSTEM\Setup always exists: a failed read fails the check (#306),
+    # it must not look like a server that was never upgraded.
+    foreach ($key in @(Get-ChildItem 'HKLM:\SYSTEM\Setup' -ErrorAction Stop | Where-Object { $_.PSChildName -like 'Source OS*' } | Sort-Object PSChildName)) {
+        $p = Get-ItemProperty $key.PSPath -ErrorAction Stop
         $found = $true
         $installed = ''
         if ($p.InstallDate) { try { $installed = (New-Object DateTime 1970,1,1,0,0,0,([DateTimeKind]::Utc)).AddSeconds([int64]$p.InstallDate).ToLocalTime().ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) } catch { Write-Swallowed $_ } }
@@ -4688,12 +4756,17 @@ Register-Check -Id 'cluster' -Name 'Failover clustering' -Script {
     Add-RedactionLiteral ([string]$cluster.Name) 'HOST'
     $script:Data.ClusterName = [string]$cluster.Name
     Add-Result 'CLUSTER' 'ClusterMembership' 'INFO' ('Cluster=' + $cluster.Name) -Recommendation 'Cluster node: not a standard in-place upgrade - see the SPECIAL section.' -Source 'Get-Cluster'
-    foreach ($n in @(Get-ClusterNode -ErrorAction SilentlyContinue)) { Add-RedactionLiteral ([string]$n.Name) 'HOST'; Add-Result 'CLUSTER' ('Node: ' + $n.Name) 'INFO' ('State=' + $n.State) -Source 'Get-ClusterNode' }
-    foreach ($g in @(Get-ClusterGroup -ErrorAction SilentlyContinue | Sort-Object Name)) { Add-Result 'CLUSTER' ('Group: ' + $g.Name) 'INFO' ('State=' + $g.State) ('Owner=' + $g.OwnerNode) -Source 'Get-ClusterGroup' }
-    $q = Get-ClusterQuorum -ErrorAction SilentlyContinue
-    if ($q) { Add-Result 'CLUSTER' 'Quorum' 'INFO' ('Type=' + $q.QuorumType) ('Resource=' + $q.QuorumResource) -Source 'Get-ClusterQuorum' }
-    foreach ($csv in @(Get-ClusterSharedVolume -ErrorAction SilentlyContinue)) { Add-Result 'CLUSTER' ('CSV: ' + $csv.Name) 'INFO' ('State=' + $csv.State) ('Owner=' + $csv.OwnerNode) -Source 'Get-ClusterSharedVolume' }
-    foreach ($r in @(Get-ClusterResource -ErrorAction SilentlyContinue | Where-Object { [string]$_.ResourceType -eq 'Physical Disk' })) { Add-Result 'CLUSTER' ('Disk: ' + $r.Name) 'INFO' ('State=' + $r.State) ('Group=' + $r.OwnerGroup) -Source 'Get-ClusterResource' }
+    # The details are optional, but one that cannot be read is named, never
+    # left out silently (#306).
+    $unread = @()
+    try { foreach ($n in @(Get-ClusterNode -ErrorAction Stop)) { Add-RedactionLiteral ([string]$n.Name) 'HOST'; Add-Result 'CLUSTER' ('Node: ' + $n.Name) 'INFO' ('State=' + $n.State) -Source 'Get-ClusterNode' } } catch { $unread += ('nodes: ' + $_.Exception.Message) }
+    try { foreach ($g in @(Get-ClusterGroup -ErrorAction Stop | Sort-Object Name)) { Add-Result 'CLUSTER' ('Group: ' + $g.Name) 'INFO' ('State=' + $g.State) ('Owner=' + $g.OwnerNode) -Source 'Get-ClusterGroup' } } catch { $unread += ('roles: ' + $_.Exception.Message) }
+    try { $q = Get-ClusterQuorum -ErrorAction Stop; if ($q) { Add-Result 'CLUSTER' 'Quorum' 'INFO' ('Type=' + $q.QuorumType) ('Resource=' + $q.QuorumResource) -Source 'Get-ClusterQuorum' } } catch { $unread += ('quorum: ' + $_.Exception.Message) }
+    try { foreach ($csv in @(Get-ClusterSharedVolume -ErrorAction Stop)) { Add-Result 'CLUSTER' ('CSV: ' + $csv.Name) 'INFO' ('State=' + $csv.State) ('Owner=' + $csv.OwnerNode) -Source 'Get-ClusterSharedVolume' } } catch { $unread += ('shared volumes: ' + $_.Exception.Message) }
+    try { foreach ($r in @(Get-ClusterResource -ErrorAction Stop | Where-Object { [string]$_.ResourceType -eq 'Physical Disk' })) { Add-Result 'CLUSTER' ('Disk: ' + $r.Name) 'INFO' ('State=' + $r.State) ('Group=' + $r.OwnerGroup) -Source 'Get-ClusterResource' } } catch { $unread += ('disks: ' + $_.Exception.Message) }
+    if ($unread.Count -gt 0) {
+        Add-Result 'CLUSTER' 'ClusterDetails' 'MANUAL' ('Not readable: ' + $unread.Count + ' of 5 detail lists') $unread -Recommendation 'Read the nodes, roles, quorum and storage in Failover Cluster Manager before planning; the SPECIAL plan depends on them.' -Source 'Failover Clustering cmdlets'
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -4976,9 +5049,11 @@ Register-Check -Id 'sql' -Name 'SQL Server' -Script {
     $instances = @()
     foreach ($root in @('HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server','HKLM:\SOFTWARE\Wow6432Node\Microsoft\Microsoft SQL Server')) {
         foreach ($type in @('SQL','RS','OLAP')) {
+            # SilentlyContinue: No Instance Names key means no instance of this type (absence is normal).
             $names = Get-ItemProperty (Join-Path $root ('Instance Names\' + $type)) -ErrorAction SilentlyContinue
             if (-not $names) { continue }
             foreach ($prop in @($names.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' })) {
+                # SilentlyContinue: A missing Setup key leaves the version empty, which is reported as MANUAL below.
                 $setup = Get-ItemProperty (Join-Path $root ([string]$prop.Value + '\Setup')) -ErrorAction SilentlyContinue
                 $version = [string]$setup.Version
                 if (-not $version) { $version = [string]$setup.PatchLevel }
@@ -5889,6 +5964,7 @@ Register-Check -Id 'compatscan' -Name 'Setup compatibility scan' -Phase 'Slow' -
         $evidence = Join-Path $ReportDirectory ($script:SafeComputerName + '-CompatData')
         $blocks = @()
         $panther = 'C:\$WINDOWS.~BT\Sources\Panther'
+        # SilentlyContinue: Setup writes no CompatData file when it finds nothing; the verdict comes from the exit code.
         $xmlFiles = @(Get-ChildItem -LiteralPath $panther -Filter 'CompatData*.xml' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge (Get-Date).AddSeconds(-1 * ($sw.Elapsed.TotalSeconds + 60)) })
         if ($xmlFiles.Count -gt 0) {
             $null = Initialize-OutputFolder $evidence
@@ -6058,6 +6134,7 @@ function Invoke-RdpPolicyAssessment {
     $tcpCdm = Get-RegistryValueSafe $tcpPath 'fDisableCdm'
     if ($polCdm.Exists -and [int]$polCdm.Value -eq 1) { $driveBlock.Add('Machine policy fDisableCdm=1') }
     if ($tcpCdm.Exists -and [int]$tcpCdm.Value -eq 1) { $driveBlock.Add('RDP-Tcp fDisableCdm=1') }
+    # SilentlyContinue: Loaded user hives only add per-user policy evidence; the machine settings are read above.
     foreach ($sid in @(Get-ChildItem Registry::HKEY_USERS -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^S-1-5-21-[\d-]+$' } | ForEach-Object { $_.PSChildName })) {
         $u = Get-RegistryValueSafe ('Registry::HKEY_USERS\' + $sid + '\Software\Policies\Microsoft\Windows NT\Terminal Services') 'fDisableCdm'
         if ($u.Exists -and [int]$u.Value -eq 1) { $driveBlock.Add('User ' + (Resolve-PolicyAccountName $sid) + ' fDisableCdm=1') }
@@ -6545,6 +6622,7 @@ function Invoke-RedactExisting {
     if ($item.PSIsContainer) {
         $jsonFiles = @(Get-ChildItem -LiteralPath $Path -File | Where-Object { $_.Name -match '-IPU-(Assessment|PostUpgrade)\.json$' -and $_.Name -notlike 'REDACTED-*' })
     } elseif ($item.Name -match '-IPU-(Assessment|PostUpgrade)\.(json|html)$') {
+        # SilentlyContinue: No JSON beside the HTML is reported just below (no report found).
         $jsonFiles = @(Get-Item -LiteralPath ([IO.Path]::ChangeExtension($item.FullName, '.json')) -ErrorAction SilentlyContinue)
     } else { $jsonFiles = @() }
     if ($jsonFiles.Count -eq 0) { [Console]::Out.WriteLine('RedactExisting: no *-IPU-Assessment.json or *-IPU-PostUpgrade.json report found in ' + $Path); return 1 }
@@ -6702,6 +6780,7 @@ function Import-SiteDataFile {
             $obj = ConvertFrom-SiteDataJson $text 'IPU-Profile/1'
             $attributes = @{}
             foreach ($n in $script:ProfileSettingNames) {
+                # SilentlyContinue: A setting name without a variable has no attributes to check.
                 $v = Get-Variable -Name $n -ErrorAction SilentlyContinue
                 if ($v) { $attributes[$n] = @($v.Attributes) }
             }
@@ -6761,9 +6840,17 @@ function Invoke-PostUpgradeComparison {
         # taken after the upgrade. "Comparison OK" only when nothing is left out.
         $coverage = @(Get-BaselineCoverageRow $baseline $script:ComputerName (Get-ReleaseDisplayName $TargetServerVersion))
         foreach ($c in $coverage) { Add-Result 'POST_UPGRADE' $c.Item $c.Status $c.Value $c.Details -Recommendation $c.Recommendation -Kind 'Finding' -Source 'Pre-upgrade result' }
-        $diffs = Compare-IPUSnapshot $before ([pscustomobject]$script:Data.Snapshot)
+        # And what THIS run could not read (#306): such a list is left out of
+        # the comparison, not read as empty, which would call every entry lost.
+        $after = [pscustomobject]$script:Data.Snapshot
+        $gaps = @(Get-CurrentListGap $before $after $script:CheckRuns.ToArray())
+        if ($gaps.Count -gt 0) {
+            Add-Result 'POST_UPGRADE' 'CurrentCoverage' 'MANUAL' ($gaps.Count.ToString() + ' list(s) could not be read in this run') @($gaps | ForEach-Object { $_.List + ' (' + $_.Reason + ')' }) -Recommendation 'These lists were read before the upgrade but not now, so they are left out of the comparison instead of showing every entry as lost. See the COLLECTOR rows for the check that failed, fix the cause and run Post again, or compare these lists by hand with the pre-upgrade report.' -Kind 'Finding' -Source 'This run'
+            $before = Get-SnapshotWithoutList $before @($gaps | ForEach-Object { $_.List })
+        }
+        $diffs = Compare-IPUSnapshot $before $after
         foreach ($d in $diffs) { Add-Result 'POST_UPGRADE' $d.Item $d.Status $d.Value $d.Details -Recommendation $d.Recommendation -Source 'Pre-upgrade snapshot vs now' }
-        if ($diffs.Count -eq 0 -and $coverage.Count -eq 0) { Add-Result 'POST_UPGRADE' 'Comparison' 'OK' 'No lost services, ports, routes, IP/DNS settings, hosts entries, applications, features or tasks' -Source 'Pre-upgrade snapshot vs now' }
+        if ($diffs.Count -eq 0 -and $coverage.Count -eq 0 -and $gaps.Count -eq 0) { Add-Result 'POST_UPGRADE' 'Comparison' 'OK' 'No lost services, ports, routes, IP/DNS settings, hosts entries, applications, features or tasks' -Source 'Pre-upgrade snapshot vs now' }
     } catch {
         $outcome = 'Failed'; $message = $_.Exception.Message
         Add-Result 'COLLECTOR' 'Post-upgrade comparison' 'MANUAL' 'Check did not complete' $message -Recommendation 'Compare manually with the pre-upgrade report.' -Kind 'Finding'
@@ -6913,6 +7000,7 @@ function Invoke-Assessment {
     } catch {
         $msg = $_.Exception.GetType().Name + ': ' + $_.Exception.Message
         Write-AssessmentLog 'ERROR' 'FAILED' $msg
+        # SilentlyContinue: Clean-up of our own temp file while reporting a failure.
         Remove-Item -LiteralPath ($script:ReportPath + '.writing') -Force -ErrorAction SilentlyContinue
         $now = Get-Date
         [Console]::Out.WriteLine($header)

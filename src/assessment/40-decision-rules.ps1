@@ -875,6 +875,53 @@ $script:SnapshotListSources = [ordered]@{
     Printers = 'printers'; PrinterPorts = 'printers'; PrinterDrivers = 'printers'
 }
 
+# Lists the comparison also reads that come from checks a baseline may not
+# record per list; checked on the current side only (#306).
+$script:SnapshotCurrentListSources = [ordered]@{ Gpos = 'grouppolicy'; Groups = 'grouppolicy' }
+
+function Get-CurrentListGap {
+    # Pure (#306): the snapshot lists THIS run could not read, so the
+    # comparison must not read them as empty and call every baseline entry
+    # lost. A list is a gap when the baseline has entries for it and either
+    # the check that collects it did not complete in this run, or the current
+    # snapshot has no such list (a check leaves a list out when its query
+    # fails, see #242). Returns objects with List and Reason.
+    param($Before, $After, [object[]]$CheckRuns)
+    if (-not $Before) { return }
+    $afterNames = @()
+    if ($After -is [System.Collections.IDictionary]) { $afterNames = @($After.Keys | ForEach-Object { [string]$_ }) }
+    elseif ($After) { $afterNames = @($After.PSObject.Properties | ForEach-Object { $_.Name }) }
+    $sources = [ordered]@{}
+    foreach ($k in $script:SnapshotListSources.Keys) { $sources[$k] = $script:SnapshotListSources[$k] }
+    foreach ($k in $script:SnapshotCurrentListSources.Keys) { $sources[$k] = $script:SnapshotCurrentListSources[$k] }
+    $gaps = New-Object System.Collections.Generic.List[object]
+    foreach ($list in $sources.Keys) {
+        if (-not $Before.PSObject.Properties[$list]) { continue }
+        if (@($Before.$list | Where-Object { $_ }).Count -eq 0) { continue }
+        $source = $sources[$list]
+        $run = @($CheckRuns | Where-Object { $_ -and $_.Id -eq $source }) | Select-Object -First 1
+        $why = ''
+        if ($run -and [string]$run.Outcome -ne 'Completed') {
+            $why = 'the ' + $source + ' check ' + ([string]$run.Outcome -creplace '([a-z])([A-Z])', '$1 $2').ToLower() + ' in this run'
+        } elseif ($afterNames -notcontains $list) {
+            $why = 'this run could not read it'
+        }
+        if ($why) { $gaps.Add([pscustomobject]@{ List = $list; Reason = $why }) }
+    }
+    return $gaps.ToArray()
+}
+
+function Get-SnapshotWithoutList {
+    # Pure (#306): a copy of a snapshot without the named lists, so the
+    # comparison leaves them out. The original object is not changed.
+    param($Snapshot, [string[]]$Name)
+    $copy = New-Object psobject
+    foreach ($p in @($Snapshot.PSObject.Properties)) {
+        if (@($Name) -notcontains $p.Name) { $copy | Add-Member -NotePropertyName $p.Name -NotePropertyValue $p.Value }
+    }
+    return $copy
+}
+
 function Get-SecureBootDecision {
     # Pure (#242): what a failed Confirm-SecureBootUEFI means. The cmdlet
     # raises PlatformNotSupportedException on a legacy BIOS machine; any other

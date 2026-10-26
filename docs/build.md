@@ -30,7 +30,7 @@ the manifest.
 
 1. Edit the part (never the built file).
 2. Build: `pwsh ./build/Build-Script.ps1`
-3. Run the tests: `Invoke-Pester ./tests`
+3. Run the tests: `Invoke-Pester ./tests`. A new test goes in the `tests/` folder of the part you changed (see [CONTRIBUTING](../CONTRIBUTING.md#where-a-new-test-goes)).
 4. Commit the changed part **and** the rebuilt `src/Windows-IPU-Readiness-Assessment.ps1`.
 
 ## What the build does and checks

@@ -13,7 +13,7 @@ How to read the tables:
   (see [result kinds](user-guide.md#result-kinds)).
 - Thresholds in italics are parameters (see the [user guide](user-guide.md#4-parameters)).
 
-Every check has tests in `tests/Checks.Tests.ps1` that run it against a fake server; a test fails if a
+Every check has tests in `tests/checks/` (one file per chapter below) that run it against a fake server; a test fails if a
 check is added without one.
 
 ## Upgrade path, licensing and Windows health
@@ -60,7 +60,7 @@ check is added without one.
 | Check | Looks at | Possible results |
 |---|---|---|
 | `storage` Storage | Free space on C:, partition after C:, system and recovery partition free space, all disks with mount points, labels and file systems | `ACTION` C: below *MinimumCFreeGB* (with the size to add, in steps of *ExtendBlockGB*); `WARNING` partition after C:, system partition below *SystemPartitionMinFreeMB*; `WARNING` observation recovery partition below *RecoveryPartitionMinFreeMB* Recovery partition after C: (`reagentc /info`, read-only): before the upgrade a `WARNING` when Setup will likely add one (shows `setup.exe /ResizeRecoveryPartition Disable`); a recovery partition after C: is a `WARNING` with its number and the removal steps; `MANUAL` when `reagentc /info` fails |
-| `cluster` Failover clustering | Feature, membership, nodes, groups, quorum, CSVs, disks | `INFO` clustered node (the `special` check reports it as SPECIAL); `ACTION` feature present but cmdlets missing; `WARNING` feature without membership; `OK` |
+| `cluster` Failover clustering | Feature, membership, nodes, groups, quorum, CSVs, disks | `INFO` clustered node (the `special` check reports it as SPECIAL); `ACTION` feature present but cmdlets missing; `WARNING` feature without membership; `MANUAL` a node, role, quorum, shared volume or disk list that cannot be read (named in `ClusterDetails`); `OK` |
 | `special` SPECIAL server (#152) | Domain role, Failover Clustering feature, cluster service, `HKLM:\Cluster`; for the facts: cluster nodes, roles, SQL FCIs, quorum, CSVs, S2D, or FSMO roles, global catalog, roles on the same server and `repadmin /replsummary` (read-only) | `SPECIAL` cluster node or (with `-BlockDomainControllerIPU`) domain controller: short report, risks and options with links; `MANUAL` when the cluster signals disagree |
 | `network` Network, teaming, hosts and routes | IP configuration per adapter (IPv4, IPv6, gateway, DNS servers, suffix and registration, WINS, NetBIOS, metric, VLAN), LBFO and SET teams, hosts file, persistent and manual routes; saves a network configuration copy into the evidence folder (*EnableNetworkEvidence*) | `ACTION` LBFO team (disable before IPU; under a Hyper-V switch convert to SET); `MANUAL` active hosts entries or static routes to confirm; `OK` configuration copy saved (copy it off the server); `MANUAL` copy failed or incomplete; `OK` |
 | `ports` Listening ports | TCP and UDP listeners below 49152 with the owning service or process | INFO; used for the post-upgrade test plan and comparison |

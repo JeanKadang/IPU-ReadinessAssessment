@@ -17,6 +17,26 @@ commits show the wrong author.
 5. Open a pull request using the template. Reference the issue with `Refs #N`. Release notes are built from PR labels: a workflow adds them automatically (`feat/` branch → `enhancement`, `fix/` → `bug`, changed paths → `documentation`, `testing`, `tooling`; see `.github/labeler.yml`). Check them and add or remove labels by hand when they don't fit; the workflow never removes a label.
 6. Merge with a merge commit once CI is green. A review by the other maintainer is welcome, but not required.
 
+## Where a new test goes
+
+The tests mirror the source parts, so a change and its test sit side by side (#254). Put a new `Describe` in the file
+for its topic, or start a new file in the folder:
+
+| You changed | Add the test to |
+|---|---|
+| `30-core.ps1`, `70-main.ps1` (runner, helpers, output, SA line) | `tests/core/` |
+| `20-detection-patterns.ps1`, `40-decision-rules.ps1` (a pure decision function) | `tests/decision-rules/<topic>.Tests.ps1` |
+| `50-checks.ps1` (a check body) | `tests/checks/<chapter>.Tests.ps1`, the chapter of the check in `docs/checks.md`; it runs on the fake server in `tests/checks/FakeServer.ps1` |
+| `60-report.ps1` (HTML, JSON) | `tests/report/` |
+| Redaction | `tests/redaction/` |
+| The post-upgrade comparison or the Post run | `tests/post-upgrade/` |
+| `src/merge/`, `src/eol/` | `tests/Merge-IPUAssessments.Tests.ps1`, `tests/Eol.Tests.ps1` |
+
+A new test file starts like the others in its folder: the header comment, the `param()` with its attributes, and
+`BeforeAll { . (Join-Path $PSScriptRoot '..\TestSetup.ps1') }` (in `tests/checks/`: `FakeServer.ps1`). Paths to the
+repository go two levels up: `Join-Path $PSScriptRoot '..\..\docs\checks.md'`. Pester finds every `*.Tests.ps1`
+under `tests/`, so nothing else needs to change.
+
 ## Pull requests from outside
 
 This project has two maintainers, Jean and Micker71, and builds and maintains its own code. Ideas and pull requests
