@@ -874,11 +874,16 @@ Invoke-Pester .\tests -Output Detailed
 Requires Pester 5 (CI uses 5.7.1) on Windows. The tests load the script in library mode by setting
 `IPU_ASSESSMENT_LIBRARY_ONLY=1`, so functions are defined but nothing is collected from the machine.
 
-| File | Covers |
+| Folder or file | Covers |
 |---|---|
-| `tests/Windows-IPU-Readiness-Assessment.Tests.ps1` | Decision rules (upgrade path, edition, lifecycle, licensing, SQL and VMware support, DISM/SFC/VSS verdicts, Group Policy, UAC), result model, HTML and JSON output, redaction, site data files, prerequisites, post-upgrade comparison, version consistency |
-| `tests/Checks.Tests.ps1` | Every check body, run against a simulated server (stand-ins for CIM, registry, native tools and cmdlets); also that `docs/checks.md` lists every check and that the sample result matches the JSON Schema |
+| `tests/core/` | The runtime (check runner, native tools, time limits, output folders, the SA result line, prerequisites), read-only system helpers and evidence copies, site data files, and repository-wide rules (version consistency, no host data, dated facts) |
+| `tests/decision-rules/` | The pure decision functions, one file per topic: upgrade path and edition, licensing, Windows health (DISM, SFC, VSS), workloads and detection patterns, Group Policy and access, end of life |
+| `tests/checks/` | Every check body, run against a simulated server (`FakeServer.ps1`: stand-ins for CIM, registry, native tools and cmdlets), one file per chapter of `docs/checks.md`; also that `docs/checks.md` lists every check and that the sample result matches the JSON Schema |
+| `tests/report/` | Result model, overall status, the HTML report and the JSON result |
+| `tests/redaction/` | Redaction of a live run, the redaction key, and `-RedactExisting` |
+| `tests/post-upgrade/` | The post-upgrade comparison rules and the Post run |
 | `tests/Merge-IPUAssessments.Tests.ps1` | The fleet overview, CSV formula protection, redacted results |
+| `tests/Eol.Tests.ps1` | The end-of-life lookup script |
 
 The full suite runs in an elevated or a normal (unelevated) session, with the same result: CI runs it both ways, the
 second time as a standard local user (`pester (unelevated)`, #126). Unelevated, the folders that the tests limit to
