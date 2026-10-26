@@ -2,6 +2,8 @@
 # Synthetic lifecycle data, shaped like endoflife.date releases.
 
 BeforeAll {
+    # Strict-mode finder (#256): see tests/TestSetup.ps1.
+    if ($env:IPU_TEST_STRICT_MODE) { Set-StrictMode -Version $env:IPU_TEST_STRICT_MODE }
     . (Join-Path $PSScriptRoot '..\src\Get-IPUEolStatus.ps1')
     $script:Today = [datetime]'2026-10-23'
     function New-Cycle([string]$Cycle, $Eol, $Support = $null) { [pscustomobject]@{ cycle = $Cycle; eol = $Eol; support = $Support } }

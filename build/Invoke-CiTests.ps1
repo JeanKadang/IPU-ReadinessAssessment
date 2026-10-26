@@ -11,7 +11,11 @@ param(
     [switch]$Coverage,
     # With -Coverage (#127): fail below this share of src/*.ps1 commands, and
     # fail when a function in src/ has no executed command at all.
-    [ValidateRange(0, 100)][double]$MinimumCoverage = 0
+    [ValidateRange(0, 100)][double]$MinimumCoverage = 0,
+    # #256: run the suite under Set-StrictMode -Version 2 to find hidden
+    # defects (a misspelled variable, a missing property). A finder, not a
+    # gate: failures become warning annotations and the run exits 0.
+    [switch]$StrictModeFinder
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,6 +31,7 @@ function Write-Annotation([string]$Level, [string]$Title, [string]$Message) {
     Write-Host ('::{0} title={1}::{2}' -f $Level, $t, $m)
 }
 
+if ($StrictModeFinder) { $env:IPU_TEST_STRICT_MODE = '2.0' }
 $config = New-PesterConfiguration
 $config.Run.Path = $Path
 $config.Run.PassThru = $true
@@ -38,17 +43,18 @@ if ($Coverage) {
 }
 $result = Invoke-Pester -Configuration $config
 
+$level = 'error'; if ($StrictModeFinder) { $level = 'warning' }
 foreach ($t in @($result.Failed)) {
     $msg = (@($t.ErrorRecord) | ForEach-Object { $_.Exception.Message }) -join ' | '
-    Write-Annotation 'error' ($t.ExpandedPath) $msg
+    Write-Annotation $level ($t.ExpandedPath) $msg
 }
 foreach ($b in @($result.FailedBlocks)) {
     $msg = (@($b.ErrorRecord) | ForEach-Object { $_.Exception.Message }) -join ' | '
-    Write-Annotation 'error' ('Block ' + $b.ExpandedPath) $msg
+    Write-Annotation $level ('Block ' + $b.ExpandedPath) $msg
 }
 foreach ($c in @($result.FailedContainers)) {
     $msg = (@($c.ErrorRecord) | ForEach-Object { $_.Exception.Message }) -join ' | '
-    Write-Annotation 'error' ('Container ' + $c.Item) $msg
+    Write-Annotation $level ('Container ' + $c.Item) $msg
 }
 Write-Annotation 'notice' ('Pester on PowerShell ' + $PSVersionTable.PSVersion) ('Passed {0}, Failed {1}, Skipped {2}, NotRun {3}' -f $result.PassedCount, $result.FailedCount, $result.SkippedCount, $result.NotRunCount)
 $lines = @('### Pester on PowerShell ' + $PSVersionTable.PSVersion, '', ('Passed {0}, failed {1}, skipped {2}.' -f $result.PassedCount, $result.FailedCount, $result.SkippedCount))
@@ -81,4 +87,9 @@ if ($Coverage -and $result.CodeCoverage) {
     }
 }
 if ($env:GITHUB_STEP_SUMMARY) { $lines -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8 }
+if ($StrictModeFinder) {
+    # Findings only (#256): each failure above is a lead to check by hand.
+    Write-Annotation 'notice' 'Strict-mode finder' ('{0} tests and {1} blocks fail under Set-StrictMode -Version 2; each is a warning annotation. Real defects become their own issue.' -f $result.FailedCount, @($result.FailedBlocks).Count)
+    exit 0
+}
 if ($result.Result -ne 'Passed' -or $gateFailed) { exit 1 }
