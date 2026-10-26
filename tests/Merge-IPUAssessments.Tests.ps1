@@ -49,6 +49,11 @@ Describe 'Merge-IPUAssessments.ps1' {
         $script:Html = Get-Content -LiteralPath (Join-Path $script:Out 'IPU-Fleet-Overview.html') -Raw
     }
 
+    It 'names the finding counts in the server table and explains them (#324)' {
+        $script:Html | Should -Match '<th title="Number of BLOCKER, ACTION, WARNING and MANUAL findings">Findings<br><small>Blocker/Action/Warning/Manual</small></th>'
+        $script:Html | Should -Not -Match '<th>B/A/W/M</th>'
+        $script:Html | Should -Match 'Observations and evidence rows are not counted'
+    }
     It 'writes the HTML overview and both CSV files' {
         Join-Path $script:Out 'IPU-Fleet-Overview.html' | Should -Exist
         Join-Path $script:Out 'IPU-Fleet-Servers.csv' | Should -Exist
