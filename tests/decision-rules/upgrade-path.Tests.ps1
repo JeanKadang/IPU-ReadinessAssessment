@@ -322,3 +322,59 @@ Describe 'SPECIAL servers (#152)' {
         }
     }
 }
+
+Describe 'PKI site policy (#322)' {
+    It 'ConvertTo-ReleaseList reads a comma-separated list' {
+        (@(ConvertTo-ReleaseList ' 2022 , 2025') -join '|') | Should -Be '2022|2025'
+        (@(ConvertTo-ReleaseList '2022') -join '|') | Should -Be '2022'
+    }
+    It 'Test-PkiServer: the CA role or the CertSvc service' {
+        Test-PkiServer $true @() | Should -BeTrue
+        Test-PkiServer $null @('W32Time', 'CertSvc') | Should -BeTrue
+        Test-PkiServer $false @('W32Time') | Should -BeFalse
+        Test-PkiServer $null @() | Should -BeFalse
+    }
+    It '<Source> to <Target> with <Allowed> allowed is <Kind>' -TestCases @(
+        @{ Source = '2019';   Target = '2022'; Allowed = '2022';      Kind = 'Allowed';          Status = 'OK' }
+        @{ Source = '2016';   Target = '2022'; Allowed = '2022';      Kind = 'Allowed';          Status = 'OK' }
+        @{ Source = '2019';   Target = '2025'; Allowed = '2022';      Kind = 'TargetNotAllowed'; Status = 'BLOCKER' }
+        @{ Source = '2022';   Target = '2025'; Allowed = '2022';      Kind = 'TargetNotAllowed'; Status = 'BLOCKER' }
+        @{ Source = '2012R2'; Target = '2025'; Allowed = '2022';      Kind = 'NoAllowedPath';    Status = 'BLOCKER' }
+        @{ Source = '2012R2'; Target = '2022'; Allowed = '2022';      Kind = 'NoAllowedPath';    Status = 'BLOCKER' }
+        @{ Source = '2019';   Target = '2025'; Allowed = '2022,2025'; Kind = 'Allowed';          Status = 'OK' }
+        @{ Source = '2012R2'; Target = '2025'; Allowed = '2022,2025'; Kind = 'Allowed';          Status = 'OK' }
+        @{ Source = '';       Target = '2025'; Allowed = '2022';      Kind = 'Unknown';          Status = 'MANUAL' }
+    ) {
+        $d = Get-PkiTargetDecision $Source $Target (ConvertTo-ReleaseList $Allowed)
+        $d.Kind | Should -Be $Kind
+        $d.Status | Should -Be $Status
+    }
+    It 'a target the policy does not allow names the allowed release and how to assess against it' {
+        $d = Get-PkiTargetDecision '2019' '2025' @('2022')
+        $d.Text | Should -Match 'Site policy'
+        $d.Text | Should -Match 'Windows Server 2022'
+        $d.Recommendation | Should -Match '-TargetServerVersion 2022'
+    }
+    It 'a PKI server already on the highest allowed release is told to stay there' {
+        $d = Get-PkiTargetDecision '2022' '2025' @('2022')
+        $d.Text | Should -Match 'already on Windows Server 2022'
+    }
+    It 'no allowed path means a migration with the PKI team' {
+        $d = Get-PkiTargetDecision '2012R2' '2022' @('2022')
+        $d.Text | Should -Match 'Windows Server 2012 R2'
+        $d.Recommendation | Should -Match 'migration'
+    }
+    It 'Get-UpgradePathDecision leaves out a suggested target the PKI policy does not allow' {
+        $plain = Get-UpgradePathDecision '2012R2' '2022' $false
+        $plain.Text | Should -Match 'Windows Server 2025'
+        $pki = Get-UpgradePathDecision '2012R2' '2022' $false -AllowedTargets @('2022')
+        $pki.Status | Should -Be 'BLOCKER'
+        $pki.Text | Should -Match 'PKI site policy does not allow'
+        $pki.Text | Should -Not -Match 'Supported direct target'
+    }
+    It 'Get-UpgradePathDecision is unchanged when the allowed list permits the hint' {
+        $d = Get-UpgradePathDecision '2012R2' '2022' $false -AllowedTargets @('2022', '2025')
+        $d.Text | Should -Match 'Supported direct target\(s\) from this source: Windows Server 2025'
+    }
+}
+

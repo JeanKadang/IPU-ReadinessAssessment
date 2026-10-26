@@ -91,7 +91,10 @@ Register-Check -Id 'upgradepath' -Name 'Upgrade path, edition and media' -Script
         if ($clusSvc.Count -gt 0 -and $clusterKey) { $clustered = $true }
     }
     $script:Data.IsClustered = $clustered
-    $path = Get-UpgradePathDecision $source $TargetServerVersion $clustered
+    # A PKI server never gets a target its site policy rules out (#322).
+    $pkiAllowed = @()
+    if (Test-PkiServer (Get-FeatureState 'ADCS-Cert-Authority') @($script:Data.Services | ForEach-Object { [string]$_.Name })) { $pkiAllowed = ConvertTo-ReleaseList $PkiAllowedTargets }
+    $path = Get-UpgradePathDecision $source $TargetServerVersion $clustered -AllowedTargets $pkiAllowed
     if ($AssessmentMode -eq 'Post' -and $source -and $source -eq $TargetServerVersion -and -not $clustered) {
         $path = [pscustomobject]@{ Status = 'INFO'; Text = ('Now ' + (Get-ReleaseDisplayName $source) + ' (post-upgrade run).') }
     }
@@ -1092,6 +1095,14 @@ Register-Check -Id 'pki' -Name 'PKI, certificates and TLS bindings' -Script {
     $certSvc = @($script:Data.Services | Where-Object { $_.Name -eq 'CertSvc' }) | Select-Object -First 1
     if ($adcs -contains 'ADCS-Cert-Authority' -or $certSvc) {
         Add-Result 'PKI' 'CertificationAuthority' 'ACTION' 'Certification Authority detected' $adcs -Recommendation 'Engage the PKI team: verify CA database and private-key backup, AIA/CDP dependencies, and a tested recovery procedure before IPU.' -Source 'Get-WindowsFeature, CertSvc'
+        # Site policy (#322): the PKI team allows an in-place upgrade only to
+        # the releases in PkiAllowedTargets. Pre runs only.
+        if ($AssessmentMode -ne 'Post') {
+            $pkiSource = $script:Data.SourceRelease
+            if (-not $pkiSource -and $script:Data.OS) { $pkiSource = Get-WindowsServerRelease $script:Data.OS.BuildNumber $script:Data.OS.Caption }
+            $policy = Get-PkiTargetDecision $pkiSource $TargetServerVersion (ConvertTo-ReleaseList $PkiAllowedTargets)
+            if ($policy.Kind -ne 'Allowed') { Add-Result 'PKI' 'PkiSitePolicy' $policy.Status $policy.Text ('PkiAllowedTargets=' + $PkiAllowedTargets) -Recommendation $policy.Recommendation -Kind 'Finding' -Source 'Site policy (PkiAllowedTargets)' }
+        }
         $active = (Get-RegistryValueSafe 'HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration' 'Active').Value
         if ($active) {
             $ca = $null

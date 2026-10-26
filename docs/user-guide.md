@@ -116,6 +116,12 @@ flowchart TD
 Anything else is reported as a `BLOCKER`. A **cluster node** and, by site policy, a **domain controller**
 (`-BlockDomainControllerIPU`) are reported as **SPECIAL** (see below).
 
+**PKI servers** (a Certification Authority) follow a site policy too: the PKI team allows an in-place upgrade only to
+the releases in `-PkiAllowedTargets` (default `2022`). A CA server assessed against 2025 gets a `BLOCKER` that says to
+assess it against 2022, or to agree an exception with the PKI team. A 2012 R2 CA server has no allowed path (2012 R2
+cannot go directly to 2022), so it gets a `BLOCKER` that points to a migration, and the upgrade path row does not
+suggest 2025.
+
 ### SPECIAL: cluster nodes and domain controllers
 
 A SPECIAL server is not a standard in-place upgrade: it needs its own plan, extra time and coordination, and carries
@@ -150,6 +156,7 @@ ad-hoc job). Override only what you need.
 | `TargetMediaPath` | blank | Folder/drive with `setup.exe`, UNC share, or `.iso`. Blank skips the Setup compatibility scan |
 | `TargetMediaLanguage` | blank | Language of the target ISO, for example `en-US`. Blank = the report tells you |
 | `BlockDomainControllerIPU` | `$true` | Site policy: a domain controller is reported as **SPECIAL** with a short report (not a standard IPU). `$false` gives the full report with a WARNING instead |
+| `PkiAllowedTargets` | `'2022'` | Site policy (#322): the releases a PKI server (Certification Authority role or `CertSvc`) may be upgraded to in place, comma-separated. Another target is a **BLOCKER**, and the upgrade path never suggests it. `'2022,2025'` lifts the rule |
 
 ### Thresholds
 
@@ -286,7 +293,7 @@ case-insensitively; keep them specific, because a broad word matches unrelated s
 ```
 
 **Profile file** (`"Schema": "IPU-Profile/1"`). One object `Settings` with any of these parameters:
-`TargetMediaLanguage`, `BlockDomainControllerIPU`, the thresholds, the slow-check settings, the RDP policy
+`TargetMediaLanguage`, `BlockDomainControllerIPU`, `PkiAllowedTargets`, the thresholds, the slow-check settings, the RDP policy
 evidence settings, `WriteJson`, `RestrictOutputAcl` and `NumberCultureName`. Each value must pass the same
 checks as the parameter (range, type, absolute path). `AssessmentMode`, `TargetServerVersion`,
 `TargetMediaPath`, `ReportDirectory`, `RedactReport` and the two file parameters describe one run and cannot
@@ -307,7 +314,8 @@ be set in a profile. Settings passed as arguments win; the *Profile file* row na
 Both examples are in [`docs/examples`](examples/). A JSON backslash must be doubled: `"C:\\Tools\\LGPO.exe"`.
 
 **Defaults that come from one site.** A few defaults reflect the site the tool was first built for:
-`NumberCultureName` is `da-DK`, `BlockDomainControllerIPU` is on (a domain controller is SPECIAL, see above), and
+`NumberCultureName` is `da-DK`, `BlockDomainControllerIPU` is on (a domain controller is SPECIAL, see above),
+`PkiAllowedTargets` is `2022` (the PKI team's current rule), and
 `Merge-IPUAssessments.ps1` writes CSV files with `;`. They stay as they are so existing SA jobs that pass no
 arguments behave the same (#131). Another site sets its own values in a profile file, for example
 `"NumberCultureName": "en-US"` or `"BlockDomainControllerIPU": false`, and runs the merge with `-Delimiter ','` if

@@ -221,6 +221,31 @@ Describe 'Checks on a fake server: access and security' -Skip:($env:OS -ne 'Wind
             (Get-Row 'CERTIFICATES' 'Expiring: AA11BB22CC33DD44EE55FF6677889900AABBCCDD')[0].Kind | Should -Be 'Observation'
             (Get-Row 'PKI' 'CertificationAuthority')[0].Status | Should -Be 'ACTION'
         }
+        It 'a CA server assessed for 2025 is a BLOCKER under the PKI site policy (#322)' {
+            $script:Fake.Cim['Win32_Service'] = @($script:Fake.Cim['Win32_Service']) + @(New-FakeService 'CertSvc')
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'pki'
+            $r = (Get-Row 'PKI' 'PkiSitePolicy')[0]
+            $r.Status | Should -Be 'BLOCKER'
+            $r.Kind | Should -Be 'Finding'
+            $r.Recommendation | Should -Match '-TargetServerVersion 2022'
+            (Get-Row 'PKI' 'CertificationAuthority')[0].Status | Should -Be 'ACTION'
+        }
+        It 'a CA server assessed for an allowed target has no policy row (#322)' {
+            $script:Fake.Cim['Win32_Service'] = @($script:Fake.Cim['Win32_Service']) + @(New-FakeService 'CertSvc')
+            Reset-FakeServerKeep
+            $TargetServerVersion = '2022'
+            $null = Invoke-TestCheck 'pki'
+            (Get-Row 'PKI' 'PkiSitePolicy').Count | Should -Be 0
+            (Get-Row 'PKI' 'CertificationAuthority')[0].Status | Should -Be 'ACTION'
+        }
+        It 'the allowed targets come from PkiAllowedTargets (#322)' {
+            $script:Fake.Cim['Win32_Service'] = @($script:Fake.Cim['Win32_Service']) + @(New-FakeService 'CertSvc')
+            Reset-FakeServerKeep
+            $PkiAllowedTargets = '2022,2025'
+            $null = Invoke-TestCheck 'pki'
+            (Get-Row 'PKI' 'PkiSitePolicy').Count | Should -Be 0
+        }
         It 'an IIS binding whose certificate is missing is an ACTION' {
             $script:Fake.Features['Web-Server'] = $true
             $script:Fake.Modules = @('WebAdministration')

@@ -183,7 +183,9 @@ function Get-TargetLicensingDecision {
 }
 
 function Get-UpgradePathDecision {
-    param([string]$Source, [string]$Target, [bool]$Clustered = $false)
+    # -AllowedTargets (#322): when a site policy limits the targets (a PKI
+    # server), a target outside it is never suggested as the alternative.
+    param([string]$Source, [string]$Target, [bool]$Clustered = $false, [string[]]$AllowedTargets = @())
     $make = { param($s,$t) [pscustomobject]@{ Status=$s; Text=$t } }
     if ($Clustered) {
         # Reported as SPECIAL with its own plan (#152); not a second finding here.
@@ -200,13 +202,56 @@ function Get-UpgradePathDecision {
     if ($script:SupportedUpgradePaths[$Target] -contains $Source) {
         return (& $make 'OK' ('Supported in-place upgrade path: ' + (Get-ReleaseDisplayName $Source) + ' to ' + (Get-ReleaseDisplayName $Target) + '.'))
     }
-    $alternatives = @()
+    $alternatives = @(); $notAllowed = @()
     foreach ($t in @($script:SupportedUpgradePaths.Keys | Sort-Object)) {
-        if ($script:SupportedUpgradePaths[$t] -contains $Source) { $alternatives += (Get-ReleaseDisplayName $t) }
+        if ($script:SupportedUpgradePaths[$t] -contains $Source) {
+            if (@($AllowedTargets).Count -gt 0 -and @($AllowedTargets) -notcontains $t) { $notAllowed += (Get-ReleaseDisplayName $t) }
+            else { $alternatives += (Get-ReleaseDisplayName $t) }
+        }
     }
     $hint = ''
     if ($alternatives.Count -gt 0) { $hint = ' Supported direct target(s) from this source: ' + ($alternatives -join ', ') + '.' }
+    elseif ($notAllowed.Count -gt 0) { $hint = ' Microsoft supports a direct upgrade to ' + ($notAllowed -join ', ') + ', which the PKI site policy does not allow.' }
     return (& $make 'BLOCKER' ('Microsoft does not support a direct in-place upgrade from ' + (Get-ReleaseDisplayName $Source) + ' to ' + (Get-ReleaseDisplayName $Target) + '.' + $hint))
+}
+
+function ConvertTo-ReleaseList {
+    # Pure (#322): '2022, 2025' -> '2022','2025'.
+    param([string]$Text)
+    return @(($Text -split ',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
+function Test-PkiServer {
+    # Pure (#322): a PKI server, for the site policy, has the Certification
+    # Authority role or the CertSvc service (as the pki check detects it).
+    param($CaFeatureState, [string[]]$ServiceNames)
+    return (($CaFeatureState -eq $true) -or (@($ServiceNames) -contains 'CertSvc'))
+}
+
+function Get-PkiTargetDecision {
+    # Pure (#322): the site policy for PKI servers. The PKI team allows an
+    # in-place upgrade only to the releases in $Allowed. Kind is Allowed,
+    # TargetNotAllowed, NoAllowedPath or Unknown.
+    param([string]$Source, [string]$Target, [string[]]$Allowed)
+    $make = { param($k, $s, $t, $r) [pscustomobject]@{ Kind = $k; Status = $s; Text = $t; Recommendation = $r } }
+    $names = (@($Allowed | ForEach-Object { Get-ReleaseDisplayName $_ }) -join ' or ')
+    if (-not $Source) { return (& $make 'Unknown' 'MANUAL' 'The source release is unknown, so the PKI site policy cannot be checked.' ('Check by hand: PKI servers are upgraded in place only to ' + $names + '.')) }
+    $canReach = { param($t) $Source -eq $t -or ($script:SupportedUpgradePaths.ContainsKey($t) -and $script:SupportedUpgradePaths[$t] -contains $Source) }
+    if (@($Allowed) -contains $Target -and (& $canReach $Target)) { return (& $make 'Allowed' 'OK' ('The PKI site policy allows ' + (Get-ReleaseDisplayName $Target) + '.') '') }
+    $reachable = @($Allowed | Where-Object { $_ -ne $Source -and $script:SupportedUpgradePaths.ContainsKey($_) -and $script:SupportedUpgradePaths[$_] -contains $Source })
+    if (@($Allowed) -notcontains $Target) {
+        if (@($Allowed) -contains $Source) {
+            return (& $make 'TargetNotAllowed' 'BLOCKER' ('Site policy: PKI servers are not upgraded in place beyond ' + $names + ', and this server is already on ' + (Get-ReleaseDisplayName $Source) + '.') 'Leave the server on its current release, or agree an exception with the PKI team before planning an upgrade.')
+        }
+        if ($reachable.Count -gt 0) {
+            return (& $make 'TargetNotAllowed' 'BLOCKER' ('Site policy: PKI servers are upgraded in place only to ' + $names + ', not to ' + (Get-ReleaseDisplayName $Target) + '.') ('Assess and upgrade against ' + (Get-ReleaseDisplayName $reachable[0]) + ' (-TargetServerVersion ' + $reachable[0] + '), or agree an exception with the PKI team.'))
+        }
+    } elseif ($reachable.Count -gt 0) {
+        # The target is allowed but not reachable; another allowed one is:
+        # the upgrade path row already says so.
+        return (& $make 'Allowed' 'OK' ('The PKI site policy allows ' + $names + '.') '')
+    }
+    return (& $make 'NoAllowedPath' 'BLOCKER' ('No in-place upgrade the PKI site policy allows: PKI servers go only to ' + $names + ', and Microsoft supports no direct in-place upgrade from ' + (Get-ReleaseDisplayName $Source) + ' to it.') 'Plan a migration to a new server with the PKI team (CA backup and restore, or a side-by-side CA migration) instead of an in-place upgrade.')
 }
 
 function Get-EditionDecision {
