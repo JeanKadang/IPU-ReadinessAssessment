@@ -1,8 +1,8 @@
 # ADR 0003: Architecture and licensing for end-of-life (EOL) lookups
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-23
-- **Decided by:** maintainers (open), addressing issue #266
+- **Decided by:** maintainers, accepted 2026-10-26 (built in #285, #286 and #275), addressing issue #266
 - **Origin:** first draft and proof of concept from pull request #271 (ayushkrsingh946), extended by the maintainers
 
 ## Context
@@ -99,6 +99,7 @@ endoflife.date contributors.` The snapshot file also records the date it was tak
 - The assessment script itself does not yet recognise 2008 and 2008 R2 as a source release (its release table
   starts at 2012), so on those servers the upgrade-path and support rows fall back to MANUAL. Teaching it the two
   releases (#276) is a separate change, because it touches the upgrade-path rules.
-- Follow-up work: the shared source part and the build change for it (#275), the shipped snapshot and its monthly
-  refresh (#285), detection of the products and the `EolCandidates` field in the result JSON (#286), the verdicts in
-  the merged report (#275), and recognising 2008 and 2008 R2 as a source release (#276). Tracked on #266.
+- Follow-up work, tracked on #266. Done: the shared source part and the build change for it (#275), the shipped
+  snapshot and its monthly refresh (#285), detection of the products and the `EolCandidates` field in the result
+  JSON (#286), and the verdicts in the assessment and the merged report (#275). Open: recognising 2008 and 2008 R2
+  as a source release (#276).
