@@ -28,6 +28,10 @@ param()
 if ($env:IPU_TEST_STRICT_MODE) { Set-StrictMode -Version $env:IPU_TEST_STRICT_MODE }
 $env:IPU_ASSESSMENT_LIBRARY_ONLY = '1'
 . (Join-Path $PSScriptRoot '..\..\src\Windows-IPU-Readiness-Assessment.ps1')
+# Set by the main block in a real run, which library mode skips; the
+# baseline reads it (needed under the strict-mode finder, #256).
+$script:Is32BitHost = $false
+$script:OutputFolderState = $null   # the baseline then assumes 'Existing', as in tests until now
 # Unelevated runs (#126): keep the current user on the folders the tests
 # restrict, so they can be used and cleaned up. Elevated runs are as before.
 if ($env:OS -eq 'Windows_NT') {
@@ -86,14 +90,16 @@ function Invoke-NativeCapture {
     $spec = $script:Fake.Native[$leaf]
     if ($spec -is [scriptblock]) { $spec = & $spec $ArgumentList }
     if (-not $spec) { $spec = @{} }
-    $output = [string]$spec.Output
+    # Indexers, not dot access: a key the fixture leaves out is $null, also
+    # under the strict-mode finder (#256).
+    $output = [string]$spec['Output']
     return [pscustomobject]@{
-        ExitCode = $(if ($spec.ContainsKey('ExitCode')) { $spec.ExitCode } else { 0 })
+        ExitCode = $(if ($spec.ContainsKey('ExitCode')) { $spec['ExitCode'] } else { 0 })
         Output   = $output
         Lines    = @($output -split '\r?\n' | Where-Object { $_ -ne '' })
-        TimedOut = [bool]$spec.TimedOut
-        StillRunning = [bool]$spec.StillRunning
-        Error    = [string]$spec.Error
+        TimedOut = [bool]$spec['TimedOut']
+        StillRunning = [bool]$spec['StillRunning']
+        Error    = [string]$spec['Error']
     }
 }
 function Get-InstalledApplication { return @($script:Fake.Apps) }
@@ -161,7 +167,7 @@ function Initialize-EvidenceFolder {
     if (Test-RealPath $p) { $null = Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $p -Force }
     return $p
 }
-function Read-ReAgentXml { return [string]$script:Fake.ReAgentXml }
+function Read-ReAgentXml { return [string]$script:Fake['ReAgentXml'] }
 function Get-PrinterInventory {
     if ($script:Fake.PrintInvError) { throw $script:Fake.PrintInvError }
     if ($script:Fake.PrintInv) { return $script:Fake.PrintInv }
@@ -341,7 +347,7 @@ function New-FakeMachine {
                 (New-FakeService 'AppSvc' 'Stopped' 'Auto' 'Example App'))
             "Win32_SystemDriver|State='Running'" = @([pscustomobject]@{ Name = 'pvscsi'; DisplayName = 'pvscsi'; PathName = '\SystemRoot\System32\drivers\pvscsii.sys' }, [pscustomobject]@{ Name = 'vmxnet3ndis6'; DisplayName = 'vmxnet3 Ethernet Adapter'; PathName = 'System32\drivers\vmxnet3.sys' })
             "Win32_LogicalDisk|DeviceID='C:'" = [pscustomobject]@{ Size = [double]100GB; FreeSpace = [double]55GB }
-            'Win32_NetworkAdapterConfiguration|IPEnabled=True' = [pscustomobject]@{ Index = 1; IPAddress = @('10.20.30.40', 'fe80::1'); IPSubnet = @('255.255.255.0', '64'); DefaultIPGateway = @('10.20.30.1'); DNSServerSearchOrder = @('10.20.1.10', '10.20.1.11'); DHCPEnabled = $false; MACAddress = '00:50:56:00:00:01'; Description = 'vmxnet3 Ethernet Adapter' }
+            'Win32_NetworkAdapterConfiguration|IPEnabled=True' = [pscustomobject]@{ Index = 1; WINSPrimaryServer = $null; WINSSecondaryServer = $null; IPAddress = @('10.20.30.40', 'fe80::1'); IPSubnet = @('255.255.255.0', '64'); DefaultIPGateway = @('10.20.30.1'); DNSServerSearchOrder = @('10.20.1.10', '10.20.1.11'); DHCPEnabled = $false; MACAddress = '00:50:56:00:00:01'; Description = 'vmxnet3 Ethernet Adapter' }
             'Win32_NetworkAdapter|Index=1' = [pscustomobject]@{ NetConnectionID = 'Ethernet0' }
             'Win32_UserAccount|LocalAccount=True AND SID LIKE ''%-500''' = @([pscustomobject]@{ Name = 'LocalAdmin'; SID = 'S-1-5-21-1-2-3-500'; Disabled = $false }, [pscustomobject]@{ Name = 'Guest'; SID = 'S-1-5-21-1-2-3-501'; Disabled = $true })
             'Win32_PnPSignedDriver' = @(
@@ -395,8 +401,8 @@ function New-FakeMachine {
         HotFixes = @([pscustomobject]@{ HotFixID = 'KB5000001'; InstalledOn = (Get-Date).AddDays(-60) }, [pscustomobject]@{ HotFixID = 'KB5000002'; InstalledOn = (Get-Date).AddDays(-12) })
         SecureChannel = $true
         Tasks = @(
-            [pscustomobject]@{ TaskPath = '\Microsoft\Windows\Defrag\'; TaskName = 'ScheduledDefrag'; State = 'Ready'; Principal = [pscustomobject]@{ UserId = 'SYSTEM'; GroupId = '' }; Actions = @() },
-            [pscustomobject]@{ TaskPath = '\Example\'; TaskName = 'Cleanup'; State = 'Ready'; Principal = [pscustomobject]@{ UserId = 'SYSTEM'; GroupId = '' }; Actions = @([pscustomobject]@{ Execute = 'C:\Tools\cleanup.exe'; Arguments = '/q' }) })
+            [pscustomobject]@{ TaskPath = '\Microsoft\Windows\Defrag\'; TaskName = 'ScheduledDefrag'; State = 'Ready'; Principal = [pscustomobject]@{ UserId = 'SYSTEM'; GroupId = ''; LogonType = 'ServiceAccount' }; Actions = @() },
+            [pscustomobject]@{ TaskPath = '\Example\'; TaskName = 'Cleanup'; State = 'Ready'; Principal = [pscustomobject]@{ UserId = 'SYSTEM'; GroupId = ''; LogonType = 'ServiceAccount' }; Actions = @([pscustomobject]@{ Execute = 'C:\Tools\cleanup.exe'; Arguments = '/q' }) })
         Mp = [pscustomobject]@{ AntivirusEnabled = $true; RealTimeProtectionEnabled = $true; AntivirusSignatureLastUpdated = (Get-Date).AddDays(-1); AMRunningMode = 'Normal' }
         AppLocker = [pscustomobject]@{ RuleCollections = @() }
         BitLocker = [pscustomobject]@{ ProtectionStatus = 'Off'; EncryptionMethod = 'None' }
@@ -442,7 +448,22 @@ function Invoke-TestCheck {
     if (-not $check) { throw ('No check with id ' + $Id) }
     $script:Results.Clear(); $script:CheckRuns.Clear()
     Invoke-Check $check
-    return $script:CheckRuns[-1]
+    $run = $script:CheckRuns[-1]
+    # Strict-mode finder (#256): the runner turns an error inside a check
+    # into a MANUAL row, which hides where it was raised. Run the check once
+    # more without the runner to record the error and its place for the
+    # finder, then put the first run's results back.
+    if ($env:IPU_TEST_STRICT_LOG -and $run.Outcome -ne 'Completed') {
+        $keepResults = @($script:Results.ToArray()); $keepRuns = @($script:CheckRuns.ToArray())
+        try { & { $ErrorActionPreference = 'Stop'; $null = & $check.Script } }
+        catch {
+            $where = ((([string]$_.ScriptStackTrace) -split '\r?\n')[0]) -replace '^at ', '' -replace '.*[\\/]', ''
+            Add-Content -LiteralPath $env:IPU_TEST_STRICT_LOG -Value ('check ' + $Id + "`t" + $_.Exception.Message + ' [' + $where + ']')
+        }
+        $script:Results.Clear(); foreach ($r in $keepResults) { $script:Results.Add($r) }
+        $script:CheckRuns.Clear(); foreach ($r in $keepRuns) { $script:CheckRuns.Add($r) }
+    }
+    return $run
 }
 function Get-Row {
     param([string]$Area, [string]$Item)
