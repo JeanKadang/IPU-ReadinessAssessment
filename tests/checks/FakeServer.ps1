@@ -31,6 +31,7 @@ $env:IPU_ASSESSMENT_LIBRARY_ONLY = '1'
 # Set by the main block in a real run, which library mode skips; the
 # baseline reads it (needed under the strict-mode finder, #256).
 $script:Is32BitHost = $false
+$script:OutputFolderState = $null   # the baseline then assumes 'Existing', as in tests until now
 # Unelevated runs (#126): keep the current user on the folders the tests
 # restrict, so they can be used and cleaned up. Elevated runs are as before.
 if ($env:OS -eq 'Windows_NT') {
