@@ -448,7 +448,22 @@ function Invoke-TestCheck {
     if (-not $check) { throw ('No check with id ' + $Id) }
     $script:Results.Clear(); $script:CheckRuns.Clear()
     Invoke-Check $check
-    return $script:CheckRuns[-1]
+    $run = $script:CheckRuns[-1]
+    # Strict-mode finder (#256): the runner turns an error inside a check
+    # into a MANUAL row, which hides where it was raised. Run the check once
+    # more without the runner to record the error and its place for the
+    # finder, then put the first run's results back.
+    if ($env:IPU_TEST_STRICT_LOG -and $run.Outcome -ne 'Completed') {
+        $keepResults = @($script:Results.ToArray()); $keepRuns = @($script:CheckRuns.ToArray())
+        try { & { $ErrorActionPreference = 'Stop'; $null = & $check.Script } }
+        catch {
+            $where = ((([string]$_.ScriptStackTrace) -split '\r?\n')[0]) -replace '^at ', '' -replace '.*[\\/]', ''
+            Add-Content -LiteralPath $env:IPU_TEST_STRICT_LOG -Value ('check ' + $Id + "`t" + $_.Exception.Message + ' [' + $where + ']')
+        }
+        $script:Results.Clear(); foreach ($r in $keepResults) { $script:Results.Add($r) }
+        $script:CheckRuns.Clear(); foreach ($r in $keepRuns) { $script:CheckRuns.Add($r) }
+    }
+    return $run
 }
 function Get-Row {
     param([string]$Area, [string]$Item)

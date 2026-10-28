@@ -31,7 +31,12 @@ function Write-Annotation([string]$Level, [string]$Title, [string]$Message) {
     Write-Host ('::{0} title={1}::{2}' -f $Level, $t, $m)
 }
 
-if ($StrictModeFinder) { $env:IPU_TEST_STRICT_MODE = '2.0' }
+if ($StrictModeFinder) {
+    $env:IPU_TEST_STRICT_MODE = '2.0'
+    # Errors raised inside a check body, recorded by the fake server's check
+    # invoker (the check runner itself turns them into MANUAL rows).
+    $env:IPU_TEST_STRICT_LOG = Join-Path ([IO.Path]::GetTempPath()) ('ipu-strict-' + [guid]::NewGuid().ToString('N') + '.log')
+}
 $config = New-PesterConfiguration
 $config.Run.Path = $Path
 $config.Run.PassThru = $true
@@ -93,13 +98,20 @@ if ($StrictModeFinder) {
     # Findings only (#256). Failures are grouped by error and by where it
     # was raised, so one root cause is one lead: the nine largest groups as
     # annotations, every group in the job summary.
-    $groups = @(@($result.Failed) | ForEach-Object {
+    $items = @(@($result.Failed) | ForEach-Object {
         $er = @($_.ErrorRecord)[0]
         $where = ''
         if ($er -and $er.ScriptStackTrace) { $where = ((([string]$er.ScriptStackTrace) -split '\r?\n')[0]).Trim() -replace '^at ', '' -replace '.*[\\/]', '' }
         $what = ''; if ($er) { $what = [string]$er.Exception.Message }
         [pscustomobject]@{ Key = ($what + ' [' + $where + ']'); Test = [string]$_.ExpandedPath }
-    } | Group-Object Key | Sort-Object Count -Descending)
+    })
+    if ($env:IPU_TEST_STRICT_LOG -and (Test-Path -LiteralPath $env:IPU_TEST_STRICT_LOG)) {
+        foreach ($line in @(Get-Content -LiteralPath $env:IPU_TEST_STRICT_LOG)) {
+            $parts = ([string]$line) -split "`t", 2
+            $items += [pscustomobject]@{ Key = ('Inside a check: ' + $parts[1]); Test = $parts[0] }
+        }
+    }
+    $groups = @($items | Group-Object Key | Sort-Object Count -Descending)
     foreach ($g in @($groups | Select-Object -First 9)) {
         Write-Annotation 'warning' ('Strict mode: ' + $g.Count + ' test(s)') ($g.Name + "`n" + 'For example: ' + $g.Group[0].Test)
     }
