@@ -104,6 +104,15 @@ if ($StrictModeFinder) {
         Write-Annotation 'warning' ('Strict mode: ' + $g.Count + ' test(s)') ($g.Name + "`n" + 'For example: ' + $g.Group[0].Test)
     }
     Write-Annotation 'notice' 'Strict-mode finder' ('{0} tests and {1} blocks fail under Set-StrictMode -Version 2, in {2} groups by error and place; the job summary lists every group. Real defects become their own issue.' -f $result.FailedCount, @($result.FailedBlocks).Count, $groups.Count)
+    # Every group, also readable through the checks API: a few notices of
+    # about 3,500 characters each (the summary is not in the API).
+    $chunk = ''; $part = 0
+    foreach ($g in $groups) {
+        $line = ('{0} x {1}' -f $g.Count, $g.Name)
+        if ($chunk.Length + $line.Length -gt 3500 -and $chunk) { $part++; Write-Annotation 'notice' ('Strict-mode groups ' + $part) $chunk; $chunk = '' }
+        $chunk += $line + "`n"
+    }
+    if ($chunk -and $part -lt 8) { $part++; Write-Annotation 'notice' ('Strict-mode groups ' + $part) $chunk }
     if ($env:GITHUB_STEP_SUMMARY) {
         $sum = @('### Strict-mode finder (#256)', '', '| Tests | Error [raised at] | Example test |', '|---:|---|---|')
         foreach ($g in $groups) { $sum += ('| {0} | {1} | {2} |' -f $g.Count, ($g.Name -replace '\|', '/'), ($g.Group[0].Test -replace '\|', '/')) }

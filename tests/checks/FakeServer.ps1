@@ -86,14 +86,16 @@ function Invoke-NativeCapture {
     $spec = $script:Fake.Native[$leaf]
     if ($spec -is [scriptblock]) { $spec = & $spec $ArgumentList }
     if (-not $spec) { $spec = @{} }
-    $output = [string]$spec.Output
+    # Indexers, not dot access: a key the fixture leaves out is $null, also
+    # under the strict-mode finder (#256).
+    $output = [string]$spec['Output']
     return [pscustomobject]@{
-        ExitCode = $(if ($spec.ContainsKey('ExitCode')) { $spec.ExitCode } else { 0 })
+        ExitCode = $(if ($spec.ContainsKey('ExitCode')) { $spec['ExitCode'] } else { 0 })
         Output   = $output
         Lines    = @($output -split '\r?\n' | Where-Object { $_ -ne '' })
-        TimedOut = [bool]$spec.TimedOut
-        StillRunning = [bool]$spec.StillRunning
-        Error    = [string]$spec.Error
+        TimedOut = [bool]$spec['TimedOut']
+        StillRunning = [bool]$spec['StillRunning']
+        Error    = [string]$spec['Error']
     }
 }
 function Get-InstalledApplication { return @($script:Fake.Apps) }
