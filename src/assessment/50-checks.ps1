@@ -748,7 +748,8 @@ Register-Check -Id 'network' -Name 'Network, teaming, hosts and routes' -Script 
         $teamNic = Get-NetAdapter -Name $t.Name -ErrorAction SilentlyContinue
         $boundToVSwitch = ($teamNic -and $vSwitchDescriptions -contains [string]$teamNic.InterfaceDescription)
         $details = @(('Mode=' + $t.TeamingMode),('LoadBalancing=' + $t.LoadBalancingAlgorithm),('Members=' + (@($t.Members) -join ',')))
-        if ($boundToVSwitch) {
+        # A Hyper-V switch on LBFO is supported up to 2019 and removed from 2022 on (#332).
+        if ($boundToVSwitch -and $TargetServerVersion -ne '2019') {
             Add-Result 'NETWORK' ('LBFO team: ' + $t.Name) 'ACTION' 'LBFO team bound to a Hyper-V virtual switch' $details -Recommendation 'LBFO under a Hyper-V vSwitch is not supported on Windows Server 2022/2025. Convert to Switch Embedded Teaming (SET) as a separate, planned change before IPU.' -Source 'Get-NetLbfoTeam, Get-VMSwitch' -Command (Get-RecommendationCommand 'LbfoTeams').Command -CommandKind 'Check'
         } else {
             Add-Result 'NETWORK' ('LBFO team: ' + $t.Name) 'ACTION' ('Status=' + $t.Status) $details -Recommendation 'Microsoft requires NIC Teaming to be disabled before IPU and re-enabled afterwards. Plan console access - the team carries the server''s IP configuration.' -Source 'Get-NetLbfoTeam' -Command (Get-RecommendationCommand 'LbfoTeams').Command -CommandKind 'Check'
@@ -865,7 +866,7 @@ Register-Check -Id 'sql' -Name 'SQL Server' -Script {
             Add-Result 'SQL' ($typeName + ': ' + $i.Instance) 'MANUAL' 'Version not found' ('InstanceId=' + $i.Id) -Recommendation 'Determine the SQL Server version and check it against the target OS support matrix.' -Source ($i.Root + '\Instance Names')
             continue
         }
-        $d = Get-SqlSupportDecision $major $TargetServerVersion
+        $d = Get-SqlSupportDecision $major $TargetServerVersion ([string]$i.Version)
         $summary += ($i.Instance + '=' + $d.Release)
         Add-Result 'SQL' ($typeName + ': ' + $i.Instance) $d.Status $d.Release @(('Version=' + $i.Version),('Edition=' + $i.Edition),('InstanceId=' + $i.Id)) -Recommendation $d.Text -Source 'SQL Server instance registry; Microsoft SQL Server / Windows compatibility matrix'
     }

@@ -378,3 +378,41 @@ Describe 'PKI site policy (#322)' {
     }
 }
 
+Describe 'Target Windows Server 2019 (#332)' {
+    It 'the parameter accepts 2019 as a target and in the PKI policy list' {
+        $cmd = Get-Command (Join-Path $PSScriptRoot '..\..\src\Windows-IPU-Readiness-Assessment.ps1')
+        $set = @($cmd.Parameters['TargetServerVersion'].Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] })[0]
+        $set.ValidValues | Should -Contain '2019'
+        $pattern = @($cmd.Parameters['PkiAllowedTargets'].Attributes | Where-Object { $_ -is [System.Management.Automation.ValidatePatternAttribute] })[0].RegexPattern
+        '2019,2022' | Should -Match $pattern
+    }
+    It '<Source> to 2019 is <Expected>' -TestCases @(
+        @{ Source = '2012R2'; Expected = 'OK' }
+        @{ Source = '2016';   Expected = 'OK' }
+        @{ Source = '2019';   Expected = 'INFO' }
+        @{ Source = '2022';   Expected = 'BLOCKER' }
+        @{ Source = '2012';   Expected = 'BLOCKER' }
+    ) {
+        (Get-UpgradePathDecision $Source '2019' $false).Status | Should -Be $Expected
+    }
+    It 'an unknown target names all three configured targets' {
+        (Get-UpgradePathDecision '2016' '2008' $false).Text | Should -Match 'Use 2025, 2022 or 2019'
+    }
+    It 'a PKI server is held to the PKI policy for 2019 too' {
+        (Get-PkiTargetDecision '2016' '2019' @('2022')).Kind | Should -Be 'TargetNotAllowed'
+        (Get-PkiTargetDecision '2016' '2019' @('2019', '2022')).Kind | Should -Be 'Allowed'
+    }
+    It 'features removed or no longer developed in 2019 (2019 tab only)' {
+        # The function returns its array whole (return ,$out): assign, do not wrap in @().
+        $r = Get-FeatureLifecycleFinding @('Print-Scan-Server', 'ISNS', 'Web-Digest-Auth', 'Web-Metabase') '2019'
+        @($r).Count | Should -Be 4
+        ($r | Where-Object { $_.Feature -eq 'Print-Scan-Server' }).Status | Should -Be 'ACTION'
+        ($r | Where-Object { $_.Feature -eq 'ISNS' }).Status | Should -Be 'WARNING'
+        ($r | Where-Object { $_.Feature -eq 'Web-Digest-Auth' }).Kind | Should -Be 'Observation'
+        ($r | Where-Object { $_.Feature -eq 'Web-Metabase' }).Status | Should -Be 'WARNING'
+        $r22 = Get-FeatureLifecycleFinding @('ISNS') '2022'
+        ($r22 | Where-Object { $_.Feature -eq 'ISNS' }).Status | Should -Be 'ACTION'
+        $r25 = Get-FeatureLifecycleFinding @('Web-Digest-Auth', 'Print-Scan-Server') '2025'
+        @($r25).Count | Should -Be 0
+    }
+}

@@ -202,9 +202,10 @@ Describe 'Edge cases for thin decision functions (#40)' {
             (Get-UpgradePathDecision '2025' '2022' $false).Text | Should -Match 'Downgrade is not possible'
         }
         It 'an unconfigured target is MANUAL and names the valid targets' {
-            $d = Get-UpgradePathDecision '2019' '2019' $false
+            # 2019 became a target in #332; 2016 is not one.
+            $d = Get-UpgradePathDecision '2016' '2016' $false
             $d.Status | Should -Be 'MANUAL'
-            $d.Text | Should -Match '2025 or 2022'
+            $d.Text | Should -Match '2025, 2022 or 2019'
         }
         It 'a clustered node on the same release still points to SPECIAL (#152)' {
             (Get-UpgradePathDecision '2025' '2025' $true).Text | Should -Match 'SPECIAL'
@@ -461,4 +462,41 @@ Describe 'Get-PrinterReadFailureDecision (#242)' {
     It 'without the role, a disabled spooler explains it' { Get-PrinterReadFailureDecision $false 'Disabled' $true | Should -Be 'NotPrintServer' }
     It 'without the role, a missing spooler explains it' { Get-PrinterReadFailureDecision $false '' $false | Should -Be 'NotPrintServer' }
     It 'without the role but with a spooler that should run, it is unexplained' { Get-PrinterReadFailureDecision $false 'Auto' $true | Should -Be 'Manual' }
+}
+
+Describe 'SQL Server on a 2019 target (#332)' {
+    It 'SQL Server <Major> on 2019 is <Expected>' -TestCases @(
+        @{ Major = 10; Expected = 'BLOCKER' }
+        @{ Major = 11; Expected = 'OK' }
+        @{ Major = 12; Expected = 'OK' }
+        @{ Major = 13; Expected = 'OK' }
+        @{ Major = 14; Expected = 'OK' }
+        @{ Major = 17; Expected = 'OK' }
+    ) {
+        (Get-SqlSupportDecision $Major '2019').Status | Should -Be $Expected
+    }
+    It 'SQL Server 2016 on 2022 points to 2019 as a target that supports it' {
+        $d = Get-SqlSupportDecision 13 '2022'
+        $d.Status | Should -Be 'BLOCKER'
+        $d.Text | Should -Match 'Windows Server 2019'
+    }
+    It 'a version below the service pack Microsoft requires on 2019 is an ACTION: <Version>' -TestCases @(
+        @{ Major = 11; Version = '11.0.6020.0'; Sp = 'Service Pack 4' }
+        @{ Major = 12; Version = '12.0.5000.0'; Sp = 'Service Pack 3' }
+        @{ Major = 13; Version = '13.0.5026.0'; Sp = 'Service Pack 3' }
+    ) {
+        $d = Get-SqlSupportDecision $Major '2019' $Version
+        $d.Status | Should -Be 'ACTION'
+        $d.Text | Should -Match $Sp
+    }
+    It 'at or above the required service pack is OK; an unknown version names the minimum' {
+        (Get-SqlSupportDecision 13 '2019' '13.0.6300.2').Status | Should -Be 'OK'
+        (Get-SqlSupportDecision 12 '2019' '12.0.6024.0').Status | Should -Be 'OK'
+        $d = Get-SqlSupportDecision 11 '2019' ''
+        $d.Status | Should -Be 'OK'
+        $d.Text | Should -Match 'Service Pack 4 or later'
+    }
+    It 'other targets ignore the 2019 service-pack rule' {
+        (Get-SqlSupportDecision 14 '2022' '14.0.1000.169').Status | Should -Be 'OK'
+    }
 }

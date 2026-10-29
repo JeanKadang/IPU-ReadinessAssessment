@@ -8,11 +8,11 @@
 # source, update the table if it changed, and set Verified to the day you
 # checked (CONTRIBUTING, "Dated facts").
 $script:FactSources = [ordered]@{
-    SupportedUpgradePaths  = @{ Verified = '2026-10-13'; Source = 'https://learn.microsoft.com/en-us/windows-server/get-started/install-upgrade-migrate' }
-    SqlSupportedOnTarget   = @{ Verified = '2026-10-13'; Source = 'https://learn.microsoft.com/en-us/troubleshoot/sql/general/use-sql-server-in-windows' }
+    SupportedUpgradePaths  = @{ Verified = '2026-10-29'; Source = 'https://learn.microsoft.com/en-us/windows-server/get-started/install-upgrade-migrate' }
+    SqlSupportedOnTarget   = @{ Verified = '2026-10-29'; Source = 'https://learn.microsoft.com/en-us/troubleshoot/sql/general/use-sql-server-in-windows' }
     ReleaseEndOfSupport    = @{ Verified = '2026-10-13'; Source = 'https://learn.microsoft.com/en-us/lifecycle/products/windows-server-2025' }
     # FeatureLifecycle: the page has one tab per release. SMTP Server, the IIS 6 console and PowerShell 2.0 are removed on the 2025 tab only; the 2022 tab removes iSNS and nothing else (#187). A row lists only the targets whose tab names it (#232).
-    FeatureLifecycle       = @{ Verified = '2026-10-22'; Source = 'https://learn.microsoft.com/en-us/windows-server/get-started/removed-deprecated-features-windows-server-2025' }
+    FeatureLifecycle       = @{ Verified = '2026-10-29'; Source = 'https://learn.microsoft.com/en-us/windows-server/get-started/removed-deprecated-features-windows-server-2025' }
     PerUserServices        = @{ Verified = '2026-10-23'; Source = 'https://learn.microsoft.com/en-us/windows/application-management/per-user-services-in-windows' }
     # VMwareToolsMinimum: Broadcom's guest OS compatibility table for 2019 and 2022 (#253); 2025 keeps 12.5.0, the first release with drivers certified for it (Broadcom blog, 2024-11-07).
     VMwareToolsMinimum     = @{ Verified = '2026-10-29'; Source = 'https://knowledge.broadcom.com/external/article/313371/vmware-tools-compatibility-with-guest-op' }
@@ -42,6 +42,7 @@ $script:ReleaseOrder = @('2012','2012R2','2016','2019','2022','2025')
 # Microsoft "Supported in-place upgrade paths" (installation media).
 # Verified: see $script:FactSources.SupportedUpgradePaths.
 $script:SupportedUpgradePaths = @{
+    '2019' = @('2012R2','2016')
     '2022' = @('2016','2019')
     '2025' = @('2012R2','2016','2019','2022')
 }
@@ -53,8 +54,21 @@ $script:SqlReleaseNames = @{ 9='2005'; 10='2008 / 2008 R2'; 11='2012'; 12='2014'
 # Default instance names: product names, kept readable in redacted reports (#195).
 $script:SqlDefaultInstanceNames = @('MSSQLSERVER','SQLEXPRESS','SSRS','PBIRS')
 $script:SqlSupportedOnTarget = @{
+    '2019' = @(11,12,13,14,15,16,17)
     '2022' = @(14,15,16,17)
     '2025' = @(15,16,17)
+}
+
+# Lowest build Microsoft supports per SQL Server major version on a target,
+# where the matrix names a service pack (#332). Windows Server 2019: SQL
+# Server 2012 SP4, 2014 SP3, 2016 SP3.
+# Verified: see $script:FactSources.SqlSupportedOnTarget.
+$script:SqlMinimumOnTarget = @{
+    '2019' = @{
+        11 = @{ Build = '11.0.7001'; ServicePack = 'Service Pack 4' }
+        12 = @{ Build = '12.0.6024'; ServicePack = 'Service Pack 3' }
+        13 = @{ Build = '13.0.6300'; ServicePack = 'Service Pack 3' }
+    }
 }
 
 function Get-ReleaseDisplayName {
@@ -194,7 +208,7 @@ function Get-UpgradePathDecision {
     }
     if (-not $Source) { return (& $make 'MANUAL' 'The source Windows Server release was not recognized.') }
     if (-not $script:SupportedUpgradePaths.ContainsKey($Target)) {
-        return (& $make 'MANUAL' ("Target '" + $Target + "' is not a configured target. Use 2025 or 2022."))
+        return (& $make 'MANUAL' ("Target '" + $Target + "' is not a configured target. Use 2025, 2022 or 2019."))
     }
     if ($Source -eq $Target) { return (& $make 'INFO' ('Source is already ' + (Get-ReleaseDisplayName $Target) + '.')) }
     if ($script:ReleaseOrder.IndexOf($Source) -gt $script:ReleaseOrder.IndexOf($Target)) {
@@ -329,7 +343,9 @@ function Get-PlatformClassification {
 }
 
 function Get-SqlSupportDecision {
-    param([int]$Major, [string]$Target)
+    # -Version (#332): where Microsoft requires a service pack on the target,
+    # a known version below it is an ACTION; an unknown one names the minimum.
+    param([int]$Major, [string]$Target, [string]$Version = '')
     $name = $script:SqlReleaseNames[$Major]
     if (-not $name) { $name = 'major version ' + $Major }
     $label = 'SQL Server ' + $name
@@ -337,6 +353,18 @@ function Get-SqlSupportDecision {
         return [pscustomobject]@{ Status='MANUAL'; Release=$label; Text=('No SQL support matrix configured for target ' + $Target + '.') }
     }
     if ($script:SqlSupportedOnTarget[$Target] -contains $Major) {
+        $min = $null
+        if ($script:SqlMinimumOnTarget.ContainsKey($Target) -and $script:SqlMinimumOnTarget[$Target].ContainsKey($Major)) { $min = $script:SqlMinimumOnTarget[$Target][$Major] }
+        if ($min) {
+            $parsed = $null
+            $clean = ([regex]::Match([string]$Version, '^\d+(\.\d+){1,3}')).Value
+            if ($clean -and [version]::TryParse($clean, [ref]$parsed) -and $parsed -lt [version]$min.Build) {
+                return [pscustomobject]@{ Status='ACTION'; Release=$label; Text=($label + ' ' + $clean + ' is below ' + $min.ServicePack + ' (' + $min.Build + '), which Microsoft requires on ' + (Get-ReleaseDisplayName $Target) + '. Install ' + $min.ServicePack + ' and the latest CU before IPU, and engage the DBA.') }
+            }
+            if (-not $parsed) {
+                return [pscustomobject]@{ Status='OK'; Release=$label; Text=($label + ' is supported on ' + (Get-ReleaseDisplayName $Target) + ' with ' + $min.ServicePack + ' or later. Confirm the service pack and the latest CU are installed, and engage the DBA.') }
+            }
+        }
         return [pscustomobject]@{ Status='OK'; Release=$label; Text=($label + ' is supported on ' + (Get-ReleaseDisplayName $Target) + '. Confirm the latest CU is installed and engage the DBA.') }
     }
     $alternatives = @()

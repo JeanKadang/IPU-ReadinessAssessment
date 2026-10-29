@@ -1,7 +1,7 @@
 # IPU-ReadinessAssessment
 
 Read-only **in-place upgrade (IPU) readiness assessment** for Windows Server. Run it on a server
-before an upgrade to **Windows Server 2025** (default) or **2022**, and get one verdict, a prioritised
+before an upgrade to **Windows Server 2025** (default), **2022** or **2019**, and get one verdict, a prioritised
 list of what to fix, and a self-contained report. Run it again afterwards to check the server against
 its own pre-upgrade snapshot.
 

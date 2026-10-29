@@ -176,6 +176,16 @@ Describe 'Checks on a fake server: workloads' -Skip:($env:OS -ne 'Windows_NT') {
             (Invoke-TestCheck 'sql').Outcome | Should -Be 'Completed'
             $script:Results.Count | Should -Be 0
         }
+        It 'SQL Server 2016 below SP3 is an ACTION for a 2019 target (#332)' {
+            $root = 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server'
+            $script:Fake.ItemProperty[$root + '\Instance Names\SQL'] = [pscustomobject]@{ MSSQLSERVER = 'MSSQL13.MSSQLSERVER' }
+            $script:Fake.ItemProperty[$root + '\MSSQL13.MSSQLSERVER\Setup'] = [pscustomobject]@{ Version = '13.0.5026.0'; Edition = 'Standard Edition' }
+            $TargetServerVersion = '2019'
+            $null = Invoke-TestCheck 'sql'
+            $r = (Get-Row 'SQL' 'Database Engine: MSSQLSERVER')[0]
+            $r.Status | Should -Be 'ACTION'
+            $r.Recommendation | Should -Match 'Service Pack 3'
+        }
         It 'SQL Server 2017 is a BLOCKER for a 2025 target' {
             $root = 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server'
             $script:Fake.ItemProperty[$root + '\Instance Names\SQL'] = [pscustomobject]@{ MSSQLSERVER = 'MSSQL14.MSSQLSERVER' }

@@ -25,7 +25,7 @@ real script on Windows PowerShell 5.1 and PowerShell 7 and validates both files 
 | `CollectorVersion` | string, `x.y.z` | Script version that wrote the file |
 | `ComputerName` | string | Server name |
 | `Mode` | `Pre` or `Post` | Which run wrote the file |
-| `TargetServerVersion` | `2025` or `2022` | Planned target |
+| `TargetServerVersion` | `2025`, `2022` or `2019` | Planned target |
 | `Started`, `Completed` | `yyyy-MM-dd HH:mm:ss` | Local time on the server |
 | `UtcOffset` | `+02:00`, `-05:30`, optional | The server's offset from UTC when it finished, so results from different time zones can be sorted as dates. Files from before 4.5.4 have none; readers then compare the local times as they are |
 | `Partial` | boolean | `true` for the checkpoint written before the slow checks finished. If this is the newest file, the run was stopped early |

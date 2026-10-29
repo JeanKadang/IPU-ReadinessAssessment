@@ -279,6 +279,18 @@ Describe 'Checks on a fake server: platform storage network' -Skip:($env:OS -ne 
             $null = Invoke-TestCheck 'network'
             (Get-Row 'NETWORK' 'LBFO team: Team1')[0].Value | Should -Be 'LBFO team bound to a Hyper-V virtual switch'
         }
+        It 'for a 2019 target an LBFO team under a Hyper-V switch is the general LBFO ACTION (#332)' {
+            $script:Fake.MissingCommands = @('Get-Cluster')
+            $script:Fake.LbfoTeams = @([pscustomobject]@{ Name = 'Team1'; Status = 'Up'; TeamingMode = 'SwitchIndependent'; LoadBalancingAlgorithm = 'Dynamic'; Members = @('NIC1', 'NIC2') })
+            $script:Fake.NetAdapters = @([pscustomobject]@{ Name = 'Team1'; InterfaceDescription = 'Microsoft Network Adapter Multiplexor Driver' })
+            $script:Fake.VMSwitches = @([pscustomobject]@{ Name = 'vSwitch'; NetAdapterInterfaceDescription = 'Microsoft Network Adapter Multiplexor Driver' })
+            $TargetServerVersion = '2019'
+            $null = Invoke-TestCheck 'network'
+            $r = (Get-Row 'NETWORK' 'LBFO team: Team1')[0]
+            $r.Status | Should -Be 'ACTION'
+            $r.Value | Should -Be 'Status=Up'
+            $r.Recommendation | Should -Match 'disabled before IPU'
+        }
         It 'adapter details: IPv6, DNS suffix, registration, WINS, NetBIOS, metric and VLAN (#149)' {
             $script:Fake.Cim['Win32_NetworkAdapterConfiguration|IPEnabled=True'] = [pscustomobject]@{ Index = 1; IPAddress = @('10.20.30.40', 'fe80::1', '2001:db8::40'); IPSubnet = @('255.255.255.0', '64', '64'); DefaultIPGateway = @('10.20.30.1'); DNSServerSearchOrder = @('10.20.1.10'); DHCPEnabled = $false; MACAddress = '00:50:56:00:00:01'; Description = 'vmxnet3 Ethernet Adapter'; DNSDomain = 'corp.example.test'; DNSDomainSuffixSearchOrder = @('corp.example.test', 'example.test'); FullDNSRegistrationEnabled = $true; DomainDNSRegistrationEnabled = $false; WINSPrimaryServer = '10.20.1.20'; WINSSecondaryServer = $null; TcpipNetbiosOptions = 2; IPConnectionMetric = 15 }
             $script:Fake.NetAdapters = @([pscustomobject]@{ Name = 'Ethernet0'; InterfaceDescription = 'vmxnet3 Ethernet Adapter'; MacAddress = '00-50-56-00-00-01'; VlanID = 20 })

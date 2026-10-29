@@ -125,6 +125,14 @@ $script:FeatureLifecycle = @(
     @{ Feature='UpdateServices';           Name='WSUS';                            State='Deprecated'; Targets=@('2025') }
     @{ Feature='ISNS';                     Name='iSNS Server service';             State='Removed';    Targets=@('2022','2025') }
     @{ Feature='WINS';                     Name='Windows Internet Name Service (WINS)'; State='Deprecated'; Targets=@('2022') }
+    # Windows Server 2019 tab (#332).
+    @{ Feature='Print-Scan-Server';        Name='Business Scanning (Distributed Scan Management)'; State='Removed'; Targets=@('2019') }
+    @{ Feature='ISNS';                     Name='iSNS Server service';             State='Deprecated'; Targets=@('2019') }
+    @{ Feature='Web-Metabase';             Name='IIS 6 Metabase Compatibility';    State='Deprecated'; Targets=@('2019') }
+    @{ Feature='Web-Lgcy-Mgmt-Console';    Name='IIS 6 Management Console';        State='Deprecated'; Targets=@('2019') }
+    @{ Feature='Web-Lgcy-Scripting';       Name='IIS 6 Scripting Tools';           State='Deprecated'; Targets=@('2019') }
+    @{ Feature='Web-WMI';                  Name='IIS 6 WMI Compatibility';         State='Deprecated'; Targets=@('2019') }
+    @{ Feature='Web-Digest-Auth';          Name='IIS Digest Authentication';       State='Deprecated'; Targets=@('2019') }
 )
 
 
