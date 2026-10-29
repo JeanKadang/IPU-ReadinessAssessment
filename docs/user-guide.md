@@ -118,10 +118,10 @@ Anything else is reported as a `BLOCKER`. A **cluster node** and, by site policy
 (`-BlockDomainControllerIPU`) are reported as **SPECIAL** (see below).
 
 **PKI servers** (a Certification Authority) follow a site policy too: the PKI team allows an in-place upgrade only to
-the releases in `-PkiAllowedTargets` (default `2022`). A CA server assessed against 2025 gets a `BLOCKER` that says to
-assess it against 2022, or to agree an exception with the PKI team. A 2012 R2 CA server has no allowed path (2012 R2
-cannot go directly to 2022), so it gets a `BLOCKER` that points to a migration, and the upgrade path row does not
-suggest 2025.
+the releases in `-PkiAllowedTargets` (default `2019,2022`). A CA server assessed against 2025 gets a `BLOCKER` that
+names the newest allowed release it can reach (2022, or 2019 from 2012 R2) and says that an in-place upgrade to 2025
+needs an exception agreed with the PKI team (for example for the last PKI server in the environment). Building a new
+PKI on 2025 is a migration, not an in-place upgrade, and is outside this rule (#338).
 
 ### SPECIAL: cluster nodes and domain controllers
 
@@ -157,7 +157,7 @@ ad-hoc job). Override only what you need.
 | `TargetMediaPath` | blank | Folder/drive with `setup.exe`, UNC share, or `.iso`. Blank skips the Setup compatibility scan |
 | `TargetMediaLanguage` | blank | Language of the target ISO, for example `en-US`. Blank = the report tells you |
 | `BlockDomainControllerIPU` | `$true` | Site policy: a domain controller is reported as **SPECIAL** with a short report (not a standard IPU). `$false` gives the full report with a WARNING instead |
-| `PkiAllowedTargets` | `'2022'` | Site policy (#322): the releases a PKI server (Certification Authority role or `CertSvc`) may be upgraded to in place, comma-separated. Another target is a **BLOCKER**, and the upgrade path never suggests it. `'2022,2025'` lifts the rule |
+| `PkiAllowedTargets` | `'2019,2022'` | Site policy (#322, #338): the releases a PKI server (Certification Authority role or `CertSvc`) may be upgraded to in place, comma-separated. Another target is a **BLOCKER**, and the upgrade path never suggests it. `'2019,2022,2025'` lifts the rule |
 
 ### Thresholds
 
@@ -316,7 +316,7 @@ Both examples are in [`docs/examples`](examples/). A JSON backslash must be doub
 
 **Defaults that come from one site.** A few defaults reflect the site the tool was first built for:
 `NumberCultureName` is `da-DK`, `BlockDomainControllerIPU` is on (a domain controller is SPECIAL, see above),
-`PkiAllowedTargets` is `2022` (the PKI team's current rule), and
+`PkiAllowedTargets` is `2019,2022` (the PKI team's current rule), and
 `Merge-IPUAssessments.ps1` writes CSV files with `;`. They stay as they are so existing SA jobs that pass no
 arguments behave the same (#131). Another site sets its own values in a profile file, for example
 `"NumberCultureName": "en-US"` or `"BlockDomainControllerIPU": false`, and runs the merge with `-Delimiter ','` if

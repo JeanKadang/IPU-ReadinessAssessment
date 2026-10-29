@@ -239,6 +239,13 @@ Describe 'Checks on a fake server: access and security' -Skip:($env:OS -ne 'Wind
             (Get-Row 'PKI' 'PkiSitePolicy').Count | Should -Be 0
             (Get-Row 'PKI' 'CertificationAuthority')[0].Status | Should -Be 'ACTION'
         }
+        It 'a CA server assessed for 2019 has no policy row by default (#338)' {
+            $script:Fake.Cim['Win32_Service'] = @($script:Fake.Cim['Win32_Service']) + @(New-FakeService 'CertSvc')
+            Reset-FakeServerKeep
+            $TargetServerVersion = '2019'
+            $null = Invoke-TestCheck 'pki'
+            (Get-Row 'PKI' 'PkiSitePolicy').Count | Should -Be 0
+        }
         It 'the allowed targets come from PkiAllowedTargets (#322)' {
             $script:Fake.Cim['Win32_Service'] = @($script:Fake.Cim['Win32_Service']) + @(New-FakeService 'CertSvc')
             Reset-FakeServerKeep

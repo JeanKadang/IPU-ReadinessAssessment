@@ -344,6 +344,13 @@ Describe 'PKI site policy (#322)' {
         @{ Source = '2019';   Target = '2025'; Allowed = '2022,2025'; Kind = 'Allowed';          Status = 'OK' }
         @{ Source = '2012R2'; Target = '2025'; Allowed = '2022,2025'; Kind = 'Allowed';          Status = 'OK' }
         @{ Source = '';       Target = '2025'; Allowed = '2022';      Kind = 'Unknown';          Status = 'MANUAL' }
+        # The default since #338: 2019 and 2022 allowed, 2025 not.
+        @{ Source = '2016';   Target = '2019'; Allowed = '2019,2022'; Kind = 'Allowed';          Status = 'OK' }
+        @{ Source = '2012R2'; Target = '2019'; Allowed = '2019,2022'; Kind = 'Allowed';          Status = 'OK' }
+        @{ Source = '2012R2'; Target = '2022'; Allowed = '2019,2022'; Kind = 'Allowed';          Status = 'OK' }
+        @{ Source = '2012R2'; Target = '2025'; Allowed = '2019,2022'; Kind = 'TargetNotAllowed'; Status = 'BLOCKER' }
+        @{ Source = '2016';   Target = '2025'; Allowed = '2019,2022'; Kind = 'TargetNotAllowed'; Status = 'BLOCKER' }
+        @{ Source = '2022';   Target = '2025'; Allowed = '2019,2022'; Kind = 'TargetNotAllowed'; Status = 'BLOCKER' }
     ) {
         $d = Get-PkiTargetDecision $Source $Target (ConvertTo-ReleaseList $Allowed)
         $d.Kind | Should -Be $Kind
@@ -358,6 +365,19 @@ Describe 'PKI site policy (#322)' {
     It 'a PKI server already on the highest allowed release is told to stay there' {
         $d = Get-PkiTargetDecision '2022' '2025' @('2022')
         $d.Text | Should -Match 'already on Windows Server 2022'
+    }
+    It 'a target outside the policy names the highest allowed target, the exception and a new build (#338)' {
+        $d = Get-PkiTargetDecision '2016' '2025' @('2019', '2022')
+        $d.Recommendation | Should -Match '-TargetServerVersion 2022'
+        $d.Recommendation | Should -Match 'exception agreed with the PKI team'
+        $d.Recommendation | Should -Match 'new PKI on Windows Server 2025'
+        (Get-PkiTargetDecision '2012R2' '2025' @('2019', '2022')).Recommendation | Should -Match '-TargetServerVersion 2019'
+        (Get-PkiTargetDecision '2022' '2025' @('2019', '2022')).Recommendation | Should -Match 'exception agreed with the PKI team'
+    }
+    It 'the parameter default allows 2019 and 2022 (#338)' {
+        $cmd = Get-Command (Join-Path $PSScriptRoot '..\..\src\Windows-IPU-Readiness-Assessment.ps1')
+        $default = $cmd.ScriptBlock.Ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'PkiAllowedTargets' }
+        $default.DefaultValue.Value | Should -Be '2019,2022'
     }
     It 'no allowed path means a migration with the PKI team' {
         $d = Get-PkiTargetDecision '2012R2' '2022' @('2022')

@@ -4,6 +4,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- PKI site policy (#338): the PKI team allows an in-place upgrade of a PKI server to Windows Server 2019 and 2022, not only 2022. `PkiAllowedTargets` now defaults to `2019,2022`, so a CA server assessed against 2019 no longer gets a false BLOCKER, and a 2012 R2 CA server is pointed to 2019 instead of a migration. The 2025 BLOCKER names the newest allowed release it can reach, and says that 2025 needs an exception agreed with the PKI team and that a new PKI build on 2025 is outside the rule.
+
 ## [4.6.0] - 2026-10-29
 
 ### Added

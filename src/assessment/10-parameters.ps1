@@ -27,7 +27,7 @@ param(
     # Site policy (#322): the releases a PKI server (Certification Authority
     # role or CertSvc) may be upgraded to in place, comma-separated. The PKI
     # team allows only 2022 for now; '2019,2022,2025' lifts the rule.
-    [ValidatePattern('^\s*(2019|2022|2025)\s*(,\s*(2019|2022|2025)\s*)*$')][string]$PkiAllowedTargets = '2022',
+    [ValidatePattern('^\s*(2019|2022|2025)\s*(,\s*(2019|2022|2025)\s*)*$')][string]$PkiAllowedTargets = '2019,2022',
 
     # Operational thresholds (project values, not Microsoft minimums unless noted).
     [ValidateRange(1, 2048)][int]$MinimumCFreeGB = 40,
