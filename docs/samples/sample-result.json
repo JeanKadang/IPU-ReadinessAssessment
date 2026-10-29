@@ -1,6 +1,6 @@
 {
   "Schema": "IPU-Assessment/1",
-  "CollectorVersion": "4.5.4",
+  "CollectorVersion": "4.6.0",
   "ComputerName": "SRV-APP01",
   "Mode": "Pre",
   "TargetServerVersion": "2025",
@@ -176,7 +176,7 @@
       "Kind": "Finding",
       "Value": "SQL Server 2017",
       "Details": "Version=14.0.3485.1 | Edition=Standard Edition | InstanceId=MSSQL14.MSSQLSERVER",
-      "Recommendation": "SQL Server 2017 is not supported on Windows Server 2025. Windows Server 2022 supports this SQL version - choose that target, or upgrade SQL Server first.",
+      "Recommendation": "SQL Server 2017 is not supported on Windows Server 2025. Windows Server 2019 and Windows Server 2022 support this SQL version - choose one of those targets, or upgrade SQL Server first.",
       "Source": "SQL Server instance registry",
       "Command": "",
       "CommandKind": "",
