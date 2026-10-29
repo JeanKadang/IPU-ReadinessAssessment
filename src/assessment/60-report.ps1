@@ -615,7 +615,7 @@ function Import-SiteDataFile {
             $details = @()
             foreach ($k in @($decision.Settings.Keys)) {
                 Set-Variable -Name $k -Value $decision.Settings[$k] -Scope Script
-                $details += ($k + '=' + [string]$decision.Settings[$k])
+                $details += ($k + '=' + (@($decision.Settings[$k]) -join ','))
             }
             foreach ($k in @($decision.Ignored)) { $details += ($k + ': the argument given to the script was used') }
             if ($decision.Settings.Contains('NumberCultureName')) {

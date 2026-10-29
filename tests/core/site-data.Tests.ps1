@@ -91,6 +91,16 @@ Describe 'Site data files (#32)' {
             $d.Settings['WriteJson'] | Should -BeOfType ([bool])
             $d.Settings['NumberCultureName'] | Should -Be 'en-GB'
         }
+        It 'PkiAllowedTargets takes a string or a JSON array, and rejects another release (#340)' {
+            $d = Get-ProfileSettingDecision (New-ProfileFile '"Settings": { "PkiAllowedTargets": "2019,2022" }') $script:ProfileAttributes
+            @($d.Errors).Count | Should -Be 0
+            (@(ConvertTo-ReleaseList $d.Settings['PkiAllowedTargets']) -join '|') | Should -Be '2019|2022'
+            $d = Get-ProfileSettingDecision (New-ProfileFile '"Settings": { "PkiAllowedTargets": [ "2019", "2022", "2025" ] }') $script:ProfileAttributes
+            @($d.Errors).Count | Should -Be 0
+            (@(ConvertTo-ReleaseList $d.Settings['PkiAllowedTargets']) -join '|') | Should -Be '2019|2022|2025'
+            $d = Get-ProfileSettingDecision (New-ProfileFile '"Settings": { "PkiAllowedTargets": [ "2019", "2016" ] }') $script:ProfileAttributes
+            ($d.Errors -join ' | ') | Should -BeLike '*PkiAllowedTargets*'
+        }
         It 'an argument given to the script wins over the profile' {
             $d = Get-ProfileSettingDecision (New-ProfileFile '"Settings": { "MinimumCFreeGB": 60, "MaxPatchAgeDays": 30 }') $script:ProfileAttributes -Bound @('MinimumCFreeGB')
             $d.Settings.Contains('MinimumCFreeGB') | Should -BeFalse

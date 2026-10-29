@@ -327,6 +327,20 @@ Describe 'PKI site policy (#322)' {
     It 'ConvertTo-ReleaseList reads a comma-separated list' {
         (@(ConvertTo-ReleaseList ' 2022 , 2025') -join '|') | Should -Be '2022|2025'
         (@(ConvertTo-ReleaseList '2022') -join '|') | Should -Be '2022'
+        # An unquoted 2019,2022 on the command line arrives as an array (#340).
+        (@(ConvertTo-ReleaseList @('2019', '2022')) -join '|') | Should -Be '2019|2022'
+        (@(ConvertTo-ReleaseList @('2019', ' 2022,2025')) -join '|') | Should -Be '2019|2022|2025'
+    }
+    It 'PkiAllowedTargets binds with or without quotes and still rejects other releases (#340)' {
+        $cmd = Get-Command (Join-Path $PSScriptRoot '..\..\src\Windows-IPU-Readiness-Assessment.ps1')
+        $p = $cmd.Parameters['PkiAllowedTargets']
+        $p.ParameterType | Should -Be ([string[]])
+        $attrs = New-Object 'System.Collections.ObjectModel.Collection[Attribute]'
+        foreach ($a in @($p.Attributes)) { if ($a -is [System.Management.Automation.ValidateArgumentsAttribute]) { $attrs.Add($a) } }
+        $none = [System.Management.Automation.ScopedItemOptions]::None
+        { New-Object System.Management.Automation.PSVariable('t', [string[]]@('2019', '2022'), $none, $attrs) } | Should -Not -Throw
+        { New-Object System.Management.Automation.PSVariable('t', [string[]]@('2019,2022'), $none, $attrs) } | Should -Not -Throw
+        { New-Object System.Management.Automation.PSVariable('t', [string[]]@('2019', '2016'), $none, $attrs) } | Should -Throw
     }
     It 'Test-PkiServer: the CA role or the CertSvc service' {
         Test-PkiServer $true @() | Should -BeTrue
