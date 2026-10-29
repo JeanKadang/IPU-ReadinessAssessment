@@ -244,22 +244,25 @@ function Test-PkiServer {
 }
 
 function Get-PkiTargetDecision {
-    # Pure (#322): the site policy for PKI servers. The PKI team allows an
-    # in-place upgrade only to the releases in $Allowed. Kind is Allowed,
-    # TargetNotAllowed, NoAllowedPath or Unknown.
+    # Pure (#322, #338): the site policy for PKI servers. The PKI team allows
+    # an in-place upgrade only to the releases in $Allowed; another target
+    # needs an exception from them, and a new PKI build is not an in-place
+    # upgrade. Kind is Allowed, TargetNotAllowed, NoAllowedPath or Unknown.
     param([string]$Source, [string]$Target, [string[]]$Allowed)
     $make = { param($k, $s, $t, $r) [pscustomobject]@{ Kind = $k; Status = $s; Text = $t; Recommendation = $r } }
     $names = (@($Allowed | ForEach-Object { Get-ReleaseDisplayName $_ }) -join ' or ')
     if (-not $Source) { return (& $make 'Unknown' 'MANUAL' 'The source release is unknown, so the PKI site policy cannot be checked.' ('Check by hand: PKI servers are upgraded in place only to ' + $names + '.')) }
     $canReach = { param($t) $Source -eq $t -or ($script:SupportedUpgradePaths.ContainsKey($t) -and $script:SupportedUpgradePaths[$t] -contains $Source) }
     if (@($Allowed) -contains $Target -and (& $canReach $Target)) { return (& $make 'Allowed' 'OK' ('The PKI site policy allows ' + (Get-ReleaseDisplayName $Target) + '.') '') }
-    $reachable = @($Allowed | Where-Object { $_ -ne $Source -and $script:SupportedUpgradePaths.ContainsKey($_) -and $script:SupportedUpgradePaths[$_] -contains $Source })
+    # Highest first, so the recommendation names the newest allowed release.
+    $reachable = @($Allowed | Where-Object { $_ -ne $Source -and $script:SupportedUpgradePaths.ContainsKey($_) -and $script:SupportedUpgradePaths[$_] -contains $Source } | Sort-Object -Descending)
+    $exception = ' An in-place upgrade to ' + (Get-ReleaseDisplayName $Target) + ' needs an exception agreed with the PKI team (for example for the last PKI server in the environment); building a new PKI on ' + (Get-ReleaseDisplayName $Target) + ' is a migration, not an in-place upgrade, and is outside this rule.'
     if (@($Allowed) -notcontains $Target) {
         if (@($Allowed) -contains $Source) {
-            return (& $make 'TargetNotAllowed' 'BLOCKER' ('Site policy: PKI servers are not upgraded in place beyond ' + $names + ', and this server is already on ' + (Get-ReleaseDisplayName $Source) + '.') 'Leave the server on its current release, or agree an exception with the PKI team before planning an upgrade.')
+            return (& $make 'TargetNotAllowed' 'BLOCKER' ('Site policy: PKI servers are not upgraded in place beyond ' + $names + ', and this server is already on ' + (Get-ReleaseDisplayName $Source) + '.') ('Leave the server on its current release.' + $exception))
         }
         if ($reachable.Count -gt 0) {
-            return (& $make 'TargetNotAllowed' 'BLOCKER' ('Site policy: PKI servers are upgraded in place only to ' + $names + ', not to ' + (Get-ReleaseDisplayName $Target) + '.') ('Assess and upgrade against ' + (Get-ReleaseDisplayName $reachable[0]) + ' (-TargetServerVersion ' + $reachable[0] + '), or agree an exception with the PKI team.'))
+            return (& $make 'TargetNotAllowed' 'BLOCKER' ('Site policy: PKI servers are upgraded in place only to ' + $names + ', not to ' + (Get-ReleaseDisplayName $Target) + '.') ('Assess and upgrade against ' + (Get-ReleaseDisplayName $reachable[0]) + ' (-TargetServerVersion ' + $reachable[0] + ').' + $exception))
         }
     } elseif ($reachable.Count -gt 0) {
         # The target is allowed but not reachable; another allowed one is:
