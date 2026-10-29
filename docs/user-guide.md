@@ -157,7 +157,7 @@ ad-hoc job). Override only what you need.
 | `TargetMediaPath` | blank | Folder/drive with `setup.exe`, UNC share, or `.iso`. Blank skips the Setup compatibility scan |
 | `TargetMediaLanguage` | blank | Language of the target ISO, for example `en-US`. Blank = the report tells you |
 | `BlockDomainControllerIPU` | `$true` | Site policy: a domain controller is reported as **SPECIAL** with a short report (not a standard IPU). `$false` gives the full report with a WARNING instead |
-| `PkiAllowedTargets` | `'2019,2022'` | Site policy (#322, #338): the releases a PKI server (Certification Authority role or `CertSvc`) may be upgraded to in place, comma-separated. Another target is a **BLOCKER**, and the upgrade path never suggests it. `'2019,2022,2025'` lifts the rule |
+| `PkiAllowedTargets` | `'2019,2022'` | Site policy (#322, #338): the releases a PKI server (Certification Authority role or `CertSvc`) may be upgraded to in place, comma-separated, with or without quotes (`2019,2022` or `'2019,2022'`; in a profile file a string or a JSON array). Another target is a **BLOCKER**, and the upgrade path never suggests it. `'2019,2022,2025'` lifts the rule |
 
 ### Thresholds
 

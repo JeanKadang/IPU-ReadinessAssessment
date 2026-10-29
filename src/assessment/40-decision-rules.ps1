@@ -231,9 +231,10 @@ function Get-UpgradePathDecision {
 }
 
 function ConvertTo-ReleaseList {
-    # Pure (#322): '2022, 2025' -> '2022','2025'.
-    param([string]$Text)
-    return @(($Text -split ',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    # Pure (#322, #340): '2022, 2025' -> '2022','2025'. Also takes an array
+    # (an unquoted 2022,2025 on the command line) or a mix of both.
+    param([string[]]$Text)
+    return @(@($Text) | ForEach-Object { [string]$_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 }
 
 function Test-PkiServer {

@@ -211,7 +211,7 @@ param(
     # Site policy (#322): the releases a PKI server (Certification Authority
     # role or CertSvc) may be upgraded to in place, comma-separated. The PKI
     # team allows only 2022 for now; '2019,2022,2025' lifts the rule.
-    [ValidatePattern('^\s*(2019|2022|2025)\s*(,\s*(2019|2022|2025)\s*)*$')][string]$PkiAllowedTargets = '2019,2022',
+    [ValidatePattern('^\s*(2019|2022|2025)\s*(,\s*(2019|2022|2025)\s*)*$')][string[]]$PkiAllowedTargets = '2019,2022',
 
     # Operational thresholds (project values, not Microsoft minimums unless noted).
     [ValidateRange(1, 2048)][int]$MinimumCFreeGB = 40,
@@ -2168,9 +2168,10 @@ function Get-UpgradePathDecision {
 }
 
 function ConvertTo-ReleaseList {
-    # Pure (#322): '2022, 2025' -> '2022','2025'.
-    param([string]$Text)
-    return @(($Text -split ',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    # Pure (#322, #340): '2022, 2025' -> '2022','2025'. Also takes an array
+    # (an unquoted 2022,2025 on the command line) or a mix of both.
+    param([string[]]$Text)
+    return @(@($Text) | ForEach-Object { [string]$_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 }
 
 function Test-PkiServer {
@@ -5428,7 +5429,7 @@ Register-Check -Id 'pki' -Name 'PKI, certificates and TLS bindings' -Script {
             $pkiSource = $script:Data.SourceRelease
             if (-not $pkiSource -and $script:Data.OS) { $pkiSource = Get-WindowsServerRelease $script:Data.OS.BuildNumber $script:Data.OS.Caption }
             $policy = Get-PkiTargetDecision $pkiSource $TargetServerVersion (ConvertTo-ReleaseList $PkiAllowedTargets)
-            if ($policy.Kind -ne 'Allowed') { Add-Result 'PKI' 'PkiSitePolicy' $policy.Status $policy.Text ('PkiAllowedTargets=' + $PkiAllowedTargets) -Recommendation $policy.Recommendation -Kind 'Finding' -Source 'Site policy (PkiAllowedTargets)' }
+            if ($policy.Kind -ne 'Allowed') { Add-Result 'PKI' 'PkiSitePolicy' $policy.Status $policy.Text ('PkiAllowedTargets=' + ((ConvertTo-ReleaseList $PkiAllowedTargets) -join ',')) -Recommendation $policy.Recommendation -Kind 'Finding' -Source 'Site policy (PkiAllowedTargets)' }
         }
         $active = (Get-RegistryValueSafe 'HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration' 'Active').Value
         if ($active) {
@@ -6914,7 +6915,7 @@ function Import-SiteDataFile {
             $details = @()
             foreach ($k in @($decision.Settings.Keys)) {
                 Set-Variable -Name $k -Value $decision.Settings[$k] -Scope Script
-                $details += ($k + '=' + [string]$decision.Settings[$k])
+                $details += ($k + '=' + (@($decision.Settings[$k]) -join ','))
             }
             foreach ($k in @($decision.Ignored)) { $details += ($k + ': the argument given to the script was used') }
             if ($decision.Settings.Contains('NumberCultureName')) {

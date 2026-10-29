@@ -1102,7 +1102,7 @@ Register-Check -Id 'pki' -Name 'PKI, certificates and TLS bindings' -Script {
             $pkiSource = $script:Data.SourceRelease
             if (-not $pkiSource -and $script:Data.OS) { $pkiSource = Get-WindowsServerRelease $script:Data.OS.BuildNumber $script:Data.OS.Caption }
             $policy = Get-PkiTargetDecision $pkiSource $TargetServerVersion (ConvertTo-ReleaseList $PkiAllowedTargets)
-            if ($policy.Kind -ne 'Allowed') { Add-Result 'PKI' 'PkiSitePolicy' $policy.Status $policy.Text ('PkiAllowedTargets=' + $PkiAllowedTargets) -Recommendation $policy.Recommendation -Kind 'Finding' -Source 'Site policy (PkiAllowedTargets)' }
+            if ($policy.Kind -ne 'Allowed') { Add-Result 'PKI' 'PkiSitePolicy' $policy.Status $policy.Text ('PkiAllowedTargets=' + ((ConvertTo-ReleaseList $PkiAllowedTargets) -join ',')) -Recommendation $policy.Recommendation -Kind 'Finding' -Source 'Site policy (PkiAllowedTargets)' }
         }
         $active = (Get-RegistryValueSafe 'HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration' 'Active').Value
         if ($active) {
