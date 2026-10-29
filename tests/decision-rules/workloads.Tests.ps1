@@ -173,10 +173,22 @@ Describe 'Get-VMwareToolsDecision' {
         @{ Version='13.0';            Target='2025'; Expected='OK' }
         @{ Version='12.4';            Target='2025'; Expected='ACTION' }
         @{ Version='11.3.5';          Target='2022'; Expected='OK' }
+        @{ Version='10.3.5';          Target='2022'; Expected='OK' }
+        @{ Version='10.3.2';          Target='2022'; Expected='ACTION' }
+        @{ Version='10.1.0';          Target='2019'; Expected='OK' }
+        @{ Version='10.0.12';         Target='2019'; Expected='ACTION' }
         @{ Version='';                Target='2025'; Expected='ACTION' }
         @{ Version='unknown';         Target='2025'; Expected='MANUAL' }
     ) {
         (Get-VMwareToolsDecision $Version $Target).Status | Should -Be $Expected
+    }
+    It 'names the Broadcom minimum for the target when Tools is older (#253)' {
+        (Get-VMwareToolsDecision '10.3.2' '2022').Text | Should -Match '10\.3\.5, the lowest release Broadcom lists as compatible with Windows Server 2022'
+        (Get-VMwareToolsDecision '10.0.12' '2019').Text | Should -Match '10\.1\.0'
+    }
+    It 'notes the recommended release when Tools is compatible but older (#253)' {
+        (Get-VMwareToolsDecision '11.3.5' '2022').Text | Should -Match 'Broadcom recommends 12\.0\.0 or later'
+        (Get-VMwareToolsDecision '12.1.0' '2022').Text | Should -Not -Match 'recommends 12\.0\.0'
     }
 }
 
