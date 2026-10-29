@@ -106,10 +106,23 @@ Describe 'Checks on a fake server: windows health' -Skip:($env:OS -ne 'Windows_N
             $script:Fake.Cim['Win32_Service'] = @($script:Fake.Cim['Win32_Service']) + @(New-FakeService 'CertSvc')
             Reset-FakeServerKeep
             $TargetServerVersion = '2022'
+            $PkiAllowedTargets = '2022'
             $null = Invoke-TestCheck 'upgradepath'
             $r = (Get-Row 'UPGRADE_PATH' 'TargetUpgradePath')[0]
             $r.Status | Should -Be 'BLOCKER'
             $r.Value | Should -Match 'PKI site policy does not allow'
+        }
+        It 'a 2012 R2 CA server is pointed to 2019 under the default policy (#338)' {
+            $script:Fake.Cim['Win32_OperatingSystem'].BuildNumber = '9600'
+            $script:Fake.Cim['Win32_OperatingSystem'].Caption = 'Microsoft Windows Server 2012 R2 Standard'
+            $script:Fake.Cim['Win32_Service'] = @($script:Fake.Cim['Win32_Service']) + @(New-FakeService 'CertSvc')
+            Reset-FakeServerKeep
+            $TargetServerVersion = '2022'
+            $null = Invoke-TestCheck 'upgradepath'
+            $r = (Get-Row 'UPGRADE_PATH' 'TargetUpgradePath')[0]
+            $r.Status | Should -Be 'BLOCKER'
+            $r.Value | Should -Match 'Supported direct target\(s\) from this source: Windows Server 2019\.'
+            $r.Value | Should -Not -Match '2025'
         }
         It 'a 2012 R2 source is out of support: WARNING observation, not a finding (#102)' {
             $script:Fake.Cim['Win32_OperatingSystem'].BuildNumber = '9600'
