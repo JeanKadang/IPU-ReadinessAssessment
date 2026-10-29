@@ -110,7 +110,8 @@ flowchart TD
     A[Source release] --> B{Which target?}
     B -->|2025| C[Supported from 2012 R2, 2016, 2019, 2022]
     B -->|2022| D[Supported from 2016, 2019]
-    D --> E[2012 R2 to 2022 is a BLOCKER<br/>script suggests 2025]
+    B -->|2019| F[Supported from 2012 R2, 2016]
+    D --> E[2012 R2 to 2022 is a BLOCKER<br/>script suggests 2019 or 2025]
 ```
 
 Anything else is reported as a `BLOCKER`. A **cluster node** and, by site policy, a **domain controller**
@@ -151,7 +152,7 @@ ad-hoc job). Override only what you need.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `TargetServerVersion` | `2025` | Destination release: `2025` or `2022` |
+| `TargetServerVersion` | `2025` | Destination release: `2025`, `2022` or `2019` (#332) |
 | `AssessmentMode` | `Pre` | `Pre` = before the upgrade. `Post` = verify and compare with the Pre result |
 | `TargetMediaPath` | blank | Folder/drive with `setup.exe`, UNC share, or `.iso`. Blank skips the Setup compatibility scan |
 | `TargetMediaLanguage` | blank | Language of the target ISO, for example `en-US`. Blank = the report tells you |
