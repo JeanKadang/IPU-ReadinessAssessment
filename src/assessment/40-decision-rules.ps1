@@ -14,7 +14,8 @@ $script:FactSources = [ordered]@{
     # FeatureLifecycle: the page has one tab per release. SMTP Server, the IIS 6 console and PowerShell 2.0 are removed on the 2025 tab only; the 2022 tab removes iSNS and nothing else (#187). A row lists only the targets whose tab names it (#232).
     FeatureLifecycle       = @{ Verified = '2026-10-22'; Source = 'https://learn.microsoft.com/en-us/windows-server/get-started/removed-deprecated-features-windows-server-2025' }
     PerUserServices        = @{ Verified = '2026-10-23'; Source = 'https://learn.microsoft.com/en-us/windows/application-management/per-user-services-in-windows' }
-    VMwareToolsMinimum     = @{ Verified = '2026-10-13'; Source = 'https://blogs.vmware.com/cloud-foundation/2024/11/07/vmware-tools-12-5-0-is-ready-for-the-latest-windows-operating-systems/' }
+    # VMwareToolsMinimum: Broadcom's guest OS compatibility table for 2019 and 2022 (#253); 2025 keeps 12.5.0, the first release with drivers certified for it (Broadcom blog, 2024-11-07).
+    VMwareToolsMinimum     = @{ Verified = '2026-10-29'; Source = 'https://knowledge.broadcom.com/external/article/313371/vmware-tools-compatibility-with-guest-op' }
     # ExpectedWindowsChanges: live runs (#158); AzureArcSetup per learn.microsoft.com/en-us/azure/azure-arc/servers/onboard-windows-server (#197).
     ExpectedWindowsChanges = @{ Verified = '2026-10-14'; Source = 'https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/158' }
     WinReMinPartitionMB    = @{ Verified = '2026-10-13'; Source = 'https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/161' }
@@ -474,10 +475,18 @@ function Get-VssWriterStatus {
     return 'MANUAL'
 }
 
+# Lowest VMware Tools release per target (#253), and the release Broadcom
+# recommends. 2019 and 2022: Broadcom's guest OS compatibility table (KB
+# 313371). 2025: 12.5.0, the first release with drivers certified for it;
+# Broadcom's IPU KB says to update Tools first.
+# Verified: see $script:FactSources.VMwareToolsMinimum.
+$script:VMwareToolsMinimum = @{
+    '2019' = @{ Minimum = '10.1.0'; Recommended = '' }
+    '2022' = @{ Minimum = '10.3.5'; Recommended = '12.0.0' }
+    '2025' = @{ Minimum = '12.5.0'; Recommended = '' }
+}
+
 function Get-VMwareToolsDecision {
-    # Broadcom: VMware Tools 12.5.0 is the release whose drivers are certified
-    # for Windows Server 2025; Broadcom's IPU KB says to update Tools first.
-    # Verified: see $script:FactSources.VMwareToolsMinimum.
     param([string]$Version, [string]$Target)
     if (-not $Version) {
         return [pscustomobject]@{ Status='ACTION'; Text='VMware Tools not found. Install current VMware Tools before IPU (PVSCSI/VMXNET3 and other VMware drivers).' }
@@ -489,8 +498,15 @@ function Get-VMwareToolsDecision {
     }
     # [version]'12.5' has no build part (-1) and so sorts below '12.5.0'; compare with three parts (#253).
     if ($parsed.Build -lt 0) { $parsed = New-Object System.Version $parsed.Major, $parsed.Minor, 0 }
+    $rule = $script:VMwareToolsMinimum[$Target]
     if ($Target -eq '2025' -and $parsed -lt [version]'12.5.0') {
         return [pscustomobject]@{ Status='ACTION'; Text=('VMware Tools ' + $clean + ' predates 12.5.0, the first release with drivers certified for Windows Server 2025. Update VMware Tools before IPU.') }
+    }
+    if ($rule -and $parsed -lt [version]$rule.Minimum) {
+        return [pscustomobject]@{ Status='ACTION'; Text=('VMware Tools ' + $clean + ' is older than ' + $rule.Minimum + ', the lowest release Broadcom lists as compatible with ' + (Get-ReleaseDisplayName $Target) + '. Update VMware Tools before IPU.') }
+    }
+    if ($rule -and $rule.Recommended -and $parsed -lt [version]$rule.Recommended) {
+        return [pscustomobject]@{ Status='OK'; Text=('VMware Tools ' + $clean + ' is compatible with ' + (Get-ReleaseDisplayName $Target) + '; Broadcom recommends ' + $rule.Recommended + ' or later. Update to the latest release before IPU.') }
     }
     return [pscustomobject]@{ Status='OK'; Text=('VMware Tools ' + $clean + '. Update to the latest release before IPU, as Broadcom recommends.') }
 }

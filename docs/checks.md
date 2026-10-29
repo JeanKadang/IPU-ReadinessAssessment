@@ -52,7 +52,7 @@ check is added without one.
 |---|---|---|
 | `platform` Platform and hardware | Physical or virtual and the hypervisor (VMware, Hyper-V/Azure, AWS, Google, Nutanix, KVM, Xen, ...); on physical servers model, BIOS, firmware, NIC and storage drivers | `OK` virtual; `MANUAL` physical (OEM support must be confirmed), cloud VM (provider procedure), unknown platform |
 | `performance` CPU and memory | Logical processors and memory | `ACTION` one logical CPU; `WARNING` two CPUs or memory below *MinimumMemoryGB*; `OK` |
-| `vmware` VMware guest readiness | VMware Tools version and service, VMware driver versions, firmware | `ACTION` VMware Tools missing, or older than 12.5.0 for a 2025 target; `OK`; adds checklist items for the ESXi host version and the guest OS setting after the upgrade |
+| `vmware` VMware guest readiness | VMware Tools version and service, VMware driver versions, firmware | `ACTION` VMware Tools missing, or older than the lowest release Broadcom lists for the target (12.5.0 for 2025, 10.3.5 for 2022, 10.1.0 for 2019); `OK` (says when Broadcom recommends a newer release); adds checklist items for the ESXi host version and the guest OS setting after the upgrade |
 | `drivers` Non-Microsoft drivers | Non-Microsoft PnP drivers and running kernel drivers (provider, version, date, signature) | `WARNING` unsigned drivers; INFO list for the driver review |
 
 ## Storage, clustering and network
