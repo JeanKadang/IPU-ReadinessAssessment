@@ -480,6 +480,9 @@ Describe 'SQL Server on a 2019 target (#332)' {
         $d.Status | Should -Be 'BLOCKER'
         $d.Text | Should -Match 'Windows Server 2019'
     }
+    It 'two alternative targets read as a list with a plural verb' {
+        (Get-SqlSupportDecision 14 '2025').Text | Should -Match 'Windows Server 2019 and Windows Server 2022 support this SQL version'
+    }
     It 'a version below the service pack Microsoft requires on 2019 is an ACTION: <Version>' -TestCases @(
         @{ Major = 11; Version = '11.0.6020.0'; Sp = 'Service Pack 4' }
         @{ Major = 12; Version = '12.0.5000.0'; Sp = 'Service Pack 3' }

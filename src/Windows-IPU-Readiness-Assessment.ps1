@@ -1,8 +1,8 @@
 <#
 ===============================================================================
  SCRIPT NAME : Windows-IPU-Readiness-Assessment.ps1
- VERSION     : 4.5.4
- RELEASE DATE: 2026-10-23
+ VERSION     : 4.6.0
+ RELEASE DATE: 2026-10-29
  PURPOSE     : Windows Server in-place upgrade (IPU) readiness assessment and
                post-upgrade verification, with a self-contained HTML report
                and a JSON result file written on the assessed server.
@@ -88,6 +88,13 @@
     load, nothing is collected. The Pester tests use this.
 
 .VERSION HISTORY
+    4.6.0 - Windows Server 2019 as a target. PKI servers follow the
+            site policy PkiAllowedTargets (default 2022). End-of-life
+            verdicts from a dated snapshot. Failed reads are MANUAL, not
+            clean; the post-upgrade run leaves out lists it could not
+            read. Language-neutral parsing (VSS, WinRE, task accounts).
+            The Setup scan has its own budget; a second run is locked.
+            VMware Tools minimum per target.
     4.5.4 - A failed read is never a clean result: roles, MANUAL rows
             and the post-upgrade baseline are checked. Time limits for
             the fast phase, a clear SA line when the folder or JSON
@@ -678,7 +685,7 @@ function Get-EolResultKind {
 # 3. CORE
 # =============================================================================
 $ProgressPreference = 'SilentlyContinue'
-$script:CollectorVersion  = '4.5.4'
+$script:CollectorVersion  = '4.6.0'
 # Settings a profile file (-ProfileFile) may set. Mode, target, media path,
 # report folder and redaction describe one run, so they stay arguments only.
 $script:ProfileSettingNames = @(
@@ -2302,7 +2309,8 @@ function Get-SqlSupportDecision {
         if ($t -ne $Target -and $script:SqlSupportedOnTarget[$t] -contains $Major) { $alternatives += (Get-ReleaseDisplayName $t) }
     }
     $hint = ' Upgrade SQL Server first, or migrate the databases.'
-    if ($alternatives.Count -gt 0) { $hint = ' ' + ($alternatives -join ', ') + ' supports this SQL version - choose that target, or upgrade SQL Server first.' }
+    if ($alternatives.Count -eq 1) { $hint = ' ' + $alternatives[0] + ' supports this SQL version - choose that target, or upgrade SQL Server first.' }
+    elseif ($alternatives.Count -gt 1) { $hint = ' ' + (@($alternatives[0..($alternatives.Count - 2)]) -join ', ') + ' and ' + $alternatives[-1] + ' support this SQL version - choose one of those targets, or upgrade SQL Server first.' }
     return [pscustomobject]@{ Status='BLOCKER'; Release=$label; Text=($label + ' is not supported on ' + (Get-ReleaseDisplayName $Target) + '.' + $hint) }
 }
 

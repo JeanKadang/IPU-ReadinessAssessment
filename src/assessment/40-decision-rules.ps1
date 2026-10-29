@@ -372,7 +372,8 @@ function Get-SqlSupportDecision {
         if ($t -ne $Target -and $script:SqlSupportedOnTarget[$t] -contains $Major) { $alternatives += (Get-ReleaseDisplayName $t) }
     }
     $hint = ' Upgrade SQL Server first, or migrate the databases.'
-    if ($alternatives.Count -gt 0) { $hint = ' ' + ($alternatives -join ', ') + ' supports this SQL version - choose that target, or upgrade SQL Server first.' }
+    if ($alternatives.Count -eq 1) { $hint = ' ' + $alternatives[0] + ' supports this SQL version - choose that target, or upgrade SQL Server first.' }
+    elseif ($alternatives.Count -gt 1) { $hint = ' ' + (@($alternatives[0..($alternatives.Count - 2)]) -join ', ') + ' and ' + $alternatives[-1] + ' support this SQL version - choose one of those targets, or upgrade SQL Server first.' }
     return [pscustomobject]@{ Status='BLOCKER'; Release=$label; Text=($label + ' is not supported on ' + (Get-ReleaseDisplayName $Target) + '.' + $hint) }
 }
 

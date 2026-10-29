@@ -4,6 +4,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [4.6.0] - 2026-10-29
+
 ### Added
 - Windows Server 2019 as a target (#332): `-TargetServerVersion 2019`. Each fact is from Microsoft or Broadcom, checked 2026-10-29: in-place upgrade from 2012 R2 and 2016; SQL Server 2012 to 2025 supported, with SQL Server 2012 below SP4 and 2014 or 2016 below SP3 an ACTION to install the service pack first; Business Scanning removed and iSNS, the IIS 6 compatibility features and IIS Digest Authentication no longer developed (the 2019 tab only); VMware Tools 10.1.0 or later (#253). An LBFO team under a Hyper-V switch is the general LBFO ACTION for 2019, because the switch on LBFO is only removed from 2022 on. `PkiAllowedTargets` accepts 2019 (the default stays 2022). The result schema allows `2019` as `TargetServerVersion`.
 - PKI site policy (#322): the PKI team allows an in-place upgrade of a PKI server (Certification Authority role or `CertSvc`) only to Windows Server 2022 for now. The new setting `PkiAllowedTargets` (default `2022`, comma-separated, also in a profile file) names the allowed targets. A CA server assessed against another target is a BLOCKER (`PKI / PkiSitePolicy`) that says which target to assess against; one already on the highest allowed release is told to stay there; one with no allowed in-place path (2012 R2, which cannot go directly to 2022) gets a BLOCKER that points to a migration, and its upgrade path row no longer suggests 2025. `'2022,2025'` lifts the rule.
@@ -273,7 +275,8 @@ Restructure of the 3.x script (released as a script file only).
 
 Local Group Policy backup and RDP readiness. Superseded by 4.0.0.
 
-[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.5.4...HEAD
+[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.6.0...HEAD
+[4.6.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.6.0
 [4.5.4]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.5.4
 [4.5.3]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.5.3
 [4.5.2]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.5.2
