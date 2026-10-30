@@ -6,6 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Licensing (#330): the ESU add-on names seen on a real Windows Server 2012 R2 server (`Server-ESU-YearN add-on for ...`, `Server-FES-ESU-YearN add-on for ...`) are in the tests, and any product named `... add-on ...` (for example `APPXLOB-Server add-on`) is treated as an add-on, never as the OS licence, also when `LicenseIsAddon` is missing.
 - `-PkiAllowedTargets 2019,2022` without quotes, as typed in an SA job, failed before the script started ("Cannot convert value to type System.String") (#340). The parameter now takes the list with or without quotes, and a profile file may give it as a string or a JSON array. Other releases are still rejected.
 - PKI site policy (#338): the PKI team allows an in-place upgrade of a PKI server to Windows Server 2019 and 2022, not only 2022. `PkiAllowedTargets` now defaults to `2019,2022`, so a CA server assessed against 2019 no longer gets a false BLOCKER, and a 2012 R2 CA server is pointed to 2019 instead of a migration. The 2025 BLOCKER names the newest allowed release it can reach, and says that 2025 needs an exception agreed with the PKI team and that a new PKI build on 2025 is outside the rule.
 

@@ -3442,12 +3442,16 @@ function Select-OsLicenseProduct {
     # LicenseIsAddon, or named ESU / Extended Security Updates) is never the
     # OS licence: on a 2012 R2 server with ESU it can read "Licensed" while the
     # OS licence is in notification state. Licensed OS products come first.
-    # Returns Primary (or $null) and AddOns.
+    # Real names on 2012 R2 (#330): "Windows(R), Server-ESU-Year1 add-on for
+    # ServerDatacenter,...", "Windows(R), Server-FES-ESU-Year2 add-on for ...",
+    # "Windows(R), APPXLOB-Server add-on for ..."; the description is the plain
+    # channel text. "add-on" in the name is a signal too, for an add-on that is
+    # not ESU. Returns Primary (or $null) and AddOns.
     param([object[]]$Products)
     $isAddOn = {
         param($p)
         $flag = $false; if ($p.PSObject.Properties['LicenseIsAddon']) { $flag = [bool]$p.LicenseIsAddon }
-        return ($flag -or ([string]$p.Name + ' ' + [string]$p.Description) -match '\bESU\b|Extended Security')
+        return ($flag -or ([string]$p.Name + ' ' + [string]$p.Description) -match '\bESU\b|Extended Security|\badd-on\b')
     }
     $all = @(@($Products) | Where-Object { $_ })
     $addOns = @($all | Where-Object { & $isAddOn $_ })
