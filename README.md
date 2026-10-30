@@ -128,7 +128,7 @@ Reports describe a server in detail, so redact a copy before it leaves the team:
 
 ```powershell
 # Redact while collecting: the report and JSON on disk are already redacted
-.\src\Windows-IPU-Readiness-Assessment.ps1 -RedactReport $true
+.\src\Windows-IPU-Readiness-Assessment.ps1 -RedactReport 1
 
 # Redact reports that already exist, in place next to the originals
 .\src\Windows-IPU-Readiness-Assessment.ps1 -RedactExisting 'D:\IPU\Results'

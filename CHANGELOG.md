@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Fleet overview: **Teams needed** (#323). Per server, which other teams the upgrade needs (PKI, AD, Cluster / storage, SQL / DBA, Exchange, Backup, Antivirus / EDR, Network, Virtualization, Application owner), read from its result rows by one rule table (`src/merge/15-teams.ps1`). The overview has a *Teams needed* column and a summary per team at the top (servers, which, why); `IPU-Fleet-Servers.csv` has a `TeamsNeeded` column. Works with results from earlier versions too.
 
+### Documentation
+
+- Running through SA (#337): SA escapes `$` in the parameter field, so true/false settings must be `1` or `0` (`-RunDISMScanHealth 0`); `$true`/`$false` only work on a console. The user guide has a section *Passing arguments in SA* with examples, explains SA's harmless `Set-ExecutionPolicy ... overridden by a policy` message, and the troubleshooting table lists both. Examples now use `1`/`0`.
+
 ### Fixed
 
 - Licensing (#330): the ESU add-on names seen on a real Windows Server 2012 R2 server (`Server-ESU-YearN add-on for ...`, `Server-FES-ESU-YearN add-on for ...`) are in the tests, and any product named `... add-on ...` (for example `APPXLOB-Server add-on`) is treated as an add-on, never as the OS licence, also when `LicenseIsAddon` is missing.
