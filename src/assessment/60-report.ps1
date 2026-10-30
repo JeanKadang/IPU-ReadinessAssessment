@@ -355,6 +355,27 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
     return $sb.ToString()
 }
 
+function Protect-LogText {
+    # Pure apart from the placeholder map (#329): the run log, redacted line by
+    # line with the same rules and map as the report, so HOST-2 in the log is
+    # HOST-2 in the report. The header line has nothing to redact.
+    param([string]$Text, [hashtable]$Context)
+    if (-not $Text) { return $Text }
+    $lines = @($Text -split '\r?\n')
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($l in $lines) { $out.Add((Protect-ReportText $l $Context)) }
+    return ($out.ToArray() -join [Environment]::NewLine)
+}
+
+function Write-RedactedLogCopy {
+    # A redacted copy of a run log (#329). The original is never changed; the
+    # copy's name comes from the redacted report, never from the computer name.
+    # Throws when the log cannot be read or the copy cannot be written.
+    param([Parameter(Mandatory=$true)][string]$LogPath, [Parameter(Mandatory=$true)][string]$Destination, [Parameter(Mandatory=$true)][hashtable]$Context)
+    $text = [IO.File]::ReadAllText($LogPath)
+    [IO.File]::WriteAllText($Destination, (Protect-LogText $text $Context), (New-Object System.Text.UTF8Encoding($false)))
+}
+
 function Write-AssessmentReport {
     param([switch]$Partial)
     $completed = Get-Date
@@ -380,8 +401,18 @@ function Write-AssessmentReport {
             Write-AssessmentLog 'WARNING' 'JSON' ('JSON result could not be written: ' + $_.Exception.Message)
         }
     }
-    # The key to the placeholders (#211), after the HTML and the JSON so it
-    # holds every placeholder they use.
+    # A redacted copy of the log beside the redacted reports (#329), at the
+    # end of the run only. The log itself stays unredacted for troubleshooting;
+    # lines written after this point are not in the copy.
+    if ($RedactReport -and -not $Partial) {
+        $logCopy = [IO.Path]::ChangeExtension($script:ReportPath, '.log')
+        try {
+            Write-AssessmentLog 'INFO' 'REDACTION' ('Redacted copy of this log: ' + (Split-Path -Leaf $logCopy))
+            Write-RedactedLogCopy $script:LogPath $logCopy (Get-RedactionContext)
+        } catch { Write-AssessmentLog 'WARNING' 'REDACTION' ('Redacted log copy could not be written: ' + $_.Exception.Message) }
+    }
+    # The key to the placeholders (#211), after the HTML, the JSON and the log
+    # copy so it holds every placeholder they use.
     if ($RedactReport -and $WriteRedactionKey) {
         $keyPath = Join-Path (Split-Path -Parent $script:ReportPath) ('DO-NOT-SHARE-' + $script:SafeComputerName + $script:ReportSuffix + '-REDACTION-KEY.csv')
         try { $script:Data.RedactionKey = Write-RedactionKey (Get-RedactionContext) $keyPath }
@@ -519,11 +550,18 @@ function Invoke-RedactExisting {
             $red | Add-Member -NotePropertyName Redacted -NotePropertyValue $true -Force
             [IO.File]::WriteAllText($base + '.json', ($red | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding($false)))
             $html = [IO.Path]::ChangeExtension($jf.FullName, '.html')
-            $note = ''
+            $note = ''; $written = '.json'
             if (Test-Path -LiteralPath $html) {
                 [IO.File]::WriteAllText($base + '.html', (Protect-ReportText ([IO.File]::ReadAllText($html)) $ctx), (New-Object System.Text.UTF8Encoding($false)))
-            } else { $note = ' (no HTML report next to it)' }
-            [Console]::Out.WriteLine('RedactExisting: ' + $jf.Name + ' -> ' + (Split-Path -Leaf $base) + '.json/.html' + $note)
+                $written += '/.html'
+            } else { $note += ' (no HTML report next to it)' }
+            # The run log beside the report (#329), with the same placeholders.
+            $log = [IO.Path]::ChangeExtension($jf.FullName, '.log')
+            if (Test-Path -LiteralPath $log) {
+                try { Write-RedactedLogCopy $log ($base + '.log') $ctx; $written += '/.log' }
+                catch { $note += ' (the log could not be redacted: ' + $_.Exception.Message + ')' }
+            }
+            [Console]::Out.WriteLine('RedactExisting: ' + $jf.Name + ' -> ' + (Split-Path -Leaf $base) + $written + $note)
             $done++
         } catch {
             [Console]::Out.WriteLine('RedactExisting: could not redact ' + $jf.Name + ': ' + $_.Exception.Message)

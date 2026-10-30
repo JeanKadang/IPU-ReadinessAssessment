@@ -8,6 +8,50 @@ BeforeAll { . (Join-Path $PSScriptRoot '..\TestSetup.ps1') }
 
 AfterAll { Remove-Item Env:\IPU_ASSESSMENT_LIBRARY_ONLY -ErrorAction SilentlyContinue }
 
+Describe 'Redact existing reports: the run log (#329)' {
+    BeforeAll {
+        $script:LogDir = Join-Path $TestDrive 'withlog'
+        New-Item -ItemType Directory -Path $script:LogDir | Out-Null
+        $sample = Join-Path $PSScriptRoot '..\..\docs\samples'
+        Copy-Item -LiteralPath (Join-Path $sample 'sample-result.json') -Destination (Join-Path $script:LogDir 'SRV-APP01-IPU-Assessment.json')
+        Copy-Item -LiteralPath (Join-Path $sample 'sample-report.html') -Destination (Join-Path $script:LogDir 'SRV-APP01-IPU-Assessment.html')
+        $log = @(
+            'Timestamp;Level;Phase;Message',
+            '2026-10-29 14:01:26;INFO;START;Collector=4.6.0 | Mode=Pre | Target=2025',
+            '2026-10-29 14:01:27;INFO;CHECK;gpresult for SRV-APP01 | Domain=corp.example.test | 10.20.30.40',
+            '2026-10-29 14:01:28;INFO;REPORT;Written C:\temp\IPU-Assessment\SRV-APP01-IPU-Assessment.html'
+        ) -join [Environment]::NewLine
+        $script:LogOriginal = Join-Path $script:LogDir 'SRV-APP01-IPU-Assessment.log'
+        [IO.File]::WriteAllText($script:LogOriginal, $log)
+        $script:LogHash = (Get-FileHash -LiteralPath $script:LogOriginal).Hash
+        $script:LogCode = Invoke-RedactExisting $script:LogDir
+        $script:LogCopy = @(Get-ChildItem -LiteralPath $script:LogDir -Filter 'REDACTED-*-IPU-Assessment.log')
+        $script:LogJson = @(Get-ChildItem -LiteralPath $script:LogDir -Filter 'REDACTED-*-IPU-Assessment.json')
+    }
+    It 'writes one redacted log beside the redacted pair, named like it' {
+        $script:LogCode | Should -Be 0
+        $script:LogCopy.Count | Should -Be 1
+        [IO.Path]::GetFileNameWithoutExtension($script:LogCopy[0].Name) | Should -Be ([IO.Path]::GetFileNameWithoutExtension($script:LogJson[0].Name))
+    }
+    It 'no collected name survives, and the computer has the report''s placeholder' {
+        $text = [IO.File]::ReadAllText($script:LogCopy[0].FullName)
+        foreach ($secret in 'SRV-APP01', 'corp.example.test', '10.20.30.40') { $text | Should -Not -Match ([regex]::Escape($secret)) }
+        $json = [IO.File]::ReadAllText($script:LogJson[0].FullName) | ConvertFrom-Json
+        $text | Should -Match ('gpresult for ' + [regex]::Escape($json.ComputerName) + ' ')
+        $text | Should -Match 'Collector=4\.6\.0'
+    }
+    It 'leaves the original log unchanged' {
+        (Get-FileHash -LiteralPath $script:LogOriginal).Hash | Should -Be $script:LogHash
+    }
+    It 'a report without a log still gets its pair, and no log' {
+        $dir = Join-Path $TestDrive 'nolog'
+        New-Item -ItemType Directory -Path $dir | Out-Null
+        Copy-Item -LiteralPath (Join-Path (Join-Path $PSScriptRoot '..\..\docs\samples') 'sample-result.json') -Destination (Join-Path $dir 'SRV-APP01-IPU-Assessment.json')
+        Invoke-RedactExisting $dir | Should -Be 0
+        @(Get-ChildItem -LiteralPath $dir -Filter 'REDACTED-*.log').Count | Should -Be 0
+    }
+}
+
 Describe 'Redact existing reports (#101)' {
     BeforeAll {
         $script:RexDir = Join-Path $TestDrive 'existing'

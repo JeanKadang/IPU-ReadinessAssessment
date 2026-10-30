@@ -484,3 +484,101 @@ Describe 'End-of-life verdicts in the fleet overview (#275)' {
         }
     }
 }
+
+Describe 'Teams needed in the fleet overview (#323)' {
+    BeforeAll {
+        # The pure functions live in a part of the merge script: load it as it is built in.
+        . (Join-Path $PSScriptRoot '..\src\merge\15-teams.ps1')
+        function New-Row([string]$Area, [string]$Item, [string]$Status, [string]$Value = '') { [pscustomobject]@{ Area = $Area; Item = $Item; Status = $Status; Value = $Value } }
+    }
+    Context 'pure functions' {
+        It 'a server that needs no other team gives an empty list' {
+            $rows = @((New-Row 'STORAGE' 'C: free space' 'ACTION'), (New-Row 'CLUSTER' 'FailoverClustering' 'OK'), (New-Row 'IIS' 'Web-Server' 'OK'), (New-Row 'BACKUP' 'GuestBackupAgent' 'INFO'), (New-Row 'BACKUP' 'VSS writer: System Writer' 'OK'))
+            @(Get-TeamsNeeded $rows).Count | Should -Be 0
+            @(Get-TeamsNeeded @()).Count | Should -Be 0
+        }
+        It '<Case> needs <Team>' -TestCases @(
+            @{ Case = 'a certification authority';     Row = @{ Area = 'PKI'; Item = 'CertificationAuthority'; Status = 'ACTION' };       Team = 'PKI' }
+            @{ Case = 'the PKI site policy';           Row = @{ Area = 'PKI'; Item = 'PkiSitePolicy'; Status = 'BLOCKER' };               Team = 'PKI' }
+            @{ Case = 'a domain controller';           Row = @{ Area = 'DOMAIN_CONTROLLER'; Item = 'DomainController'; Status = 'INFO' }; Team = 'AD' }
+            @{ Case = 'a SPECIAL domain controller';   Row = @{ Area = 'SPECIAL'; Item = 'Domain controller'; Status = 'SPECIAL' };       Team = 'AD' }
+            @{ Case = 'a SPECIAL cluster node';        Row = @{ Area = 'SPECIAL'; Item = 'Failover cluster node'; Status = 'SPECIAL' };   Team = 'Cluster / storage' }
+            @{ Case = 'clustering without a cluster';  Row = @{ Area = 'CLUSTER'; Item = 'FailoverClustering'; Status = 'WARNING' };      Team = 'Cluster / storage' }
+            @{ Case = 'a SQL Server instance';         Row = @{ Area = 'SQL'; Item = 'SQL Server: MSSQLSERVER'; Status = 'OK' };          Team = 'SQL / DBA' }
+            @{ Case = 'Exchange';                      Row = @{ Area = 'EXCHANGE'; Item = 'ExchangeServerRole'; Status = 'BLOCKER' };     Team = 'Exchange' }
+            @{ Case = 'failed VSS writers';            Row = @{ Area = 'BACKUP'; Item = 'VSSWriters'; Status = 'ACTION' };                Team = 'Backup' }
+            @{ Case = 'a backup agent';                Row = @{ Area = 'BACKUP'; Item = 'Veeam Agent'; Status = 'INFO' };                 Team = 'Backup' }
+            @{ Case = 'an antivirus agent to check';   Row = @{ Area = 'ANTIVIRUS'; Item = 'Trend Micro Apex One'; Status = 'WARNING' };  Team = 'Antivirus / EDR' }
+            @{ Case = 'a security tool to check';      Row = @{ Area = 'SECURITY'; Item = 'Some DLP agent'; Status = 'WARNING' };         Team = 'Antivirus / EDR' }
+            @{ Case = 'an LBFO team';                  Row = @{ Area = 'NETWORK'; Item = 'LBFO team: Team1'; Status = 'ACTION' };         Team = 'Network' }
+            @{ Case = 'static routes';                 Row = @{ Area = 'NETWORK_DEPENDENCY'; Item = 'StaticRoutes'; Status = 'MANUAL'; Value = 'Routes=2' }; Team = 'Network' }
+            @{ Case = 'old VMware Tools';              Row = @{ Area = 'VMWARE'; Item = 'VMwareTools'; Status = 'ACTION' };               Team = 'Virtualization' }
+            @{ Case = 'IIS';                           Row = @{ Area = 'IIS'; Item = 'Web-Server'; Status = 'WARNING' };                  Team = 'Application owner' }
+            @{ Case = 'a Session Host';                Row = @{ Area = 'RDS'; Item = 'RDSessionHost'; Status = 'ACTION' };                Team = 'Application owner' }
+            @{ Case = 'a product past end of life';    Row = @{ Area = 'APPLICATIONS'; Item = 'EOL: PHP 7.4.33'; Status = 'WARNING' };    Team = 'Application owner' }
+        ) {
+            $value = ''; if ($Row.ContainsKey('Value')) { $value = $Row.Value }
+            $t = @(Get-TeamsNeeded @((New-Row $Row.Area $Row.Item $Row.Status $value)))
+            $t.Count | Should -Be 1
+            $t[0].Team | Should -Be $Team
+            $t[0].Items | Should -Be @($Row.Item)
+        }
+        It 'rows that look related but need no team: <Case>' -TestCases @(
+            @{ Case = 'unreadable static routes'; Row = @{ Area = 'NETWORK_DEPENDENCY'; Item = 'StaticRoutes'; Status = 'MANUAL'; Value = 'Get-NetRoute unavailable' } }
+            @{ Case = 'AppLocker';                Row = @{ Area = 'SECURITY'; Item = 'AppLocker'; Status = 'WARNING'; Value = '' } }
+            @{ Case = 'a current antivirus';      Row = @{ Area = 'ANTIVIRUS'; Item = 'Microsoft Defender'; Status = 'INFO'; Value = '' } }
+            @{ Case = 'a VSS writer row';         Row = @{ Area = 'BACKUP'; Item = 'VSS writer: SqlServerWriter'; Status = 'INFO'; Value = '' } }
+            @{ Case = 'clustering state unknown'; Row = @{ Area = 'CLUSTER'; Item = 'FailoverClustering'; Status = 'MANUAL'; Value = '' } }
+        ) {
+            @(Get-TeamsNeeded @((New-Row $Row.Area $Row.Item $Row.Status $Row.Value))).Count | Should -Be 0
+        }
+        It 'several rows: teams in table order, each item once' {
+            $rows = @((New-Row 'SQL' 'SQL Server: A' 'OK'), (New-Row 'PKI' 'CertificationAuthority' 'ACTION'), (New-Row 'SQL' 'SQL Server: B' 'WARNING'), (New-Row 'SQL' 'SQL Server: A' 'OK'))
+            $t = @(Get-TeamsNeeded $rows)
+            @($t | ForEach-Object Team) | Should -Be @('PKI', 'SQL / DBA')
+            $t[1].Items | Should -Be @('SQL Server: A', 'SQL Server: B')
+        }
+        It 'Get-TeamsSummary counts servers per team, in table order' {
+            $a = [pscustomobject]@{ ComputerName = 'SRV-B'; Teams = @(Get-TeamsNeeded @((New-Row 'SQL' 'SQL Server: A' 'OK'))) }
+            $b = [pscustomobject]@{ ComputerName = 'SRV-A'; Teams = @(Get-TeamsNeeded @((New-Row 'SQL' 'SQL Server: B' 'OK'), (New-Row 'PKI' 'CertificationAuthority' 'ACTION'))) }
+            $c = [pscustomobject]@{ ComputerName = 'SRV-C'; Teams = @() }
+            $rows = @(Get-TeamsSummary @($a, $b, $c))
+            @($rows | ForEach-Object Team) | Should -Be @('PKI', 'SQL / DBA')
+            $rows[1].ServerCount | Should -Be 2
+            $rows[1].Servers | Should -Be 'SRV-A, SRV-B'
+            $rows[1].Why | Should -Be 'SQL Server: A | SQL Server: B'
+            @(Get-TeamsSummary @($c)).Count | Should -Be 0
+        }
+    }
+    Context 'the merge script' {
+        BeforeAll {
+            $script:MergeScript = Join-Path $PSScriptRoot '..\src\Merge-IPUAssessments.ps1'
+            $script:TeamIn = Join-Path $TestDrive 'teams'
+            New-Item -ItemType Directory -Path $script:TeamIn | Out-Null
+            $ca = [pscustomobject]@{ CheckId = 'pki'; Area = 'PKI'; Item = 'CertificationAuthority'; Status = 'ACTION'; Kind = 'Finding'; Value = 'v'; Details = 'd'; Recommendation = 'r'; Source = 's' }
+            $sql = [pscustomobject]@{ CheckId = 'sql'; Area = 'SQL'; Item = 'SQL Server: MSSQLSERVER'; Status = 'OK'; Kind = 'Observation'; Value = 'v'; Details = 'd'; Recommendation = ''; Source = 's' }
+            Save-Result (New-FakeResult 'SRV-CA' -Overall 'ACTION' -Results @($ca, $sql)) $script:TeamIn 'SRV-CA-IPU-Assessment.json'
+            Save-Result (New-FakeResult 'SRV-PLAIN' -Overall 'OK') $script:TeamIn 'SRV-PLAIN-IPU-Assessment.json'
+            $null = & $script:MergeScript -InputFolder $script:TeamIn
+            $script:TeamServers = @(Import-Csv -LiteralPath (Join-Path $script:TeamIn 'IPU-Fleet-Servers.csv') -Delimiter ';')
+            $script:TeamHtml = Get-Content -LiteralPath (Join-Path $script:TeamIn 'IPU-Fleet-Overview.html') -Raw
+        }
+        It 'the servers CSV has TeamsNeeded in one field' {
+            ($script:TeamServers | Where-Object { $_.ComputerName -eq 'SRV-CA' }).TeamsNeeded | Should -Be 'PKI, SQL / DBA'
+            ($script:TeamServers | Where-Object { $_.ComputerName -eq 'SRV-PLAIN' }).TeamsNeeded | Should -Be ''
+        }
+        It 'the overview has a Teams needed column and a summary per team' {
+            $script:TeamHtml | Should -Match '<th>Teams needed</th>'
+            $script:TeamHtml | Should -Match '<h2>Teams needed</h2>'
+            $script:TeamHtml | Should -Match '<td class="nw"><b>PKI</b></td><td>1</td><td>SRV-CA</td>'
+            $script:TeamHtml | Should -Match '<td>PKI, SQL / DBA</td>'
+        }
+        It 'says so when no server needs another team' {
+            $plain = Join-Path $TestDrive 'plain'
+            New-Item -ItemType Directory -Path $plain | Out-Null
+            Save-Result (New-FakeResult 'SRV-PLAIN' -Overall 'OK') $plain 'SRV-PLAIN-IPU-Assessment.json'
+            $null = & $script:MergeScript -InputFolder $plain
+            (Get-Content -LiteralPath (Join-Path $plain 'IPU-Fleet-Overview.html') -Raw) | Should -Match 'No server needs another team'
+        }
+    }
+}

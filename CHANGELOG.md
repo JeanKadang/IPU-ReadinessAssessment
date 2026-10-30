@@ -4,6 +4,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Fleet overview: **Teams needed** (#323). Per server, which other teams the upgrade needs (PKI, AD, Cluster / storage, SQL / DBA, Exchange, Backup, Antivirus / EDR, Network, Virtualization, Application owner), read from its result rows by one rule table (`src/merge/15-teams.ps1`). The overview has a *Teams needed* column and a summary per team at the top (servers, which, why); `IPU-Fleet-Servers.csv` has a `TeamsNeeded` column. Works with results from earlier versions too.
+
 ### Documentation
 
 - Running through SA (#337): SA escapes `$` in the parameter field, so true/false settings must be `1` or `0` (`-RunDISMScanHealth 0`); `$true`/`$false` only work on a console. The user guide has a section *Passing arguments in SA* with examples, explains SA's harmless `Set-ExecutionPolicy ... overridden by a policy` message, and the troubleshooting table lists both. Examples now use `1`/`0`.
@@ -11,6 +15,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - Small runtime items (#261, SE-40). The SA line's `NotCompleted=` counts only checks that left a gap (failed, timed out, or not started because the time budget ran out); checks switched off, without media, not applicable or skipped for a SPECIAL short report are counted as `Skipped=`. A skipped print backup or Setup scan is filed under its own area, not under Windows health. A FAILED line leaves `LogPath` empty when no log was written. `RestrictOutputAcl` from a profile file now says in the *Profile file* row that it reaches the evidence folders only (the report folder exists before the file is read). `#requires -Version 4.0` stays: on PowerShell 2.0 the script would not parse, so a check inside it could never print the SA line.
+- Redaction covers the run log (#329). A `-RedactReport` run writes a redacted copy of its log beside the redacted reports (`REDACTED-<time>-IPU-Assessment.log`), and `-RedactExisting` writes one for a log next to an existing report (`REDACTED-<time>-HOST-n-IPU-Assessment.log`). The copy uses the same placeholders as the report; the original log stays unredacted for troubleshooting.
 - Licensing (#330): the ESU add-on names seen on a real Windows Server 2012 R2 server (`Server-ESU-YearN add-on for ...`, `Server-FES-ESU-YearN add-on for ...`) are in the tests, and any product named `... add-on ...` (for example `APPXLOB-Server add-on`) is treated as an add-on, never as the OS licence, also when `LicenseIsAddon` is missing.
 - `-PkiAllowedTargets 2019,2022` without quotes, as typed in an SA job, failed before the script started ("Cannot convert value to type System.String") (#340). The parameter now takes the list with or without quotes, and a profile file may give it as a string or a JSON array. Other releases are still rejected.
 - PKI site policy (#338): the PKI team allows an in-place upgrade of a PKI server to Windows Server 2019 and 2022, not only 2022. `PkiAllowedTargets` now defaults to `2019,2022`, so a CA server assessed against 2019 no longer gets a false BLOCKER, and a 2012 R2 CA server is pointed to 2019 instead of a migration. The 2025 BLOCKER names the newest allowed release it can reach, and says that 2025 needs an exception agreed with the PKI team and that a new PKI build on 2025 is outside the rule.

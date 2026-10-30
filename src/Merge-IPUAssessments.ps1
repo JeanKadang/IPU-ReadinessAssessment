@@ -46,6 +46,81 @@ param(
     [string]$EolSnapshot = ''
 )
 # ==============================================================================
+# Teams needed (#323): which other teams a server needs before its upgrade,
+# read from the rows of its result. One table, in one place: a site that has
+# other teams, or names them differently, edits $script:TeamRules here and
+# rebuilds (docs/build.md). Pure functions and data only.
+# ==============================================================================
+
+# Each rule: the Team, and what a row must match. Area and Item are regular
+# expressions (case-insensitive); Status lists the statuses that count (empty =
+# any status); Value is an optional regular expression on the row's value.
+# Several rules may name the same team. Order is the order teams are shown in.
+$script:TeamRules = @(
+    @{ Team = 'PKI';               Area = '^PKI$';                Item = '^(CertificationAuthority|ADCSRoleServices|PkiSitePolicy)$'; Status = @() }
+    @{ Team = 'AD';                Area = '^DOMAIN_CONTROLLER$';  Item = '.';                         Status = @() }
+    @{ Team = 'AD';                Area = '^SPECIAL$';            Item = '^Domain controller$';       Status = @() }
+    @{ Team = 'Cluster / storage'; Area = '^SPECIAL$';            Item = '^(Failover cluster node|ClusterMembership)$'; Status = @() }
+    @{ Team = 'Cluster / storage'; Area = '^CLUSTER$';            Item = '^FailoverClustering$';      Status = @('ACTION', 'WARNING') }
+    @{ Team = 'SQL / DBA';         Area = '^SQL$';                Item = '.';                         Status = @() }
+    @{ Team = 'Exchange';          Area = '^EXCHANGE$';           Item = '.';                         Status = @('BLOCKER', 'ACTION') }
+    @{ Team = 'Backup';            Area = '^BACKUP$';             Item = '^VSSWriters$';              Status = @('ACTION') }
+    # A backup product found on the server (not the VSS evidence rows).
+    @{ Team = 'Backup';            Area = '^BACKUP$';             Item = '^(?!VSS|GuestBackupAgent$)'; Status = @('INFO') }
+    @{ Team = 'Antivirus / EDR';   Area = '^ANTIVIRUS$';          Item = '.';                         Status = @('WARNING') }
+    @{ Team = 'Antivirus / EDR';   Area = '^SECURITY$';           Item = '^(?!AppLocker$|SecureBoot$|TPM$|BitLocker|FileSystemFilterDrivers$)'; Status = @('WARNING') }
+    @{ Team = 'Network';           Area = '^NETWORK$';            Item = '^LBFO team: ';              Status = @('ACTION') }
+    @{ Team = 'Network';           Area = '^NETWORK_DEPENDENCY$'; Item = '^StaticRoutes$';            Status = @('MANUAL'); Value = '^Routes=' }
+    @{ Team = 'Virtualization';    Area = '^VMWARE$';             Item = '^VMwareTools$';             Status = @('BLOCKER', 'ACTION', 'WARNING') }
+    @{ Team = 'Application owner'; Area = '^IIS$';                Item = '^Web-Server$';              Status = @('WARNING') }
+    @{ Team = 'Application owner'; Area = '^RDS$';                Item = '^(RDSessionHost|RDLicensingServer)$'; Status = @('ACTION') }
+    @{ Team = 'Application owner'; Area = '^APPLICATIONS$';       Item = '^EOL: ';                    Status = @('WARNING') }
+)
+
+function Get-TeamsNeeded {
+    # Pure (#323): the teams one server needs, in the order of $Rules, each
+    # with the items that called for it. An empty list means no other team.
+    param([object[]]$Rows, [object[]]$Rules = $script:TeamRules)
+    $byTeam = [ordered]@{}
+    foreach ($rule in @($Rules)) { if (-not $byTeam.Contains($rule.Team)) { $byTeam[$rule.Team] = New-Object System.Collections.Generic.List[string] } }
+    foreach ($row in @($Rows)) {
+        if (-not $row) { continue }
+        $area = [string]$row.Area; $item = [string]$row.Item; $status = [string]$row.Status
+        foreach ($rule in @($Rules)) {
+            if ($area -notmatch $rule.Area -or $item -notmatch $rule.Item) { continue }
+            if (@($rule.Status).Count -gt 0 -and @($rule.Status) -notcontains $status) { continue }
+            if ($rule.Contains('Value') -and $rule['Value'] -and ([string]$row.Value) -notmatch $rule['Value']) { continue }
+            if (-not $byTeam[$rule.Team].Contains($item)) { $byTeam[$rule.Team].Add($item) }
+        }
+    }
+    $out = @()
+    foreach ($team in @($byTeam.Keys)) {
+        if ($byTeam[$team].Count -gt 0) { $out += [pscustomobject]@{ Team = $team; Items = $byTeam[$team].ToArray() } }
+    }
+    return $out
+}
+
+function Get-TeamsSummary {
+    # Pure (#323): one row per team with the servers that need it, in the
+    # order of $Rules. $Servers: objects with ComputerName and Teams (the
+    # output of Get-TeamsNeeded).
+    param([object[]]$Servers, [object[]]$Rules = $script:TeamRules)
+    $order = @(); foreach ($rule in @($Rules)) { if ($order -notcontains $rule.Team) { $order += $rule.Team } }
+    $rows = @()
+    foreach ($team in $order) {
+        $names = @(); $items = @()
+        foreach ($s in @($Servers)) {
+            foreach ($t in @($s.Teams)) {
+                if (-not $t -or $t.Team -ne $team) { continue }
+                if ($names -notcontains $s.ComputerName) { $names += $s.ComputerName }
+                foreach ($i in @($t.Items)) { if ($items -notcontains $i) { $items += $i } }
+            }
+        }
+        if ($names.Count -gt 0) { $rows += [pscustomobject]@{ Team = $team; ServerCount = $names.Count; Servers = (@($names | Sort-Object) -join ', '); Why = ($items -join ' | ') } }
+    }
+    return $rows
+}
+# ==============================================================================
 # End-of-life core (ADR 0003). One source part, built into BOTH the assessment
 # and Get-IPUEolStatus.ps1 (ADR 0002 allows shared parts), so the two cannot
 # drift apart. Pure functions and data only: no file, network or host access.
@@ -461,6 +536,7 @@ $servers = New-Object System.Collections.Generic.List[object]
 $findings = New-Object System.Collections.Generic.List[object]
 $unreadable = @()
 $eolBySource = @{}
+$rowsBySource = @{}
 foreach ($f in $files) {
     try { $r = Get-Content -LiteralPath $f.FullName -Raw -Encoding UTF8 | ConvertFrom-Json }
     catch { $unreadable += $f.Name; continue }
@@ -472,6 +548,8 @@ foreach ($f in $files) {
     # The products with an end-of-life date that the server found (#286) and the EOL rows its own report already has (#275).
     $eolCandidates = @(); if ($r.PSObject.Properties['EolCandidates']) { $eolCandidates = @($r.EolCandidates) }
     $eolBySource[$f.Name] = [pscustomobject]@{ ComputerName = $r.ComputerName; Candidates = $eolCandidates; Items = @($r.Results | Where-Object { [string]$_.Item -like 'EOL: *' } | ForEach-Object { [string]$_.Item }) }
+    # The rows the teams needed are read from (#323).
+    $rowsBySource[$f.Name] = @($r.Results | ForEach-Object { [pscustomobject]@{ Area = [string]$_.Area; Item = [string]$_.Item; Status = [string]$_.Status; Value = [string]$_.Value } })
     $notCompleted = @($r.CheckRuns | Where-Object { $_.Outcome -ne 'Completed' -and $_.Outcome -ne 'Skipped' } | ForEach-Object { $_.Name + ' (' + $_.Outcome + ')' })
     $servers.Add([pscustomobject][ordered]@{
         ComputerName     = $r.ComputerName
@@ -556,10 +634,22 @@ foreach ($s in $latest) {
     $e = $eolBySource[$s.SourceFile]
     $s | Add-Member -NotePropertyName EndOfLifeProducts -NotePropertyValue (Get-EolServerSummary $e.Candidates $eolData $today) -Force
     # Findings the server's own report did not already have (it had no snapshot on the server).
-    foreach ($x in @(Get-EolServerFinding $e.Candidates $e.Items $eolData $today)) {
+    $eolFindings = @(Get-EolServerFinding $e.Candidates $e.Items $eolData $today)
+    foreach ($x in $eolFindings) {
         $fleetFindings += [pscustomobject][ordered]@{ ComputerName = $s.ComputerName; Mode = $s.Mode; Status = $x.Status; Area = $x.Area; Item = $x.Item; Value = $x.Value; Details = $x.Details; Recommendation = $x.Recommendation; Command = ''; Link = ''; SourceFile = $s.SourceFile }
     }
 }
+
+# Teams needed (#323): from the server's own rows and the end-of-life findings
+# added here. TeamsNeeded is one CSV field; the overview has a column and a summary.
+$teamsBySource = @{}
+foreach ($s in $latest) {
+    $rows = @($rowsBySource[$s.SourceFile]) + @($fleetFindings | Where-Object { $_.SourceFile -eq $s.SourceFile -and [string]$_.Item -like 'EOL: *' })
+    $teams = @(Get-TeamsNeeded $rows)
+    $teamsBySource[$s.SourceFile] = [pscustomobject]@{ ComputerName = $s.ComputerName; Teams = $teams }
+    $s | Add-Member -NotePropertyName TeamsNeeded -NotePropertyValue (@($teams | ForEach-Object { $_.Team }) -join ', ') -Force
+}
+$teamRows = @(Get-TeamsSummary @($latest | ForEach-Object { $teamsBySource[$_.SourceFile] }))
 $fleetFindings = @($fleetFindings | Sort-Object @{Expression={ $rank[[string]$_.Status] }},ComputerName,Item)
 
 $serversCsv = Join-Path $OutputFolder 'IPU-Fleet-Servers.csv'
@@ -594,14 +684,24 @@ section{background:#fff;border:1px solid var(--line);border-radius:10px;margin:1
 [void]$sb.AppendLine('<div class="cards">')
 foreach ($k in @('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL','OK')) { if ($k -eq 'SPECIAL' -and $overallCounts[$k] -eq 0) { continue }; [void]$sb.AppendLine('<div class="card"><small>Overall ' + $k + '</small><b>' + $overallCounts[$k] + '</b></div>') }
 [void]$sb.AppendLine('</div>')
+# Teams needed (#323): one row per team, with the servers that need it.
+[void]$sb.AppendLine('<section><h2>Teams needed</h2>')
+if ($teamRows.Count -eq 0) {
+    [void]$sb.AppendLine('<p class="muted">No server needs another team, by the rules in the fleet overview (user guide, "Teams needed").</p>')
+} else {
+    [void]$sb.AppendLine('<div class="scroll"><table><thead><tr><th>Team</th><th>Servers</th><th>Which</th><th>Why</th></tr></thead><tbody>')
+    foreach ($t in $teamRows) { [void]$sb.AppendLine('<tr><td class="nw"><b>' + (Encode $t.Team) + '</b></td><td>' + $t.ServerCount + '</td><td>' + (Encode $t.Servers) + '</td><td class="muted">' + (Encode $t.Why) + '</td></tr>') }
+    [void]$sb.AppendLine('</tbody></table></div>')
+}
+[void]$sb.AppendLine('<p class="muted">Derived from each server''s findings and inventory rows; involve these teams before the upgrade. The rules are in the user guide, "Teams needed".</p></section>')
 if ($unreadable.Count -gt 0) { [void]$sb.AppendLine('<section><h2>Files not read</h2><p>' + (Encode ($unreadable -join ', ')) + '</p></section>') }
 
-[void]$sb.AppendLine('<section><h2>Servers (worst first)</h2><div class="scroll"><table><thead><tr><th>Server</th><th>Mode</th><th>Overall</th><th title="Number of BLOCKER, ACTION, WARNING and MANUAL findings">Findings<br><small>Blocker/Action/Warning/Manual</small></th><th>Current OS</th><th>Target</th><th>Media</th><th>Platform</th><th>RDP NLA</th><th>SQL</th><th>Top issues</th><th>Not assessed</th><th>Completed</th></tr></thead><tbody>')
+[void]$sb.AppendLine('<section><h2>Servers (worst first)</h2><div class="scroll"><table><thead><tr><th>Server</th><th>Mode</th><th>Overall</th><th title="Number of BLOCKER, ACTION, WARNING and MANUAL findings">Findings<br><small>Blocker/Action/Warning/Manual</small></th><th>Teams needed</th><th>Current OS</th><th>Target</th><th>Media</th><th>Platform</th><th>RDP NLA</th><th>SQL</th><th>Top issues</th><th>Not assessed</th><th>Completed</th></tr></thead><tbody>')
 foreach ($s in $latest) {
     $badge = '<span class="badge s-' + ([string]$s.Overall).ToLowerInvariant() + '">' + (Encode $s.Overall) + '</span>'
     if ($s.Partial) { $badge += ' <span class="muted">partial</span>' }
     if ($s.Redacted) { $badge += ' <span class="muted">redacted</span>' }
-    [void]$sb.AppendLine('<tr><td class="nw"><b>' + (Encode $s.ComputerName) + '</b></td><td>' + (Encode $s.Mode) + '</td><td class="nw">' + $badge + '</td><td class="nw">' + $s.Blocker + '/' + $s.Action + '/' + $s.Warning + '/' + $s.Manual + '</td><td>' + (Encode $s.CurrentOS) + '</td><td class="nw">' + (Encode $s.Target) + '</td><td>' + (Encode $s.InstallationMedia) + '</td><td>' + (Encode $s.Platform) + '</td><td class="nw">' + (Encode $s.Nla) + '</td><td>' + (Encode $s.SqlServer) + '</td><td>' + (Encode $s.TopIssues) + '</td><td>' + (Encode $s.NotAssessed) + '</td><td class="nw muted">' + (Encode $s.Completed) + '</td></tr>')
+    [void]$sb.AppendLine('<tr><td class="nw"><b>' + (Encode $s.ComputerName) + '</b></td><td>' + (Encode $s.Mode) + '</td><td class="nw">' + $badge + '</td><td class="nw">' + $s.Blocker + '/' + $s.Action + '/' + $s.Warning + '/' + $s.Manual + '</td><td>' + (Encode $s.TeamsNeeded) + '</td><td>' + (Encode $s.CurrentOS) + '</td><td class="nw">' + (Encode $s.Target) + '</td><td>' + (Encode $s.InstallationMedia) + '</td><td>' + (Encode $s.Platform) + '</td><td class="nw">' + (Encode $s.Nla) + '</td><td>' + (Encode $s.SqlServer) + '</td><td>' + (Encode $s.TopIssues) + '</td><td>' + (Encode $s.NotAssessed) + '</td><td class="nw muted">' + (Encode $s.Completed) + '</td></tr>')
 }
 [void]$sb.AppendLine('</tbody></table></div>')
 # What the Findings column counts (#324).
