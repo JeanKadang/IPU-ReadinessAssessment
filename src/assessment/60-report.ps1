@@ -55,6 +55,36 @@ function Get-CoverageNotice {
     return [pscustomobject]@{ Problems = $problems; ByChoice = $byChoice }
 }
 
+function Get-ProfileAclNote {
+    # Pure (#261): RestrictOutputAcl from a profile file reaches the evidence
+    # folders, but the report folder was created (or found) before the file
+    # was read. '' when the profile does not set it.
+    param([bool]$ProfileSetsIt, [string]$FolderState)
+    if (-not $ProfileSetsIt) { return '' }
+    $state = $FolderState; if (-not $state) { $state = 'unknown' }
+    return ('RestrictOutputAcl: applies to the evidence folders only. The report folder was set up before the profile was read (' + $state + '); to change it, pass -RestrictOutputAcl as an argument.')
+}
+
+function Get-SaLogPathField {
+    # Pure (#261): the LogPath field of the SA line names the log only when it
+    # was written, so a FAILED line never points to a file that is not there.
+    param([string]$LogPath, [bool]$Exists)
+    if ($LogPath -and $Exists) { return $LogPath }
+    return ''
+}
+
+function Get-CheckRunCount {
+    # Pure (#261): the counts for the SA line. NotCompleted is what left a gap
+    # (failed, timed out, or not started because the time budget ran out), the
+    # same split as the coverage notice. Skipped is what was not run by choice
+    # or does not apply (switched off, no media, not a print server, a SPECIAL
+    # short report): it is not a gap.
+    param([object[]]$CheckRuns)
+    $notCompleted = @((Get-CoverageNotice $CheckRuns).Problems).Count
+    $other = @(@($CheckRuns) | Where-Object { $_ -and $_.Outcome -ne 'Completed' }).Count
+    return [pscustomobject]@{ Total = @(@($CheckRuns) | Where-Object { $_ }).Count; NotCompleted = $notCompleted; Skipped = ($other - $notCompleted) }
+}
+
 function New-RecommendationHtml {
     # The "What to do" cell: recommendation text, then the command (labelled
     # Check or Change, with a copy button) and the documentation link (#79).
@@ -656,6 +686,10 @@ function Import-SiteDataFile {
                 $details += ($k + '=' + (@($decision.Settings[$k]) -join ','))
             }
             foreach ($k in @($decision.Ignored)) { $details += ($k + ': the argument given to the script was used') }
+            # The report folder exists before the profile is read (#261): say so
+            # instead of applying the setting silently to the evidence folders only.
+            $aclNote = Get-ProfileAclNote $decision.Settings.Contains('RestrictOutputAcl') ([string]$script:OutputFolderState)
+            if ($aclNote) { $details += $aclNote }
             if ($decision.Settings.Contains('NumberCultureName')) {
                 $script:NumberCultureResolved = Resolve-NumberCulture ([string]$decision.Settings['NumberCultureName'])
                 $script:NumberCulture = $script:NumberCultureResolved.Culture

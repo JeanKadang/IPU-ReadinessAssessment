@@ -180,6 +180,9 @@
             superseded by the 4.0.0 restructure).
 #>
 
+# Kept on purpose (#261): on PowerShell 2.0 this script would not even parse
+# ([ordered], -in), so a version check inside it could never print the SA line.
+# This line gives the clear "requires Windows PowerShell 4.0" message instead.
 #requires -Version 4.0
 
 # =============================================================================
@@ -3781,6 +3784,17 @@ function Get-NativeKillOutcome {
     return [pscustomobject]@{ StillRunning = $true; Text = ('still running after the stop (taskkill exit code ' + $code + ')') }
 }
 
+function Get-SlowCheckArea {
+    # Pure (#261): the report area of a slow check, so a skipped print backup
+    # or Setup scan is filed where its own results go, not under Windows health.
+    param([string]$CheckId)
+    switch ($CheckId) {
+        'printbackup' { return 'PRINTING' }
+        'compatscan'  { return 'COMPAT_SCAN' }
+        default       { return 'WINDOWS_HEALTH' }
+    }
+}
+
 function Add-SkippedSlowCheck {
     # Records a slow check that was not started, as a MANUAL finding and a
     # Skipped run, so the gap is visible. Reason: BudgetUsedUp (default) or
@@ -3788,12 +3802,12 @@ function Add-SkippedSlowCheck {
     param($Check, [int]$BudgetMinutes, [string]$Reason = 'BudgetUsedUp')
     $script:CurrentCheckId = $Check.Id
     if ($Reason -eq 'ServicingMayBeRunning') {
-        Add-Result 'WINDOWS_HEALTH' $Check.Name 'MANUAL' 'Skipped - a previous DISM or SFC scan timed out and may still be running' 'The scan works in TiWorker.exe under the TrustedInstaller service, outside the process this script stops.' -Recommendation 'Wait until TiWorker.exe is idle (or restart the server in the change window), then run this check by hand or run the assessment again. A result read while another scan runs can be wrong, for example SFC reporting a repair waiting for a reboot.' -Kind 'Finding' -Source 'Get-SlowCheckPlan'
+        Add-Result (Get-SlowCheckArea $Check.Id) $Check.Name 'MANUAL' 'Skipped - a previous DISM or SFC scan timed out and may still be running' 'The scan works in TiWorker.exe under the TrustedInstaller service, outside the process this script stops.' -Recommendation 'Wait until TiWorker.exe is idle (or restart the server in the change window), then run this check by hand or run the assessment again. A result read while another scan runs can be wrong, for example SFC reporting a repair waiting for a reboot.' -Kind 'Finding' -Source 'Get-SlowCheckPlan'
         $script:CheckRuns.Add([pscustomobject]@{ Id=$Check.Id; Name=$Check.Name; Phase='Slow'; Outcome='Skipped'; Duration='00:00:00'; Seconds=0; Message='A previous servicing scan may still be running' })
         $script:CurrentCheckId = 'core'
         return
     }
-    Add-Result 'WINDOWS_HEALTH' $Check.Name 'MANUAL' 'Skipped - slow-check time budget used up' ('Budget=' + $BudgetMinutes + ' min') -Recommendation 'Run this check manually, or raise SlowCheckBudgetMinutes (and the SA job timeout).'
+    Add-Result (Get-SlowCheckArea $Check.Id) $Check.Name 'MANUAL' 'Skipped - slow-check time budget used up' ('Budget=' + $BudgetMinutes + ' min') -Recommendation 'Run this check manually, or raise SlowCheckBudgetMinutes (and the SA job timeout).'
     $script:CheckRuns.Add([pscustomobject]@{ Id=$Check.Id; Name=$Check.Name; Phase='Slow'; Outcome='Skipped'; Duration='00:00:00'; Seconds=0; Message='Time budget used up' })
     $script:CurrentCheckId = 'core'
 }
@@ -6359,6 +6373,36 @@ function Get-CoverageNotice {
     return [pscustomobject]@{ Problems = $problems; ByChoice = $byChoice }
 }
 
+function Get-ProfileAclNote {
+    # Pure (#261): RestrictOutputAcl from a profile file reaches the evidence
+    # folders, but the report folder was created (or found) before the file
+    # was read. '' when the profile does not set it.
+    param([bool]$ProfileSetsIt, [string]$FolderState)
+    if (-not $ProfileSetsIt) { return '' }
+    $state = $FolderState; if (-not $state) { $state = 'unknown' }
+    return ('RestrictOutputAcl: applies to the evidence folders only. The report folder was set up before the profile was read (' + $state + '); to change it, pass -RestrictOutputAcl as an argument.')
+}
+
+function Get-SaLogPathField {
+    # Pure (#261): the LogPath field of the SA line names the log only when it
+    # was written, so a FAILED line never points to a file that is not there.
+    param([string]$LogPath, [bool]$Exists)
+    if ($LogPath -and $Exists) { return $LogPath }
+    return ''
+}
+
+function Get-CheckRunCount {
+    # Pure (#261): the counts for the SA line. NotCompleted is what left a gap
+    # (failed, timed out, or not started because the time budget ran out), the
+    # same split as the coverage notice. Skipped is what was not run by choice
+    # or does not apply (switched off, no media, not a print server, a SPECIAL
+    # short report): it is not a gap.
+    param([object[]]$CheckRuns)
+    $notCompleted = @((Get-CoverageNotice $CheckRuns).Problems).Count
+    $other = @(@($CheckRuns) | Where-Object { $_ -and $_.Outcome -ne 'Completed' }).Count
+    return [pscustomobject]@{ Total = @(@($CheckRuns) | Where-Object { $_ }).Count; NotCompleted = $notCompleted; Skipped = ($other - $notCompleted) }
+}
+
 function New-RecommendationHtml {
     # The "What to do" cell: recommendation text, then the command (labelled
     # Check or Change, with a copy button) and the documentation link (#79).
@@ -6960,6 +7004,10 @@ function Import-SiteDataFile {
                 $details += ($k + '=' + (@($decision.Settings[$k]) -join ','))
             }
             foreach ($k in @($decision.Ignored)) { $details += ($k + ': the argument given to the script was used') }
+            # The report folder exists before the profile is read (#261): say so
+            # instead of applying the setting silently to the evidence folders only.
+            $aclNote = Get-ProfileAclNote $decision.Settings.Contains('RestrictOutputAcl') ([string]$script:OutputFolderState)
+            if ($aclNote) { $details += $aclNote }
             if ($decision.Settings.Contains('NumberCultureName')) {
                 $script:NumberCultureResolved = Resolve-NumberCulture ([string]$decision.Settings['NumberCultureName'])
                 $script:NumberCulture = $script:NumberCultureResolved.Culture
@@ -7087,7 +7135,7 @@ function Invoke-Assessment {
         $now = Get-Date
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
-            $script:ComputerName,'FAILED','MANUAL',$reportPath,$script:LogPath,'',$script:Results.Count,
+            $script:ComputerName,'FAILED','MANUAL',$reportPath,(Get-SaLogPathField $script:LogPath (Test-Path -LiteralPath $script:LogPath)),'',$script:Results.Count,
             $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),$now.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),
             (Format-Duration ($now - $script:CollectionStarted)),$script:CollectorVersion,$missingText
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
@@ -7147,7 +7195,8 @@ function Invoke-Assessment {
     }
 
     $records = $script:Results.Count
-    $failedChecks = @($script:CheckRuns | Where-Object { $_.Outcome -ne 'Completed' }).Count
+    # Skips by choice or not applicable are not gaps (#261): counted apart.
+    $runCount = Get-CheckRunCount $script:CheckRuns.ToArray()
     $runStatus = 'SUCCEEDED'; if ($runFailure) { $runStatus = 'FAILED' }
     try {
         $final = Write-AssessmentReport
@@ -7155,7 +7204,7 @@ function Invoke-Assessment {
         if ($WriteJson -and $final.JsonOutcome -eq 'Failed') { $runStatus = 'FAILED' }
         $specialNote = ''
         if ($script:Data.Special) { $specialNote = 'SPECIAL server (' + $script:Data.Special.Title + '): short report, separate plan needed. ' }
-        $msg = $specialNote + 'Mode=' + $AssessmentMode + ', Checks=' + $script:CheckRuns.Count + ', NotCompleted=' + $failedChecks + (Get-JsonOutcomeText $WriteJson $final.JsonOutcome $script:JsonPath) + '. Retrieve the HTML via the approved SA process.'
+        $msg = $specialNote + 'Mode=' + $AssessmentMode + ', Checks=' + $runCount.Total + ', NotCompleted=' + $runCount.NotCompleted + ', Skipped=' + $runCount.Skipped + (Get-JsonOutcomeText $WriteJson $final.JsonOutcome $script:JsonPath) + '. Retrieve the HTML via the approved SA process.'
         if ($runFailure) { $msg = 'The run stopped early (' + $runFailure + '). ' + $msg }
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
@@ -7173,7 +7222,7 @@ function Invoke-Assessment {
         $now = Get-Date
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
-            $script:ComputerName,'FAILED',(Get-OverallStatus $script:Results.ToArray()),$script:ReportPath,$script:LogPath,'',$records,
+            $script:ComputerName,'FAILED',(Get-OverallStatus $script:Results.ToArray()),$script:ReportPath,(Get-SaLogPathField $script:LogPath (Test-Path -LiteralPath $script:LogPath)),'',$records,
             $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),$now.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),
             (Format-Duration ($now - $script:CollectionStarted)),$script:CollectorVersion,$msg
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')

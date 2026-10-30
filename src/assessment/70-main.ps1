@@ -55,7 +55,7 @@ function Invoke-Assessment {
         $now = Get-Date
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
-            $script:ComputerName,'FAILED','MANUAL',$reportPath,$script:LogPath,'',$script:Results.Count,
+            $script:ComputerName,'FAILED','MANUAL',$reportPath,(Get-SaLogPathField $script:LogPath (Test-Path -LiteralPath $script:LogPath)),'',$script:Results.Count,
             $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),$now.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),
             (Format-Duration ($now - $script:CollectionStarted)),$script:CollectorVersion,$missingText
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')
@@ -115,7 +115,8 @@ function Invoke-Assessment {
     }
 
     $records = $script:Results.Count
-    $failedChecks = @($script:CheckRuns | Where-Object { $_.Outcome -ne 'Completed' }).Count
+    # Skips by choice or not applicable are not gaps (#261): counted apart.
+    $runCount = Get-CheckRunCount $script:CheckRuns.ToArray()
     $runStatus = 'SUCCEEDED'; if ($runFailure) { $runStatus = 'FAILED' }
     try {
         $final = Write-AssessmentReport
@@ -123,7 +124,7 @@ function Invoke-Assessment {
         if ($WriteJson -and $final.JsonOutcome -eq 'Failed') { $runStatus = 'FAILED' }
         $specialNote = ''
         if ($script:Data.Special) { $specialNote = 'SPECIAL server (' + $script:Data.Special.Title + '): short report, separate plan needed. ' }
-        $msg = $specialNote + 'Mode=' + $AssessmentMode + ', Checks=' + $script:CheckRuns.Count + ', NotCompleted=' + $failedChecks + (Get-JsonOutcomeText $WriteJson $final.JsonOutcome $script:JsonPath) + '. Retrieve the HTML via the approved SA process.'
+        $msg = $specialNote + 'Mode=' + $AssessmentMode + ', Checks=' + $runCount.Total + ', NotCompleted=' + $runCount.NotCompleted + ', Skipped=' + $runCount.Skipped + (Get-JsonOutcomeText $WriteJson $final.JsonOutcome $script:JsonPath) + '. Retrieve the HTML via the approved SA process.'
         if ($runFailure) { $msg = 'The run stopped early (' + $runFailure + '). ' + $msg }
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
@@ -141,7 +142,7 @@ function Invoke-Assessment {
         $now = Get-Date
         [Console]::Out.WriteLine($header)
         [Console]::Out.WriteLine((@(
-            $script:ComputerName,'FAILED',(Get-OverallStatus $script:Results.ToArray()),$script:ReportPath,$script:LogPath,'',$records,
+            $script:ComputerName,'FAILED',(Get-OverallStatus $script:Results.ToArray()),$script:ReportPath,(Get-SaLogPathField $script:LogPath (Test-Path -LiteralPath $script:LogPath)),'',$records,
             $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),$now.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture),
             (Format-Duration ($now - $script:CollectionStarted)),$script:CollectorVersion,$msg
         ) | ForEach-Object { ConvertTo-SAField $_ }) -join ';')

@@ -302,7 +302,8 @@ case-insensitively; keep them specific, because a broad word matches unrelated s
 evidence settings, `WriteJson`, `RestrictOutputAcl` and `NumberCultureName`. Each value must pass the same
 checks as the parameter (range, type, absolute path). `AssessmentMode`, `TargetServerVersion`,
 `TargetMediaPath`, `ReportDirectory`, `RedactReport` and the two file parameters describe one run and cannot
-be set in a profile. Settings passed as arguments win; the *Profile file* row names them.
+be set in a profile. Settings passed as arguments win; the *Profile file* row names them. `RestrictOutputAcl` from a profile
+reaches the evidence folders only: the report folder is set up before the file is read, and the row says so (#261).
 
 ```json
 {
@@ -351,6 +352,8 @@ ComputerName;RunStatus;AssessmentStatus;ReportPath;LogPath;ReportSizeKB;Records;
 |---|---|
 | `RunStatus` | `SUCCEEDED` or `FAILED` (the collector itself, not the server's readiness) |
 | `AssessmentStatus` | Overall: `BLOCKER`, `ACTION`, `WARNING`, `MANUAL`, `OK` |
+| `LogPath` | The run log; empty when no log could be written (for example a report folder the account cannot write to) |
+| `Message` | `Mode=Pre, Checks=38, NotCompleted=0, Skipped=4, JSON=...`. **NotCompleted** counts the checks that left a gap: failed, ran out of time, or were not started because the slow-check budget was used up. **Skipped** counts checks not run by choice or that do not apply: DISM or SFC switched off, no installation media, not a print server, a SPECIAL short report. Before 4.7.0 both were counted as NotCompleted |
 
 Process exit code: `0` when the report was written, `1` when the collector failed. A `BLOCKER` assessment still
 exits `0`; read `AssessmentStatus`.

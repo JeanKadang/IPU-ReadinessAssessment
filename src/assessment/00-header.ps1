@@ -180,5 +180,8 @@
             superseded by the 4.0.0 restructure).
 #>
 
+# Kept on purpose (#261): on PowerShell 2.0 this script would not even parse
+# ([ordered], -in), so a version check inside it could never print the SA line.
+# This line gives the clear "requires Windows PowerShell 4.0" message instead.
 #requires -Version 4.0
 

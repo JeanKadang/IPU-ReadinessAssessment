@@ -1844,6 +1844,17 @@ function Get-NativeKillOutcome {
     return [pscustomobject]@{ StillRunning = $true; Text = ('still running after the stop (taskkill exit code ' + $code + ')') }
 }
 
+function Get-SlowCheckArea {
+    # Pure (#261): the report area of a slow check, so a skipped print backup
+    # or Setup scan is filed where its own results go, not under Windows health.
+    param([string]$CheckId)
+    switch ($CheckId) {
+        'printbackup' { return 'PRINTING' }
+        'compatscan'  { return 'COMPAT_SCAN' }
+        default       { return 'WINDOWS_HEALTH' }
+    }
+}
+
 function Add-SkippedSlowCheck {
     # Records a slow check that was not started, as a MANUAL finding and a
     # Skipped run, so the gap is visible. Reason: BudgetUsedUp (default) or
@@ -1851,12 +1862,12 @@ function Add-SkippedSlowCheck {
     param($Check, [int]$BudgetMinutes, [string]$Reason = 'BudgetUsedUp')
     $script:CurrentCheckId = $Check.Id
     if ($Reason -eq 'ServicingMayBeRunning') {
-        Add-Result 'WINDOWS_HEALTH' $Check.Name 'MANUAL' 'Skipped - a previous DISM or SFC scan timed out and may still be running' 'The scan works in TiWorker.exe under the TrustedInstaller service, outside the process this script stops.' -Recommendation 'Wait until TiWorker.exe is idle (or restart the server in the change window), then run this check by hand or run the assessment again. A result read while another scan runs can be wrong, for example SFC reporting a repair waiting for a reboot.' -Kind 'Finding' -Source 'Get-SlowCheckPlan'
+        Add-Result (Get-SlowCheckArea $Check.Id) $Check.Name 'MANUAL' 'Skipped - a previous DISM or SFC scan timed out and may still be running' 'The scan works in TiWorker.exe under the TrustedInstaller service, outside the process this script stops.' -Recommendation 'Wait until TiWorker.exe is idle (or restart the server in the change window), then run this check by hand or run the assessment again. A result read while another scan runs can be wrong, for example SFC reporting a repair waiting for a reboot.' -Kind 'Finding' -Source 'Get-SlowCheckPlan'
         $script:CheckRuns.Add([pscustomobject]@{ Id=$Check.Id; Name=$Check.Name; Phase='Slow'; Outcome='Skipped'; Duration='00:00:00'; Seconds=0; Message='A previous servicing scan may still be running' })
         $script:CurrentCheckId = 'core'
         return
     }
-    Add-Result 'WINDOWS_HEALTH' $Check.Name 'MANUAL' 'Skipped - slow-check time budget used up' ('Budget=' + $BudgetMinutes + ' min') -Recommendation 'Run this check manually, or raise SlowCheckBudgetMinutes (and the SA job timeout).'
+    Add-Result (Get-SlowCheckArea $Check.Id) $Check.Name 'MANUAL' 'Skipped - slow-check time budget used up' ('Budget=' + $BudgetMinutes + ' min') -Recommendation 'Run this check manually, or raise SlowCheckBudgetMinutes (and the SA job timeout).'
     $script:CheckRuns.Add([pscustomobject]@{ Id=$Check.Id; Name=$Check.Name; Phase='Slow'; Outcome='Skipped'; Duration='00:00:00'; Seconds=0; Message='Time budget used up' })
     $script:CurrentCheckId = 'core'
 }

@@ -479,3 +479,47 @@ Describe 'RDP NLA in the Summary (#174)' {
         Get-RdpAccessFact | Should -Be 'Not reported, NLA unknown'
     }
 }
+
+Describe 'SA line counts and fields (#261)' {
+    BeforeAll {
+        function New-Run([string]$Id, [string]$Outcome, [string]$Message = '') {
+            [pscustomobject]@{ Id = $Id; Name = $Id; Phase = 'Slow'; Outcome = $Outcome; Duration = '00:00:00'; Seconds = 0; Message = $Message }
+        }
+    }
+    It 'checks skipped by choice or not applicable are Skipped, not NotCompleted' {
+        $runs = @(
+            (New-Run 'baseline' 'Completed'),
+            (New-Run 'dism' 'Skipped' 'Not configured: switched off with -RunDISMScanHealth $false'),
+            (New-Run 'sfc' 'Skipped' 'Not configured: switched off with -RunSFCVerifyOnly $false'),
+            (New-Run 'printbackup' 'Skipped' 'Not applicable: not a print server'),
+            (New-Run 'compatscan' 'Skipped' 'Not configured: no installation media given (-TargetMediaPath)'),
+            (New-Run 'iis' 'Skipped' 'Not applicable: SPECIAL server, short report')
+        )
+        $c = Get-CheckRunCount $runs
+        $c.Total | Should -Be 6
+        $c.NotCompleted | Should -Be 0
+        $c.Skipped | Should -Be 5
+    }
+    It 'failed, timed out and budget-skipped checks are NotCompleted' {
+        $c = Get-CheckRunCount @((New-Run 'a' 'Failed'), (New-Run 'b' 'TimedOut'), (New-Run 'c' 'Skipped' 'Time budget used up'), (New-Run 'd' 'Completed'))
+        $c.NotCompleted | Should -Be 3
+        $c.Skipped | Should -Be 0
+    }
+    It 'no runs' {
+        $c = Get-CheckRunCount @()
+        $c.Total | Should -Be 0; $c.NotCompleted | Should -Be 0; $c.Skipped | Should -Be 0
+    }
+    It 'the LogPath field names the log only when it exists' {
+        Get-SaLogPathField 'C:\x\SRV-IPU-Assessment.log' $true | Should -Be 'C:\x\SRV-IPU-Assessment.log'
+        Get-SaLogPathField 'C:\x\SRV-IPU-Assessment.log' $false | Should -Be ''
+        Get-SaLogPathField '' $true | Should -Be ''
+    }
+    It 'RestrictOutputAcl from a profile says it reaches the evidence folders only' {
+        Get-ProfileAclNote $false 'CreatedRestricted' | Should -Be ''
+        $n = Get-ProfileAclNote $true 'Existing'
+        $n | Should -Match 'evidence folders only'
+        $n | Should -Match '\(Existing\)'
+        $n | Should -Match '-RestrictOutputAcl as an argument'
+        Get-ProfileAclNote $true '' | Should -Match '\(unknown\)'
+    }
+}
