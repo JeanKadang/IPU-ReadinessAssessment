@@ -148,6 +148,10 @@ Parameters are validated before anything runs: thresholds and timeouts must be w
 Every setting has a default, so the script runs unchanged when no arguments can be passed (such as an SA
 ad-hoc job). Override only what you need.
 
+**True/false settings** take `1` or `0` everywhere (`-RunDISMScanHealth 0`). The tables below show the defaults as
+`$true`/`$false`, which work on a console but **not in an SA job** (see
+[Passing arguments in SA](#passing-arguments-in-sa)).
+
 ### Scope
 
 | Parameter | Default | Meaning |
@@ -354,7 +358,7 @@ exits `0`; read `AssessmentStatus`.
 ### Sharing a report: redaction
 
 Reports describe a server in detail. To share one outside the team (a vendor, a ticket, a public bug report),
-run with `-RedactReport $true`. In the HTML and JSON, these are replaced with placeholders that stay the same
+run with `-RedactReport 1` (or `$true` on a console). In the HTML and JSON, these are replaced with placeholders that stay the same
 within one run (the same address is always `IP-3`):
 
 | Replaced | Placeholder | Example |
@@ -406,13 +410,13 @@ for which original (#211), so the team can map answers about a redacted copy bac
 
 - `-RedactExisting`: `DO-NOT-SHARE-REDACTION-KEY-<time>.csv` in the same folder, one file for all the copies made in
   that run (they share one placeholder map, so `HOST-2` means the same server in every copy).
-- `-RedactReport $true`: `DO-NOT-SHARE-<Computer>-IPU-Assessment-REDACTION-KEY.csv` (or `-IPU-PostUpgrade-`) next to
+- `-RedactReport 1`: `DO-NOT-SHARE-<Computer>-IPU-Assessment-REDACTION-KEY.csv` (or `-IPU-PostUpgrade-`) next to
   the report.
 
 It is a `;` separated file with `Placeholder;Kind;Original` (for example `HOST-1;HOST;SRV-APP01`) that opens in Excel,
 non-ASCII names included. Only SYSTEM, Administrators and the account that ran the script can read it. **It holds the
 real names: keep it in the team, and share only the `REDACTED-*` files, never the whole folder.** Switch it off with
-`-WriteRedactionKey $false`.
+`-WriteRedactionKey 0`.
 
 ### JSON shape
 
@@ -823,13 +827,36 @@ one shared source part is built into all three scripts.
 
 The script is designed for SA Ad-Hoc Scripting, normally as the SA Agent (LocalSystem).
 
-1. Paste or attach the script. If your job can pass arguments, use them; otherwise edit the defaults in the `param()` block.
+1. Paste or attach the script. If your job can pass arguments, use them (see
+   [Passing arguments in SA](#passing-arguments-in-sa)); otherwise edit the defaults in the `param()` block.
 2. **Set the job timeout** above the slow-check budget:
 
    `SlowCheckBudgetMinutes` (+ `PrintBackupTimeoutMinutes` on a print server, + `CompatScanTimeoutMinutes` when `TargetMediaPath` is set) **+ about 15 minutes.**
    With defaults that is roughly 65 minutes, or 110 with media.
 3. Read the single result line from the job output (`RunStatus`, `AssessmentStatus`).
 4. Retrieve the HTML through your approved SA file-retrieval process.
+
+### Passing arguments in SA
+
+SA puts a backtick before every `$` in the parameter field (#337), so `$true` and `$false` reach the script as text and
+the job fails before any check runs (`Cannot convert value "System.String" to type "System.Boolean"`).
+
+| Setting | In an SA job | On a console |
+|---|---|---|
+| True/false | `1` or `0`: `-RunDISMScanHealth 0 -RedactReport 1` | `1`/`0` or `$true`/`$false` |
+| A list (`PkiAllowedTargets`) | `2019,2022` or `'2019,2022'` (#340) | the same |
+| Text with spaces or a path | in quotes: `-ReportDirectory 'C:\temp\IPU-Assessment'` | the same |
+
+A quick run that skips the two slow health scans, for example to prove the script starts on a server:
+
+```
+-AssessmentMode Pre -RunDISMScanHealth 0 -RunSFCVerifyOnly 0
+```
+
+SA's own wrapper may print `Set-ExecutionPolicy : Windows PowerShell updated your execution policy successfully, but
+the setting is overridden by a policy defined at a more specific scope` before the script starts. That comes from SA,
+not from this script, when a Group Policy sets the execution policy (for example `RemoteSigned`). It is harmless:
+the script still runs, and the result line that follows is the one to read.
 
 ```mermaid
 flowchart LR
@@ -863,6 +890,8 @@ access to the output folder.
 |---|---|---|
 | SA line `FAILED` with `Missing: ...`, nothing collected | A prerequisite is missing: PowerShell 4.0, .NET Framework 4.5 or administrator rights (section 2) | Do what the message says (for example run elevated, or install .NET Framework 4.8) and run again |
 | `MANUAL` row *Prerequisites* naming a module | An optional PowerShell module is missing | Install the feature that provides it, or review the named area by hand |
+| SA job fails at once: `Cannot convert value "System.String" to type "System.Boolean"` | `$true`/`$false` in the SA parameter field (SA escapes `$`) | Use `1`/`0` (section 10, [Passing arguments in SA](#passing-arguments-in-sa)) |
+| SA output starts with `Set-ExecutionPolicy ... overridden by a policy defined at a more specific scope` | SA's wrapper, with a Group Policy that sets the execution policy | Nothing: harmless; read the result line that follows |
 | `... is not digitally signed` | Machine enforces signed scripts | Sign the script, or `powershell -ExecutionPolicy Bypass -File` for that process only |
 | Fleet overview: `No ... files found` | Wrong `InputFolder`, or the files were renamed | Files must end in `-IPU-Assessment.json` or `-IPU-PostUpgrade.json` |
 | Fleet overview lists a file under "Files not read" | Corrupt JSON, or not an `IPU-Assessment/1` result | Re-collect the file from the server; check the collector version is 4.0.1 or later |
