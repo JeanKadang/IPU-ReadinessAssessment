@@ -392,13 +392,17 @@ number after a product name looks exactly like an address and is replaced (#243)
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Windows-IPU-Readiness-Assessment.ps1 -RedactExisting C:\Temp\IPU-Assessment
 ```
 
-It writes a `REDACTED-<time>-...` copy of every `*-IPU-Assessment` and `*-IPU-PostUpgrade` report pair (JSON and HTML) in the folder, or of one report when you give a file, in a few seconds. Nothing is collected, and the originals are not changed. The names to redact come from the report itself: the computer, the domain, task and service accounts, and GPO and WMI filter names. Reports that are already redacted are skipped. All reports in one folder share one placeholder map: a server keeps the same placeholder (for example `HOST-2`) in its pre- and post-upgrade copy, and the placeholder is part of the file name, so the copies can be paired and merged into a fleet overview. Use `-RedactReport $true` when you run a new assessment; use `-RedactExisting` for reports you already have.
+It writes a `REDACTED-<time>-...` copy of every `*-IPU-Assessment` and `*-IPU-PostUpgrade` report pair (JSON and HTML, and the run log `.log` when it is next to them, #329) in the folder, or of one report when you give a file, in a few seconds. Nothing is collected, and the originals are not changed. The names to redact come from the report itself: the computer, the domain, task and service accounts, and GPO and WMI filter names. Reports that are already redacted are skipped. All reports in one folder share one placeholder map: a server keeps the same placeholder (for example `HOST-2`) in its pre- and post-upgrade copy, and the placeholder is part of the file name, so the copies can be paired and merged into a fleet overview. Use `-RedactReport $true` when you run a new assessment; use `-RedactExisting` for reports you already have.
 
 What changes with redaction:
 
 - The HTML and JSON are named `REDACTED-<yyyyMMdd-HHmmss>-IPU-Assessment.*` (or `-IPU-PostUpgrade.*`), so the
-  file name does not reveal the server. The SA result line keeps the real computer name, and the log is **not**
-  redacted (it stays on the server).
+  file name does not reveal the server. The SA result line keeps the real computer name.
+- **The log** (#329): the run log `<Computer>-IPU-Assessment.log` stays **unredacted**, because you need it to
+  troubleshoot. At the end of the run a redacted copy is written beside the redacted reports, with the same name and
+  `.log`, and the same placeholders as the report (`HOST-1` in the log is `HOST-1` in the report). Lines logged after
+  the final report are not in the copy. `-RedactExisting` does the same for a log next to an existing report.
+  Share the `REDACTED-*.log`, never the original.
 - The JSON has `"Redacted": true`. A redacted result **cannot** be the post-upgrade baseline: placeholders cannot
   be compared with the real server, and the post-upgrade run says so. Keep a normal (unredacted) pre-upgrade run
   for the comparison and redact a second run, or only the copies you share.
