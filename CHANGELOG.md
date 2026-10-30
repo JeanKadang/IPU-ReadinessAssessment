@@ -4,6 +4,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Fleet overview: **Teams needed** (#323). Per server, which other teams the upgrade needs (PKI, AD, Cluster / storage, SQL / DBA, Exchange, Backup, Antivirus / EDR, Network, Virtualization, Application owner), read from its result rows by one rule table (`src/merge/15-teams.ps1`). The overview has a *Teams needed* column and a summary per team at the top (servers, which, why); `IPU-Fleet-Servers.csv` has a `TeamsNeeded` column. Works with results from earlier versions too.
+
 ### Fixed
 
 - Licensing (#330): the ESU add-on names seen on a real Windows Server 2012 R2 server (`Server-ESU-YearN add-on for ...`, `Server-FES-ESU-YearN add-on for ...`) are in the tests, and any product named `... add-on ...` (for example `APPXLOB-Server add-on`) is treated as an add-on, never as the OS licence, also when `LicenseIsAddon` is missing.

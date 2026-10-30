@@ -771,8 +771,8 @@ The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`
 
 | File | Contents |
 |---|---|
-| `IPU-Fleet-Overview.html` | Cards with overall counts, a **Servers (worst first)** table, the **most common SPECIAL/BLOCKER/ACTION items** across the fleet with which servers have them, and a list of any files it could not read |
-| `IPU-Fleet-Servers.csv` | One row per server and mode: `ComputerName`, `Mode`, `Overall`, `Special`, `Blocker`, `Action`, `Warning`, `Manual`, `Target`, `CurrentOS`, `UpgradePath`, `InstallationMedia`, `Platform`, `DomainRole`, `SqlServer`, `CompatScan`, `CDrive`, `Activation`, `Nla`, `TopIssues`, `NotAssessed`, `Partial`, `Redacted`, `Completed`, `CollectorVersion`, `SourceFile` |
+| `IPU-Fleet-Overview.html` | Cards with overall counts, a **Teams needed** summary (one row per team with the servers that need it, see below), a **Servers (worst first)** table with a *Teams needed* column, the **most common SPECIAL/BLOCKER/ACTION items** across the fleet with which servers have them, and a list of any files it could not read |
+| `IPU-Fleet-Servers.csv` | One row per server and mode: `ComputerName`, `Mode`, `Overall`, `Special`, `Blocker`, `Action`, `Warning`, `Manual`, `Target`, `CurrentOS`, `UpgradePath`, `InstallationMedia`, `Platform`, `DomainRole`, `SqlServer`, `CompatScan`, `CDrive`, `Activation`, `Nla`, `TopIssues`, `NotAssessed`, `Partial`, `Redacted`, `Completed`, `CollectorVersion`, `SourceFile`, `EndOfLifeProducts`, `TeamsNeeded` (one field, for example `PKI, SQL / DBA`) |
 | `IPU-Fleet-Findings.csv` | One row per BLOCKER, ACTION, WARNING or MANUAL finding: `ComputerName`, `Mode`, `Status`, `Area`, `Item`, `Value`, `Details`, `Recommendation`, `Command`, `Link`, `SourceFile`. Filter and pivot it in Excel |
 | `IPU-Fleet-Eol.csv` | One row per product and version with an end-of-life date that the servers reported (4.6.0): `Status`, `Product`, `Version`, `Release`, `State`, `EndOfLife`, `DaysLeft`, `ServerCount`, `Servers`, `Text`. Checked against `eol-snapshot.json`; without it every row is MANUAL (not checked) |
 
@@ -787,6 +787,31 @@ The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`
 
 > The overview and CSVs describe every server in detail. Treat them as sensitive and keep them out of shared
 > locations.
+
+### Teams needed
+
+Besides the Windows platform team, an upgrade often needs other teams. The overview shows which ones, per server
+(column *Teams needed*, and `TeamsNeeded` in `IPU-Fleet-Servers.csv`, one field such as `PKI, SQL / DBA`) and as a
+summary at the top: one row per team with the number of servers, which servers, and the items that called for it.
+An empty value means no other team was found by these rules; it does not replace reading the server's own report.
+
+| Team | When |
+|---|---|
+| PKI | A Certification Authority (`PKI / CertificationAuthority`, `ADCSRoleServices`), or the PKI site policy row |
+| AD | A domain controller (`DOMAIN_CONTROLLER`, or the SPECIAL *Domain controller* row) |
+| Cluster / storage | A SPECIAL cluster node, or the Failover Clustering feature at ACTION or WARNING |
+| SQL / DBA | Any SQL Server instance (`SQL` rows, whatever their status) |
+| Exchange | An Exchange BLOCKER or ACTION |
+| Backup | A backup agent found on the server, or failed VSS writers (`BACKUP / VSSWriters` ACTION) |
+| Antivirus / EDR | An antivirus/EDR agent or security tool to check (`ANTIVIRUS` or `SECURITY` WARNING, not AppLocker, Secure Boot, TPM, BitLocker or filter drivers) |
+| Network | An LBFO team (ACTION), or persistent static routes (`StaticRoutes` MANUAL with a route count) |
+| Virtualization | VMware Tools at BLOCKER, ACTION or WARNING |
+| Application owner | IIS installed, a Remote Desktop Session Host or Licensing server, or a product past end of life (`EOL:` WARNING) |
+
+The rules are one table, `$script:TeamRules` in `src/merge/15-teams.ps1`. A site with other teams, or other names
+for them, edits that table and rebuilds the script (`build/Build-Script.ps1 -Manifest src/merge/manifest.txt
+-OutputPath src/Merge-IPUAssessments.ps1`, see [docs/build.md](build.md)). Each rule names the team, the result
+`Area` and `Item` (regular expressions), the statuses that count, and optionally a pattern for the value.
 
 ### End-of-life data
 
