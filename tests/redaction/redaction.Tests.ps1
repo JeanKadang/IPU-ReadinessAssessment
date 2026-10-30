@@ -89,6 +89,38 @@ Describe 'Report redaction (#30)' {
             $obj.ComputerName | Should -Be 'HOST-1'
             $obj.Snapshot.IPv4[0] | Should -Be 'IP-1'
         }
+        It 'writes a redacted copy of the log beside the redacted reports; the log itself is unchanged (#329)' {
+            $RedactReport = $true
+            $WriteJson = $true
+            $WriteRedactionKey = $false
+            [IO.File]::WriteAllText($script:LogPath, ('Timestamp;Level;Phase;Message' + [Environment]::NewLine))
+            Write-AssessmentLog 'INFO' 'CHECK' 'gpresult for SRV01 in corp.example.test | IPv4=10.20.30.40 | RunAs=CORP\svc_batch'
+            $null = Write-AssessmentReport
+            $copy = [IO.Path]::ChangeExtension($script:ReportPath, '.log')
+            $copy | Should -Exist
+            (Split-Path -Leaf $copy) | Should -Not -Match 'SRV01'
+            $text = [IO.File]::ReadAllText($copy)
+            foreach ($secret in 'SRV01', '10.20.30.40', 'corp.example.test', 'svc_batch') { $text | Should -Not -Match ([regex]::Escape($secret)) }
+            $obj = [IO.File]::ReadAllText($script:JsonPath) | ConvertFrom-Json
+            $text | Should -Match ('gpresult for ' + [regex]::Escape($obj.ComputerName) + ' ')
+            $text | Should -Match 'IPv4=IP-1'
+            [IO.File]::ReadAllText($script:LogPath) | Should -Match 'SRV01'
+        }
+        It 'the checkpoint (partial) report writes no log copy (#329)' {
+            $RedactReport = $true
+            $WriteJson = $true
+            $WriteRedactionKey = $false
+            [IO.File]::WriteAllText($script:LogPath, ('Timestamp;Level;Phase;Message' + [Environment]::NewLine))
+            $null = Write-AssessmentReport -Partial
+            [IO.Path]::ChangeExtension($script:ReportPath, '.log') | Should -Not -Exist
+        }
+        It 'writes no log copy without redaction (#329)' {
+            $RedactReport = $false
+            $WriteJson = $true
+            [IO.File]::WriteAllText($script:LogPath, ('Timestamp;Level;Phase;Message' + [Environment]::NewLine))
+            $null = Write-AssessmentReport
+            @(Get-ChildItem -LiteralPath (Split-Path -Parent $script:ReportPath) -Filter 'REDACTED-*.log').Count | Should -Be 0
+        }
         It 'writes Redacted = false without redaction' {
             $RedactReport = $false
             $WriteJson = $true
