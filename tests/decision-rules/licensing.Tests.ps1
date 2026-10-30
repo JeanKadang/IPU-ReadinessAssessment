@@ -54,6 +54,21 @@ Describe 'KMS renewal warning and the OS licence product (#248)' {
             $esu = New-LicenseProduct 'Windows(R) Operating System' 1 $null 'Windows(R) Operating System, ESU-Year1 add-on'
             (Select-OsLicenseProduct @($esu, $os)).Primary.LicenseStatus | Should -Be 5
         }
+        It 'the real 2012 R2 add-on names are add-ons without the flag: <AddOnName> (#330)' -TestCases @(
+            @{ AddOnName = 'Windows(R), Server-ESU-Year1 add-on for ServerDatacenter,ServerDatacenterCore,ServerDatacenterV,ServerDatacenterVCore,ServerStandard,ServerStandardCore,ServerStandardV,ServerStandardVCore' }
+            @{ AddOnName = 'Windows(R), Server-FES-ESU-Year2 add-on for ServerDatacenter,ServerStandard' }
+            @{ AddOnName = 'Windows(R), APPXLOB-Server add-on for ServerStandard,ServerStandardEval,ServerDatacenter,ServerDatacenterEval' }
+        ) {
+            $os = New-LicenseProduct 'Windows(R), ServerStandard edition' 5 $null 'Windows(R) Operating System, VOLUME_MAK channel'
+            $addOn = New-LicenseProduct $AddOnName 1 $null 'Windows(R) Operating System, VOLUME_MAK channel'
+            $r = Select-OsLicenseProduct @($addOn, $os)
+            $r.Primary.Name | Should -Be 'Windows(R), ServerStandard edition'
+            @($r.AddOns).Count | Should -Be 1
+        }
+        It 'the real 2012 R2 OS licence has LicenseIsAddon False and is the Primary (#330)' {
+            $r = Select-OsLicenseProduct @((New-LicenseProduct 'Windows(R), ServerStandard edition' 1 $false 'Windows(R) Operating System, VOLUME_MAK channel'))
+            $r.Primary.LicenseStatus | Should -Be 1; @($r.AddOns).Count | Should -Be 0
+        }
         It 'a licensed OS product comes before an unlicensed one' {
             $r = Select-OsLicenseProduct @((New-LicenseProduct 'Windows(R), B edition' 5 $false), (New-LicenseProduct 'Windows(R), A edition' 1 $false))
             $r.Primary.Name | Should -Be 'Windows(R), A edition'
