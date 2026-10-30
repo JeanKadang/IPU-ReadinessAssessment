@@ -407,6 +407,17 @@ Describe 'Slow-check time budget (#39)' {
         $script:CheckRuns[0].Outcome | Should -Be 'Skipped'
         $script:CurrentCheckId | Should -Be 'core'
     }
+    It 'a skipped <Id> is filed under <Area> (#261)' -TestCases @(
+        @{ Id = 'printbackup'; Area = 'PRINTING' }
+        @{ Id = 'compatscan';  Area = 'COMPAT_SCAN' }
+        @{ Id = 'dism';        Area = 'WINDOWS_HEALTH' }
+        @{ Id = 'sfc';         Area = 'WINDOWS_HEALTH' }
+    ) {
+        Get-SlowCheckArea $Id | Should -Be $Area
+        $script:Results.Clear(); $script:CheckRuns.Clear()
+        Add-SkippedSlowCheck ([pscustomobject]@{ Id = $Id; Name = 'Some slow check' }) 50
+        $script:Results[0].Area | Should -Be $Area
+    }
 }
 
 Describe 'Run lock (#244)' {
