@@ -462,6 +462,7 @@ Most severe on the left. The **overall status is the most severe *finding***.
 
 | Status | Do this |
 |---|---|
+| `SPECIAL` | Not a standard in-place upgrade (cluster node, domain controller): it needs its own plan, extra time and coordination, see *SPECIAL* above |
 | `BLOCKER` | Resolve before scheduling. Examples: unsupported path, clustered node, domain controller, unsupported SQL/Exchange combination |
 | `ACTION` | Complete as part of the change. Example: a feature that Setup will remove |
 | `WARNING` | Plan for it. Example: stale patch level, long uptime |
@@ -473,7 +474,7 @@ Most severe on the left. The **overall status is the most severe *finding***.
 
 | Kind | Affects overall? | Purpose |
 |---|---|---|
-| Finding | Yes | `BLOCKER`, `ACTION`, `WARNING`, `MANUAL` |
+| Finding | Yes | `SPECIAL`, `BLOCKER`, `ACTION`, `WARNING`, `MANUAL` |
 | Observation | No | Visible status without changing the verdict |
 | Checklist | No | Standard change-procedure steps, listed separately |
 | Evidence | No | Inventory and documentation |
