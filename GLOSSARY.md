@@ -67,3 +67,41 @@ _Avoid_: check (a check collects data), query
 **Change command**:
 A command the report shows that alters the server, to run in the change window after reading it. The report labels it "Change".
 _Avoid_: fix, remediation (the assessment never changes a server itself)
+
+### Runs and files
+
+**Assessment script**:
+The single PowerShell file that runs on one server, reads it without changing anything, and writes a report and a result JSON. Its fixed name is `Windows-IPU-Readiness-Assessment.ps1`.
+_Avoid_: collector (kept only in names that exist: the `CollectorVersion` field, Collector coverage), tool, the assessment
+
+**Merge script**:
+The script that reads the result JSON files of many servers on an analysis machine and writes the fleet overview.
+_Avoid_: aggregator, fleet tool
+
+**EOL script**:
+The script that makes the end-of-life data file and judges products against it, on an analysis machine.
+_Avoid_: lifecycle tool
+
+**Run**:
+One execution of the assessment script on one server, in one mode.
+_Avoid_: scan, job (a job belongs to the automation tool that starts the script), assessment
+
+**Pre run**:
+A run before the upgrade. It assesses readiness and writes the baseline.
+_Avoid_: pre-check, before run
+
+**Post run**:
+A run after the upgrade. It verifies the server and compares it with the baseline.
+_Avoid_: post-check, after run
+
+**Baseline**:
+The unredacted result JSON of a Pre run, which a Post run compares against.
+_Avoid_: reference, before report
+
+**Result JSON**:
+The machine-readable file a run writes, holding all of its results. The Post run and the merge script read it.
+_Avoid_: data file, output, assessment record
+
+**Report**:
+The HTML page a run writes for people to read, with the overall status, the chapters and the results.
+_Avoid_: output, dashboard, summary
