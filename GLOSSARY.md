@@ -147,3 +147,39 @@ _Avoid_: media image, ISO
 **Special server**:
 A server that is not a standard in-place upgrade: a cluster node, or by site policy a domain controller. It needs its own plan, and its overall status is `SPECIAL`.
 _Avoid_: exception, edge case
+
+### End of life
+
+**End of life (EOL)**:
+The date after which the vendor no longer provides security fixes for a release. For Windows Server it is the end of extended support; paid Extended Security Updates run past it.
+_Avoid_: end of support, expiry, sunset
+
+**Product**:
+Software the end-of-life data covers, such as PHP or Windows Server, identified by the name that endoflife.date uses.
+_Avoid_: application, package, software (an application is one installed entry)
+
+**Release**:
+One version line of a product that is supported as a unit, such as PHP 8.2 or Windows Server 2022. The source release and the target release are releases of Windows Server.
+_Avoid_: cycle (kept only in data and code names), branch, major version
+
+**Tool release**:
+A published version of these scripts, such as 4.6.0, with its zip and checksums.
+_Avoid_: release (alone), build, version drop
+
+**Candidate**:
+A product the assessment script found on the server, with its version and how it was found. A candidate is only a candidate until it is compared with the EOL snapshot.
+_Avoid_: detected product, inventory item
+
+**EOL snapshot**:
+The dated file of end-of-life data, made on a machine with internet access and copied to where the verdicts are made. The assessed server never fetches it.
+_Avoid_: snapshot (alone), EOL database, lifecycle file
+
+**EOL verdict**:
+The judgement of one candidate against the EOL snapshot: supported, security-only, ending soon, end of life or unknown. A snapshot too old to confirm support turns supported and security-only into unconfirmed.
+_Avoid_: result (a result is one row), status (a status is how serious a result is)
+
+### Comparing
+
+**Server snapshot**:
+The state of one server recorded by a Pre run, such as ports, routes, tasks and printers, so that a Post run can report what changed.
+_Avoid_: snapshot (alone), backup, image
