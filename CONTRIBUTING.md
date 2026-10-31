@@ -25,8 +25,9 @@ for its topic, or start a new file in the folder:
 | You changed | Add the test to |
 |---|---|
 | `30-core.ps1`, `70-main.ps1` (runner, helpers, output, SA line) | `tests/core/` |
+| `35-check-data.ps1` (who owns which check data) | `tests/core/check-data.Tests.ps1`; a check that writes a new key of `$script:Data` or a new list of its `Snapshot` declares the owner there first |
 | `20-detection-patterns.ps1`, `40-decision-rules.ps1` (a pure decision function) | `tests/decision-rules/<topic>.Tests.ps1` |
-| `50-checks.ps1` (a check body) | `tests/checks/<chapter>.Tests.ps1`, the chapter of the check in `docs/checks.md`; it runs on the fake server in `tests/checks/FakeServer.ps1` |
+| `50-checks.ps1` (a check body) | `tests/checks/<chapter>.Tests.ps1`, the chapter of the check in `docs/checks.md`; it runs on the fake server in `tests/checks/FakeServer.ps1`. A check that gains, loses or changes a row also changes `tests/checks/fake-server-results.golden.txt`: the test names the difference; review it, then rewrite the file with `$env:IPU_UPDATE_GOLDEN = '1'` |
 | `60-report.ps1` (HTML, JSON) | `tests/report/` |
 | Redaction | `tests/redaction/` |
 | The post-upgrade comparison or the Post run | `tests/post-upgrade/` |
