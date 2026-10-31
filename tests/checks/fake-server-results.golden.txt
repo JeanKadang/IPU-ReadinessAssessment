@@ -169,5 +169,5 @@ check sfc Completed
   WINDOWS_HEALTH | SFC VerifyOnly | OK | Evidence
 check compatscan Skipped
   COMPAT_SCAN | SetupCompatibilityScan | INFO | Evidence
-data keys: ActivationKind ActivationSummary AdLocation Apps BIOS CPU CS CSummary CV DomainRoleText DriveRedirection DriverNames Edition EndpointProducts EolCandidates Features FilterDrivers InstallLanguage IsClustered KernelDrivers KmsEndpoint NetworkEvidence NlaState OS Platform PolicyEvidence PrintServer RdpSummary RecommendedMedia RedactLiterals Services Snapshot SourceRelease SourceSupport SqlSummary UacSummary
+data keys: ActivationKind ActivationSummary AdLocation Apps BIOS CPU CS CSummary CV DomainRoleText DriveRedirection DriverNames EndpointProducts EolCandidates Features FilterDrivers InstallLanguage KernelDrivers KmsEndpoint NetworkEvidence NlaState OS Platform PolicyEvidence PrintServer RdpSummary RecommendedMedia RedactLiterals Services Snapshot SourceRelease SourceSupport SqlSummary UacSummary
 snapshot lists: Adapters Apps Dns Features Gpos Groups Hosts IPv4 Nla Ou PortOwners Ports PrinterDrivers PrinterPorts Printers Routes Services Tasks Uac

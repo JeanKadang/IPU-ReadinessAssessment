@@ -66,8 +66,9 @@ The checks share `$script:Data` and its `Snapshot` as one bus: `baseline` fills 
 and the Post run compares the snapshot lists. `35-check-data.ps1` says who owns each key (the one check that may write
 it) and each snapshot list, and which lists the Post run compares. A check that needs to write a new key declares the
 owner there first; `tests/core/check-data.Tests.ps1` fails otherwise. Readers are not listed: about 25 checks read
-`baseline`'s keys. Next steps (#360): accessors for the declared keys, then a MANUAL result when a check's source check
-failed, then the split of `Register-AssessmentCheck` into one function per check (#255).
+`baseline`'s keys. Every read of a key or snapshot list in any part must be declared too, so a misspelled key fails the test instead
+of reading as `$null`. Next steps (#360): a MANUAL result when a check's source check failed, then the split of
+`Register-AssessmentCheck` into one function per check (#255).
 ## Later: a second script
 
 A dedicated cluster assessment (#153) can get its own manifest that lists the shared parts (report, redaction, JSON,

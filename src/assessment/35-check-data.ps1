@@ -29,14 +29,13 @@ $script:CheckDataOwners = [ordered]@{
     RdpSummary = 'rdp'; DriveRedirection = 'rdp'; PolicyEvidence = 'rdp'; NlaState = 'rdp'
     # written outside the checks
     SpecialKind = 'main'; NlaBefore = 'report'; RedactLiterals = 'rules'
-    # written but read nowhere (#360): kept as they are until step 2 removes them
-    IsClustered = 'baseline,upgradepath,cluster'; Edition = 'upgradepath'; ClusterName = 'cluster'
-    IISConfigEvidence = 'iis'; PrintBackup = 'printbackup'; RedactionKey = 'report'
 }
 
 # Keys of $script:CheckDataOwners that nothing reads. A test checks that this
-# stays true: the first read of one of them must update this list.
-$script:CheckDataUnused = @('IsClustered', 'Edition', 'ClusterName', 'IISConfigEvidence', 'PrintBackup', 'RedactionKey')
+# stays true: the first read of one of them must update this list. Step 2 of
+# #360 removed the six that were written and never read (IsClustered, Edition,
+# ClusterName, IISConfigEvidence, PrintBackup, RedactionKey), so it is empty now.
+$script:CheckDataUnused = @()
 
 # Owners that are not checks.
 $script:CheckDataNonCheckOwners = @('main', 'report', 'rules')

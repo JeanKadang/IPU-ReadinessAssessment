@@ -415,7 +415,7 @@ function Write-AssessmentReport {
     # copy so it holds every placeholder they use.
     if ($RedactReport -and $WriteRedactionKey) {
         $keyPath = Join-Path (Split-Path -Parent $script:ReportPath) ('DO-NOT-SHARE-' + $script:SafeComputerName + $script:ReportSuffix + '-REDACTION-KEY.csv')
-        try { $script:Data.RedactionKey = Write-RedactionKey (Get-RedactionContext) $keyPath }
+        try { $null = Write-RedactionKey (Get-RedactionContext) $keyPath }
         catch { Write-AssessmentLog 'WARNING' 'REDACTION' ('Redaction key could not be written: ' + $_.Exception.Message) }
     }
     return [pscustomobject]@{ Overall=$overall; Completed=$completed; Bytes=$info.Length; JsonOutcome=$jsonOutcome }

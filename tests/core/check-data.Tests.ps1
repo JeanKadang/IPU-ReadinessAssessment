@@ -135,7 +135,9 @@ Describe 'Check data owners: keys of $script:Data (#360)' {
     }
     It 'Get-CheckDataOwner: one owner, several owners, unknown key' {
         @(Get-CheckDataOwner 'OS') | Should -Be @('baseline')
-        @(Get-CheckDataOwner 'IsClustered') | Should -Be @('baseline', 'upgradepath', 'cluster')
+        $script:CheckDataOwners['SeveralOwnersProbe'] = 'baseline, upgradepath ,cluster'
+        try { @(Get-CheckDataOwner 'SeveralOwnersProbe') | Should -Be @('baseline', 'upgradepath', 'cluster') }
+        finally { $script:CheckDataOwners.Remove('SeveralOwnersProbe') }
         @(Get-CheckDataOwner 'NoSuchKey').Count | Should -Be 0
     }
 }
@@ -216,5 +218,34 @@ Describe 'Get-SnapshotListSourceMap (#360)' {
     }
     It 'refuses another Compare value' {
         { Get-SnapshotListSourceMap -Compare 'None' } | Should -Throw
+    }
+}
+
+Describe 'Check data owners: every read is of a declared key (#360)' {
+    BeforeAll {
+        $script:UndeclaredReads = @()
+        foreach ($file in (Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $script:Parts -Filter '*.ps1')) {
+            if ($file.Name -eq '35-check-data.ps1') { continue }
+            $ast = [Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$null)
+            $members = $ast.FindAll({ param($n) $n -is [Management.Automation.Language.MemberExpressionAst] -and $n -isnot [Management.Automation.Language.InvokeMemberExpressionAst] }, $true)
+            foreach ($m in $members) {
+                $path = Get-DataPath $m
+                if ($null -eq $path -or $path.Count -eq 0) { continue }
+                if (-not $script:CheckDataOwners.Contains([string]$path[0])) {
+                    $script:UndeclaredReads += ($file.Name + ' line ' + $m.Extent.StartLineNumber + ': Data.' + $path[0]); continue
+                }
+                if ($path[0] -eq 'Snapshot' -and $path.Count -ge 2 -and -not $script:SnapshotListOwners.Contains([string]$path[1])) {
+                    $script:UndeclaredReads += ($file.Name + ' line ' + $m.Extent.StartLineNumber + ': Data.Snapshot.' + $path[1])
+                }
+            }
+        }
+    }
+    It 'no source part reads a key of $script:Data or a snapshot list that is not declared (a misspelled key reads as $null without an error)' {
+        $script:UndeclaredReads | Should -BeNullOrEmpty -Because ($script:UndeclaredReads -join '; ')
+    }
+    It 'the scan sees reads (it is not vacuous)' {
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $script:Parts '50-checks.ps1'), [ref]$null, [ref]$null)
+        $members = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.MemberExpressionAst] -and $n -isnot [Management.Automation.Language.InvokeMemberExpressionAst] }, $true) | Where-Object { $null -ne (Get-DataPath $_) })
+        $members.Count | Should -BeGreaterThan 100
     }
 }
