@@ -105,3 +105,45 @@ _Avoid_: data file, output, assessment record
 **Report**:
 The HTML page a run writes for people to read, with the overall status, the chapters and the results.
 _Avoid_: output, dashboard, summary
+
+### The upgrade
+
+**In-place upgrade (IPU)**:
+Upgrading the operating system of a server by running Setup on it, keeping its roles, data and settings.
+_Avoid_: update, upgrade in place (write it as one term), migration
+
+**Migration**:
+Building a new server and moving the workload to it, instead of upgrading the old one. The assessment does not assess it.
+_Avoid_: clean install, side-by-side upgrade
+
+**Source release**:
+The Windows Server release installed on the server being assessed, for example 2016. The Post run reads the new release in the same place.
+_Avoid_: current OS, current version, old version, from-version
+
+**Target release**:
+The Windows Server release the server is to be upgraded to: 2019, 2022 or 2025.
+_Avoid_: destination, new version, target OS
+
+**Upgrade path**:
+A source release and a target release taken together, which is either supported for an in-place upgrade or not. It has nothing to do with file paths.
+_Avoid_: route, supported combination
+
+**Edition**:
+The product tier of the operating system, such as Standard or Datacenter.
+_Avoid_: SKU, flavour
+
+**Installation option**:
+Whether the server is Server Core or Desktop Experience.
+_Avoid_: mode (a mode is Pre or Post), flavour
+
+**Installation media**:
+The folder, share or ISO that holds `setup.exe` for the target release.
+_Avoid_: media image, install disk
+
+**Installation image**:
+The one edition inside the installation media's `install.wim` that Setup must be told to select. The report names it.
+_Avoid_: media image, ISO
+
+**Special server**:
+A server that is not a standard in-place upgrade: a cluster node, or by site policy a domain controller. It needs its own plan, and its overall status is `SPECIAL`.
+_Avoid_: exception, edge case
