@@ -331,6 +331,25 @@ function Register-Check {
 
 function Invoke-Check {
     param([Parameter(Mandatory=$true)]$Check)
+    # A check whose source check stopped with an error or ran out of time (#360)
+    # would read empty data and report "not installed" or "OK" for things it
+    # never saw. It is not run: it is recorded as skipped and named in a MANUAL
+    # result, so the area reads as not assessed.
+    $blocking = @(Get-BlockingCheckRun $Check.Id $script:CheckRuns.ToArray())
+    if ($blocking.Count -gt 0) {
+        $blockedMessage = Get-BlockedCheckMessage $blocking
+        Write-AssessmentLog 'WARNING' $Check.Id ('Not run. ' + $blockedMessage)
+        $script:CurrentCheckId = $Check.Id
+        try {
+            Add-Result 'COLLECTOR' $Check.Name 'MANUAL' 'Check not run' @($blockedMessage) -Recommendation ('This area was NOT assessed: ' + $blockedMessage + '. Fix the cause shown for ' + (($blocking | ForEach-Object { $_.Id }) -join ', ') + ' and run the assessment again. The absence of findings here is NOT evidence of readiness.')
+        } catch { Write-Swallowed $_ }
+        $script:CheckRuns.Add([pscustomobject]@{
+            Id=$Check.Id; Name=$Check.Name; Phase=$Check.Phase; Outcome='Skipped'
+            Duration='00:00:00'; Seconds=0; Message=$blockedMessage
+        })
+        $script:CurrentCheckId = 'core'
+        return
+    }
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $script:CurrentCheckId = $Check.Id
     $script:CurrentCheckOutcome = $null

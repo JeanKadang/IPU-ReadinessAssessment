@@ -67,8 +67,13 @@ and the Post run compares the snapshot lists. `35-check-data.ps1` says who owns 
 it) and each snapshot list, and which lists the Post run compares. A check that needs to write a new key declares the
 owner there first; `tests/core/check-data.Tests.ps1` fails otherwise. Readers are not listed: about 25 checks read
 `baseline`'s keys. Every read of a key or snapshot list in any part must be declared too, so a misspelled key fails the test instead
-of reading as `$null`. Next steps (#360): a MANUAL result when a check's source check failed, then the split of
-`Register-AssessmentCheck` into one function per check (#255).
+of reading as `$null`.
+
+`$script:CheckNeeds` says which check a check cannot run without (#360). `Invoke-Check` does not run a check whose
+source stopped with an error or ran out of time; it records it as skipped with a `MANUAL` result naming the source. A
+test derives the checks that read `baseline`'s data from the check bodies (also through the helper functions they call),
+so a new check that reads the inventory must be added to the table. Next: the split of `Register-AssessmentCheck` into
+one function per check (#255).
 ## Later: a second script
 
 A dedicated cluster assessment (#153) can get its own manifest that lists the shared parts (report, redaction, JSON,

@@ -456,6 +456,24 @@ function New-MergeFolderSecurity {
     }
     return $security
 }
+function Get-NotAssessedCheck {
+    # Pure (#360): the checks of one server that were not assessed, for the
+    # fleet overview: stopped with an error, ran out of time, or were not run
+    # because a check they need did not complete (their message starts with
+    # "Needs"). A check skipped by design (not applicable, switched off, time
+    # budget) is not listed.
+    param([object[]]$CheckRuns)
+    $list = @()
+    foreach ($run in @($CheckRuns)) {
+        if ($run.Outcome -eq 'Completed') { continue }
+        if ($run.Outcome -eq 'Skipped') {
+            if ([string]$run.Message -like 'Needs *') { $list += ($run.Name + ' (' + $run.Message + ')') }
+            continue
+        }
+        $list += ($run.Name + ' (' + $run.Outcome + ')')
+    }
+    return @($list)
+}
 function Get-BroadFolderReader {
     param([string]$Path)
     $broad = @{ 'S-1-1-0' = 'Everyone'; 'S-1-5-11' = 'Authenticated Users'; 'S-1-5-32-545' = 'Users' }
@@ -550,7 +568,7 @@ foreach ($f in $files) {
     $eolBySource[$f.Name] = [pscustomobject]@{ ComputerName = $r.ComputerName; Candidates = $eolCandidates; Items = @($r.Results | Where-Object { [string]$_.Item -like 'EOL: *' } | ForEach-Object { [string]$_.Item }) }
     # The rows the teams needed are read from (#323).
     $rowsBySource[$f.Name] = @($r.Results | ForEach-Object { [pscustomobject]@{ Area = [string]$_.Area; Item = [string]$_.Item; Status = [string]$_.Status; Value = [string]$_.Value } })
-    $notCompleted = @($r.CheckRuns | Where-Object { $_.Outcome -ne 'Completed' -and $_.Outcome -ne 'Skipped' } | ForEach-Object { $_.Name + ' (' + $_.Outcome + ')' })
+    $notCompleted = @(Get-NotAssessedCheck $r.CheckRuns)
     $servers.Add([pscustomobject][ordered]@{
         ComputerName     = $r.ComputerName
         Mode             = $r.Mode

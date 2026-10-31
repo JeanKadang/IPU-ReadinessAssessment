@@ -203,3 +203,55 @@ Describe 'Checks on a fake server: failed reads' -Skip:($env:OS -ne 'Windows_NT'
         }
     }
 }
+
+Describe 'Checks on a fake server: a failed baseline (#360, step 3)' -Skip:($env:OS -ne 'Windows_NT') {
+    BeforeAll {
+        # Evidence copies go to the test drive; no file probe finds anything on the host.
+        $EvidenceRoot = Join-Path $TestDrive 'evidence'
+        function Resolve-EolProbePath { param([string]$Pattern) return [pscustomobject]@{ Paths = @(); Error = '' } }
+        $script:Fake = New-FakeMachine
+        $script:Fake.CimThrow = @('Win32_OperatingSystem')   # the first query of baseline fails
+        $script:Data = @{}
+        $script:Results.Clear(); $script:CheckRuns.Clear()
+        foreach ($check in $script:AllChecks) { Invoke-Check $check }
+        $script:Runs = @{}
+        foreach ($run in $script:CheckRuns.ToArray()) { $script:Runs[$run.Id] = $run }
+        $script:Rows = @($script:Results.ToArray())
+    }
+    It 'baseline itself stopped with an error' {
+        $script:Runs['baseline'].Outcome | Should -Be 'Failed'
+    }
+    It 'every check that reads its data was skipped, and says which check it needs' {
+        foreach ($id in $script:CheckNeeds.Keys) {
+            $script:Runs[$id].Outcome | Should -Be 'Skipped' -Because $id
+            $script:Runs[$id].Message | Should -Match '^Needs (baseline, which stopped with an error|printers, which was not run|eolcandidates, which was not run)$' -Because $id
+        }
+    }
+    It 'each skipped check left exactly one result, a MANUAL finding that says it was not assessed' {
+        foreach ($id in $script:CheckNeeds.Keys) {
+            $name = $script:Runs[$id].Name
+            $mine = @($script:Rows | Where-Object { $_.Area -eq 'COLLECTOR' -and $_.Item -eq $name -and $_.Value -eq 'Check not run' })
+            $mine.Count | Should -Be 1 -Because $id
+            $mine[0].Status | Should -Be 'MANUAL'
+            $mine[0].Kind | Should -Be 'Finding'
+            $mine[0].Recommendation | Should -Match 'NOT assessed'
+        }
+    }
+    It 'no skipped check reported anything else: nothing reads as OK or not installed from data it never saw' {
+        $skippedNames = @($script:CheckNeeds.Keys | ForEach-Object { $script:Runs[$_].Name })
+        $others = @($script:Rows | Where-Object { $_.Area -ne 'COLLECTOR' -and $_.CheckId -in @($script:CheckNeeds.Keys) })
+        $others.Count | Should -Be 0 -Because ('rows from skipped checks: ' + (($others | ForEach-Object { $_.CheckId + '/' + $_.Item }) -join ', '))
+        $skippedNames.Count | Should -Be $script:CheckNeeds.Count
+    }
+    It 'the checks that run their own queries still ran' {
+        foreach ($id in 'licensing', 'patchlevel', 'storage', 'sql', 'dism', 'sfc') {
+            $script:Runs[$id].Outcome | Should -Be 'Completed' -Because $id
+        }
+    }
+    It 'the coverage notice names the area as not assessed' {
+        $notice = Get-CoverageNotice @($script:CheckRuns.ToArray())
+        $notice.Problems.Count | Should -BeGreaterThan $script:CheckNeeds.Count
+        ($notice.Problems -join '|') | Should -Match 'Baseline inventory stopped with an error'
+        ($notice.Problems -join '|') | Should -Match 'was skipped \(Needs baseline, which stopped with an error\)'
+    }
+}
