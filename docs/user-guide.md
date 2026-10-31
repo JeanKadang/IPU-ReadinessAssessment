@@ -2,7 +2,7 @@
 
 How to run the Windows IPU readiness assessment, read its results, and troubleshoot it.
 
-**Scripts:** `src/Windows-IPU-Readiness-Assessment.ps1` (collector version 4.6.0, runs on each server) and
+**Scripts:** `src/Windows-IPU-Readiness-Assessment.ps1` (the assessment script, version 4.6.0; runs on each server) and
 `src/Merge-IPUAssessments.ps1` (version 1.3.0, combines many servers' results, runs on an admin workstation)
 **Audience:** server and change engineers preparing or verifying a Windows Server in-place upgrade.
 
@@ -26,7 +26,7 @@ How to run the Windows IPU readiness assessment, read its results, and troublesh
 
 ## 1. Overview
 
-The script is a **read-only collector**. It gathers facts from the server, applies Microsoft's published
+The assessment script is **read-only**. It gathers facts from the server, applies Microsoft's published
 upgrade rules plus project thresholds, and writes a report. It never changes the server's configuration.
 
 ```mermaid
@@ -240,10 +240,10 @@ deliberately not inside the report folder, which is retrieved and shared.
 | Parameter | Default | Meaning |
 |---|---|---|
 | `ReportDirectory` | `C:\Temp\IPU-Assessment` | Where HTML, JSON and log are written |
-| `WriteJson` | `$true` | Write the JSON result (also the post-upgrade baseline) |
+| `WriteJson` | `$true` | Write the result JSON (also the post-upgrade baseline) |
 | `RestrictOutputAcl` | `$true` | Folders the script creates (report folder, evidence folders) get access for SYSTEM and Administrators only. Existing folders are never changed; the report warns, with the `icacls` command to fix it, if an existing folder is readable by Everyone, Authenticated Users or Users. `$false` keeps inherited permissions |
 | `NumberCultureName` | `da-DK` | Culture used to format numbers in the SA result line. Invalid values fall back to invariant. The default is kept for existing SA jobs; set your own in a [profile file](#site-data-files-patterns-and-profile) |
-| `EolSnapshotPath` | blank | The end-of-life snapshot (`eol-snapshot.json`). Blank = next to the script, then in `ReportDirectory`. See [End-of-life data](#end-of-life-data) |
+| `EolSnapshotPath` | blank | The EOL snapshot (`eol-snapshot.json`). Blank = next to the script, then in `ReportDirectory`. See [End-of-life data](#end-of-life-data) |
 | `RedactExisting` | blank | A folder or report file: write redacted copies of existing reports and stop (see [Sharing a report: redaction](#sharing-a-report-redaction)) |
 | `RedactReport` | `$false` | Replace names, addresses, accounts, SIDs and certificate details with placeholders in the HTML and JSON, for sharing outside the team. See [Sharing a report: redaction](#sharing-a-report-redaction) |
 | `WriteRedactionKey` | `$true` | With `-RedactReport` or `-RedactExisting`, also write the key that maps each placeholder to its original next to the redacted copies (see [Sharing a report: redaction](#sharing-a-report-redaction)). Share only the `REDACTED-*` files |
@@ -350,12 +350,12 @@ ComputerName;RunStatus;AssessmentStatus;ReportPath;LogPath;ReportSizeKB;Records;
 
 | Field | Values |
 |---|---|
-| `RunStatus` | `SUCCEEDED` or `FAILED` (the collector itself, not the server's readiness) |
+| `RunStatus` | `SUCCEEDED` or `FAILED` (the assessment script itself, not the server's readiness) |
 | `AssessmentStatus` | Overall: `BLOCKER`, `ACTION`, `WARNING`, `MANUAL`, `OK` |
 | `LogPath` | The run log; empty when no log could be written (for example a report folder the account cannot write to) |
 | `Message` | `Mode=Pre, Checks=38, NotCompleted=0, Skipped=4, JSON=...`. **NotCompleted** counts the checks that left a gap: failed, ran out of time, or were not started because the slow-check budget was used up. **Skipped** counts checks not run by choice or that do not apply: DISM or SFC switched off, no installation media, not a print server, a SPECIAL short report. Before 4.7.0 both were counted as NotCompleted |
 
-Process exit code: `0` when the report was written, `1` when the collector failed. A `BLOCKER` assessment still
+Process exit code: `0` when the report was written, `1` when the assessment script failed. A `BLOCKER` assessment still
 exits `0`; read `AssessmentStatus`.
 
 ### Sharing a report: redaction
@@ -389,7 +389,7 @@ number after a product name looks exactly like an address and is replaced (#243)
 > (accounts, GPO names). Company words inside product, task or file names, or an unusual format, can stay visible.
 > **Read a redacted report before you share it.**
 
-**Redact a report that already exists.** To share a report you already have, without running the assessment again:
+**Redact a report that already exists.** To share a report you already have, without running the assessment script again:
 
 ```
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Windows-IPU-Readiness-Assessment.ps1 -RedactExisting C:\Temp\IPU-Assessment
@@ -431,7 +431,7 @@ Schema id `IPU-Assessment/1`. Top-level keys: `Schema`, `CollectorVersion`, `Com
 `TargetServerVersion`, `Started`, `Completed`, `Partial`, `Redacted`, `Overall`, `Counts`, `Facts`, `Results`,
 `CheckRuns`, `Snapshot`. `Results[]` has `CheckId, Area, Item, Status, Kind, Value, Details, Recommendation,
 Source, Command, CommandKind, Link, LinkTitle`.
-`Snapshot` is what the post-upgrade run compares against. The fleet overview script (section 9) reads the same
+The `Snapshot` field (the server snapshot) is what the post-upgrade run compares against. The fleet overview script (section 9) reads the same
 files and accepts only `Schema` = `IPU-Assessment/1`. Every field is described in
 [result-schema.md](result-schema.md); the formal JSON Schema is [result-schema.json](result-schema.json), and
 [samples/sample-result.json](samples/sample-result.json) is an example.
@@ -475,7 +475,7 @@ Most severe on the left. The **overall status is the most severe *finding***.
 | Kind | Affects overall? | Purpose |
 |---|---|---|
 | Finding | Yes | `SPECIAL`, `BLOCKER`, `ACTION`, `WARNING`, `MANUAL` |
-| Observation | No | Visible status without changing the verdict |
+| Observation | No | Visible status without changing the overall status |
 | Checklist | No | Standard change-procedure steps, listed separately |
 | Evidence | No | Inventory and documentation |
 
@@ -483,7 +483,7 @@ Most severe on the left. The **overall status is the most severe *finding***.
 
 - **Hero**: computer, target, times, collector version, overall badge.
 - **Cards**: counts per finding status.
-- **Summary**: the key facts, among them current OS and target, upgrade path and installation image, activation, platform, domain role (or workgroup), AD location (OU), UAC, SQL Server, endpoint protection, RDP access and C: drive. It is followed directly by **Status meaning**, which explains each status before the tables use them.
+- **Summary**: the key facts, among them source release and target release, upgrade path and installation image, activation, platform, domain role (or workgroup), AD location (OU), UAC, SQL Server, endpoint protection, RDP access and C: drive. It is followed directly by **Status meaning**, which explains each status before the tables use them.
 - **Chapters** (collapsible, one per area group, listed in section 7): a chapter opens by itself when it holds a finding to act on (BLOCKER, ACTION, WARNING or MANUAL). The others hold inventory and evidence and start closed. Use *Expand all* / *Collapse all* above the chapters. Printing or saving as PDF includes every chapter.
 - **Counters**: the BLOCKER, ACTION, WARNING and MANUAL counters at the top are links to the rows behind them; *Checklist items* and *Checks run* link to the checklist and to *Collector coverage*.
 - **Banners**: `PARTIAL REPORT` (slow checks unfinished) and `Not fully assessed` (a check failed, ran out of time, or was not started because the time budget was used up; the results for that area may be incomplete).
@@ -549,7 +549,7 @@ mindmap
 
 | Chapter in the report | Covers |
 |---|---|
-| Upgrade Path, Licensing and Windows Health | Supported path, edition and media image, source end of support, activation and what the target needs for the current activation channel, pending reboot, patch level, DISM, SFC, Setup scan, upgrade history |
+| Upgrade Path, Licensing and Windows Health | Supported path, edition and installation image, source end of support, activation and what the target needs for the current activation channel, pending reboot, patch level, DISM, SFC, Setup scan, upgrade history |
 | Workloads and Applications | Exchange, SQL Server, domain controller, roles and features, file shares, installed applications, removed or deprecated features |
 | Hardware and Virtualization | Physical or virtual, VMware Tools and vSphere versions, non-Microsoft drivers, CPU and memory |
 | Storage | Volumes, free space, system and recovery partitions |
@@ -569,7 +569,7 @@ so when a vendor renames a product you edit the table, not the logic.
 
 ### IIS configuration copy
 
-When IIS is installed, the assessment copies the files in `%windir%\System32\inetsrv\config` (`applicationHost.config`,
+When IIS is installed, the assessment script copies the files in `%windir%\System32\inetsrv\config` (`applicationHost.config`,
 `administration.config`, `redirection.config`, ...) into `<EvidenceRoot>\IIS\<Computer>-IPU-IIS-<time>` and zips it.
 These are the files `appcmd add backup` saves. IIS itself is not touched. The folder gets SYSTEM and Administrators access
 only, because `applicationHost.config` can contain encrypted passwords. The report shows where the copy is and the
@@ -581,7 +581,7 @@ The copy is from assessment time. **Immediately before the upgrade**, also run:
 %windir%\system32\inetsrv\appcmd.exe add backup PreIPU
 ```
 
-To restore from the assessment copy: stop IIS (`iisreset /stop`), copy the files back to `%windir%\System32\inetsrv\config`,
+To restore from the evidence copy: stop IIS (`iisreset /stop`), copy the files back to `%windir%\System32\inetsrv\config`,
 and start IIS again. Or copy them into a new folder under `%windir%\System32\inetsrv\backup` and run
 `appcmd restore backup <folder name>`. If the server uses **shared configuration** (`redirection.config` points to a
 share), the report says so: back up the files on that share as well.
@@ -735,7 +735,7 @@ The script itself only reads the partition layout and `reagentc /info`; it never
 
 ## 9. Combining many servers: fleet overview
 
-`src/Merge-IPUAssessments.ps1` (version 1.3.0, for assessment 4.0.1 and later) reads the JSON result of every
+`src/Merge-IPUAssessments.ps1` (version 1.3.0, for assessment 4.0.1 and later) reads the result JSON of every
 server in a folder and writes **one overview** for the whole estate. It is read-only for the input files.
 
 ```mermaid
@@ -753,7 +753,7 @@ flowchart LR
 ```
 
 **Where it runs:** an admin workstation or jump host with Windows PowerShell 5.1 or PowerShell 7. **Not** on the
-assessed servers. Collect the JSON files from the servers into one folder first (with the approved SA file-retrieval
+assessed servers. Collect the result JSON files from the servers into one folder first (with the approved SA file-retrieval
 process).
 
 ### Running it
@@ -835,21 +835,21 @@ one shared source part is built into all three scripts.
 - **Where the data is.** The release zip contains `eol-snapshot.json` next to the scripts (in the repository it is
   `src/eol-snapshot.json`, next to the scripts there too). It is a copy of [endoflife.date](https://endoflife.date)
   data, MIT-licensed; the licence notice is inside the file.
-- **The assessment finds it.** The assessment looks for `eol-snapshot.json` in the folder of
+- **The assessment script finds it.** The assessment script looks for `eol-snapshot.json` in the folder of
   `-EolSnapshotPath`, then next to the script, then in `-ReportDirectory` (a file read, no network call) and shows one
   row, *EOL snapshot*, under *Installed applications*: the snapshot date, or, when none is found, where it looked. A
   snapshot older than six months, or one that cannot be read, is MANUAL. With a snapshot, every product it found gets
   its own row, *EOL: <product> <version>*: past end of life is a WARNING, ending within 180 days or security fixes only
   is INFO, supported is OK, and a product the snapshot cannot place is MANUAL, never "supported". When SA deploys only
   the `.ps1`, copy `eol-snapshot.json` to the server next to it.
-- **The fleet overview.** `Merge-IPUAssessments.ps1` reads the snapshot next to itself (or in the input folder, or
+- **The fleet overview.** `Merge-IPUAssessments.ps1` reads the EOL snapshot next to itself (or in the input folder, or
   `-EolSnapshot <file>`), compares the products of all servers (`EolCandidates` in the results) and adds a section
   *End-of-life products* to the overview with the verdict, the servers, the snapshot date and the attribution line, the
   file `IPU-Fleet-Eol.csv`, a column `EndOfLifeProducts` in the servers CSV, and the findings the server's own report
   did not already have. Without a snapshot the products are listed as *not checked*. Results from before 4.6.0 have no
   product list.
 - **Which products.** The assessment records the products it finds in the result JSON as `EolCandidates` (check `eolcandidates`): SQL Server, MySQL, MariaDB, PostgreSQL, MongoDB, Oracle Database, Db2, Redis, Apache HTTP Server, Tomcat, nginx, PHP, .NET, .NET Framework, PowerShell, Python, Node.js, OpenSSL and the Java builds endoflife.date tracks. It reads uninstall entries, service executables, file version resources, the usual folders for PHP, Apache, nginx and OpenSSL, and the .NET Framework registry value. It never runs a product to ask for its version. A product in an unusual folder with no service and no uninstall entry is not found: an empty list means none found, not none installed.
-- **How old it may be.** A release is only published when the snapshot is at most six months old. A snapshot older than
+- **How old it may be.** A tool release is only published when the EOL snapshot is at most six months old. A snapshot older than
   `-MaxAgeMonths` (default 6) cannot confirm that a release is still supported: that verdict becomes MANUAL, while
   end-of-life verdicts still show.
 - **Use it.** `.\Get-IPUEolStatus.ps1 -Product php -Version 8.2.12 -SnapshotPath .\eol-snapshot.json`
@@ -895,7 +895,7 @@ the script still runs, and the result line that follows is the one to read.
 flowchart LR
     SA[SA job] --> L[Result line]
     L --> D{RunStatus}
-    D -->|FAILED| T[Read log, fix collector problem]
+    D -->|FAILED| T[Read log, fix assessment script problem]
     D -->|SUCCEEDED| S{AssessmentStatus}
     S -->|OK| G[Proceed to change]
     S -->|WARNING / MANUAL| P[Plan and review]
@@ -927,7 +927,7 @@ access to the output folder.
 | SA output starts with `Set-ExecutionPolicy ... overridden by a policy defined at a more specific scope` | SA's wrapper, with a Group Policy that sets the execution policy | Nothing: harmless; read the result line that follows |
 | `... is not digitally signed` | Machine enforces signed scripts | Sign the script, or `powershell -ExecutionPolicy Bypass -File` for that process only |
 | Fleet overview: `No ... files found` | Wrong `InputFolder`, or the files were renamed | Files must end in `-IPU-Assessment.json` or `-IPU-PostUpgrade.json` |
-| Fleet overview lists a file under "Files not read" | Corrupt JSON, or not an `IPU-Assessment/1` result | Re-collect the file from the server; check the collector version is 4.0.1 or later |
+| Fleet overview lists a file under "Files not read" | Corrupt JSON, or not an `IPU-Assessment/1` result | Re-collect the file from the server; check the assessment script version is 4.0.1 or later |
 | Fleet CSV opens as one column in Excel | Regional list separator differs from `;` | Re-run with `-Delimiter ','` |
 | Report says `PARTIAL REPORT` | Slow checks had not finished (job stopped or timed out) | Raise the SA job timeout above the budget (section 10) and re-run |
 | `Not fully assessed: <check> stopped with an error` | A check hit an unexpected error | See `.log` for the message and line number; review that area manually |
@@ -954,7 +954,7 @@ Requires Pester 5 (CI uses 5.7.1) on Windows. The tests load the script in libra
 | `tests/core/` | The runtime (check runner, native tools, time limits, output folders, the SA result line, prerequisites), read-only system helpers and evidence copies, site data files, and repository-wide rules (version consistency, no host data, dated facts) |
 | `tests/decision-rules/` | The pure decision functions, one file per topic: upgrade path and edition, licensing, Windows health (DISM, SFC, VSS), workloads and detection patterns, Group Policy and access, end of life |
 | `tests/checks/` | Every check body, run against a simulated server (`FakeServer.ps1`: stand-ins for CIM, registry, native tools and cmdlets), one file per chapter of `docs/checks.md`; also that `docs/checks.md` lists every check and that the sample result matches the JSON Schema |
-| `tests/report/` | Result model, overall status, the HTML report and the JSON result |
+| `tests/report/` | Result model, overall status, the HTML report and the result JSON |
 | `tests/redaction/` | Redaction of a live run, the redaction key, and `-RedactExisting` |
 | `tests/post-upgrade/` | The post-upgrade comparison rules and the Post run |
 | `tests/Merge-IPUAssessments.Tests.ps1` | The fleet overview, CSV formula protection, redacted results |
