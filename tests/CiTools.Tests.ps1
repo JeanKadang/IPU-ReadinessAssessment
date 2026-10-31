@@ -53,9 +53,80 @@ Describe 'Test-ModuleInstalled (#141)' {
         $installed = @([pscustomobject]@{ Version = [version]'5.5.0' }, [pscustomobject]@{ Version = [version]'5.7.1' })
         Test-ModuleInstalled -Installed $installed -RequiredVersion '5.7.1' | Should -BeTrue
     }
+    It 'accepts a newer version only with -OrNewer' {
+        $installed = @([pscustomobject]@{ Version = [version]'5.8.0' })
+        Test-ModuleInstalled -Installed $installed -RequiredVersion '5.7.1' | Should -BeFalse
+        Test-ModuleInstalled -Installed $installed -RequiredVersion '5.7.1' -OrNewer | Should -BeTrue
+        Test-ModuleInstalled -Installed @([pscustomobject]@{ Version = [version]'5.5.0' }) -RequiredVersion '5.7.1' -OrNewer | Should -BeFalse
+    }
     It 'does not accept another version, and handles none installed' {
         Test-ModuleInstalled -Installed @([pscustomobject]@{ Version = [version]'5.5.0' }) -RequiredVersion '5.7.1' | Should -BeFalse
         Test-ModuleInstalled -Installed @() -RequiredVersion '5.7.1' | Should -BeFalse
         Test-ModuleInstalled -Installed $null -RequiredVersion '5.7.1' | Should -BeFalse
+    }
+}
+
+Describe 'build/Invoke-Local.ps1 (#140)' {
+    BeforeAll {
+        . (Join-Path $script:Build 'Invoke-Local.ps1')
+        $script:Workflow = [IO.File]::ReadAllText((Join-Path (Split-Path -Parent $script:Build) '.github/workflows/ci.yml'))
+    }
+    Context 'Resolve-LocalTask' {
+        It 'runs the tasks once each, in the order CI runs them' {
+            @(Resolve-LocalTask -Task 'Test', 'Lint', 'Test') | Should -Be @('Lint', 'Test')
+        }
+        It 'All is every task' {
+            @(Resolve-LocalTask -Task 'All') | Should -Be @('Lint', 'Test', 'Smoke', 'Sample')
+        }
+        It 'All together with a single task is still every task, once' {
+            @(Resolve-LocalTask -Task 'Smoke', 'All').Count | Should -Be 4
+        }
+    }
+    Context 'Get-CiToolVersion and Get-CiCoverageFloor' {
+        It 'read the pinned version and the coverage floor from the workflow text' {
+            $text = "env:`n  PESTER_VERSION: 5.7.1`n  PSSA_VERSION: 1.23.0`n    run: ./build/Invoke-CiTests.ps1 -Coverage -MinimumCoverage 85 } else"
+            Get-CiToolVersion -WorkflowText $text -Variable 'PESTER_VERSION' | Should -Be '5.7.1'
+            Get-CiToolVersion -WorkflowText $text -Variable 'PSSA_VERSION' | Should -Be '1.23.0'
+            Get-CiCoverageFloor -WorkflowText $text | Should -Be 85
+        }
+        It 'say what is missing instead of guessing' {
+            { Get-CiToolVersion -WorkflowText 'env:' -Variable 'PESTER_VERSION' } | Should -Throw '*PESTER_VERSION is not set*'
+            { Get-CiCoverageFloor -WorkflowText 'nothing' } | Should -Throw '*MinimumCoverage*'
+        }
+        It 'find both pins and the floor in the real ci.yml' {
+            Get-CiToolVersion -WorkflowText $script:Workflow -Variable 'PESTER_VERSION' | Should -Match '^\d+\.\d+\.\d+$'
+            Get-CiToolVersion -WorkflowText $script:Workflow -Variable 'PSSA_VERSION' | Should -Match '^\d+\.\d+\.\d+$'
+            Get-CiCoverageFloor -WorkflowText $script:Workflow | Should -BeGreaterThan 0
+        }
+    }
+    Context 'Get-LocalWarning' {
+        It 'warns when the session is not elevated' {
+            @(Get-LocalWarning -IsElevated $false -Task 'Lint' -HasPowerShell7 $true).Count | Should -Be 1
+            @(Get-LocalWarning -IsElevated $false -Task 'Lint' -HasPowerShell7 $true)[0] | Should -Match 'not elevated'
+        }
+        It 'is silent when elevated and nothing is missing' {
+            @(Get-LocalWarning -IsElevated $true -Task 'Lint', 'Test' -HasPowerShell7 $false).Count | Should -Be 0
+        }
+        It 'warns that the smoke test needs PowerShell 7' {
+            @(Get-LocalWarning -IsElevated $true -Task 'Smoke' -HasPowerShell7 $false)[0] | Should -Match 'PowerShell 7'
+            @(Get-LocalWarning -IsElevated $true -Task 'Smoke' -HasPowerShell7 $true).Count | Should -Be 0
+        }
+    }
+    Context 'Format-LocalSummary' {
+        It 'lists each task with its result and says all passed' {
+            $lines = Format-LocalSummary -Results @(
+                [pscustomobject]@{ Name = 'Lint'; Passed = $true; Seconds = 12.34; Note = '' },
+                [pscustomobject]@{ Name = 'Test'; Passed = $true; Seconds = 80.0; Note = '' })
+            ($lines -join "`n") | Should -Match 'PASS  Lint'
+            ($lines -join "`n") | Should -Match 'PASS  Test'
+            $lines[-1] | Should -Be 'All tasks passed.'
+        }
+        It 'names the failed tasks and the step that failed' {
+            $lines = Format-LocalSummary -Results @(
+                [pscustomobject]@{ Name = 'Lint'; Passed = $false; Seconds = 3; Note = 'PSScriptAnalyzer' },
+                [pscustomobject]@{ Name = 'Test'; Passed = $true; Seconds = 9; Note = '' })
+            ($lines -join "`n") | Should -Match 'FAIL  Lint\s+3\.0 s  PSScriptAnalyzer'
+            $lines[-1] | Should -Be 'Failed: Lint.'
+        }
     }
 }

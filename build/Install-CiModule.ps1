@@ -7,7 +7,9 @@
     Every attempt is one log line, the pinned version is never changed, and the
     last failure is thrown unchanged so the real cause stays visible. On
     Windows PowerShell 5.1 the NuGet provider is installed first, with the same
-    retry. A module that is already installed in the pinned version is left alone.
+    retry. A module that is already installed in the pinned version is left alone;
+    with -AcceptNewer (a local run) a newer installed version counts too, because
+    installing the older pin beside it can fail on command name conflicts.
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '', Justification = 'Retry progress belongs in the job log.')]
 [CmdletBinding()]
@@ -16,6 +18,7 @@ param(
     [Parameter(Mandatory)][string]$RequiredVersion,
     [ValidateSet('CurrentUser', 'AllUsers')][string]$Scope = 'CurrentUser',
     [switch]$SkipPublisherCheck,
+    [switch]$AcceptNewer,
     [ValidateRange(1, 10)][int]$Attempts = 3,
     [ValidateRange(0, 120)][int]$DelaySeconds = 5
 )
@@ -47,17 +50,21 @@ function Invoke-WithRetry {
 }
 
 function Test-ModuleInstalled {
-    # Pure: is the exact version among the installed module versions?
-    param([object[]]$Installed, [string]$RequiredVersion)
-    foreach ($m in @($Installed)) { if ([string]$m.Version -eq $RequiredVersion) { return $true } }
+    # Pure: is the exact version (or, with -OrNewer, that version or a newer
+    # one) among the installed module versions?
+    param([object[]]$Installed, [string]$RequiredVersion, [switch]$OrNewer)
+    foreach ($m in @($Installed)) {
+        if ([string]$m.Version -eq $RequiredVersion) { return $true }
+        if ($OrNewer -and ([version]$m.Version) -ge ([version]$RequiredVersion)) { return $true }
+    }
     return $false
 }
 
 if ($MyInvocation.InvocationName -eq '.') { return }
 
 $ErrorActionPreference = 'Stop'
-if (Test-ModuleInstalled -Installed @(Get-Module -ListAvailable -Name $Name) -RequiredVersion $RequiredVersion) {
-    Write-Host ('{0} {1} is already installed' -f $Name, $RequiredVersion)
+if (Test-ModuleInstalled -Installed @(Get-Module -ListAvailable -Name $Name) -RequiredVersion $RequiredVersion -OrNewer:$AcceptNewer) {
+    Write-Host ('{0} {1} (or newer) is already installed' -f $Name, $RequiredVersion)
     return
 }
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12

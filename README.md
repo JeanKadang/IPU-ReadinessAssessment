@@ -184,7 +184,13 @@ pwsh .\build\Build-Script.ps1
 
 # Run the tests (Pester 5)
 Invoke-Pester .\tests -Output Detailed
+
+# Or run the checks CI runs (lint and tests), with one summary
+pwsh .\build\Invoke-Local.ps1
 ```
+
+`Invoke-Local.ps1` also runs the smoke test and regenerates the sample (`-Task All`); see
+[CONTRIBUTING](CONTRIBUTING.md#run-the-ci-checks-locally).
 
 Never edit `src/Windows-IPU-Readiness-Assessment.ps1` by hand: CI fails when it does not match its parts ([ADR 0002](docs/adr/0002-source-in-parts-built-into-one-file.md), [docs/build.md](docs/build.md)).
 
