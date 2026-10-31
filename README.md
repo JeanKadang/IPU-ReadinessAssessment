@@ -1,9 +1,9 @@
 # IPU-ReadinessAssessment
 
 Read-only **in-place upgrade (IPU) readiness assessment** for Windows Server. Run it on a server
-before an upgrade to **Windows Server 2025** (default), **2022** or **2019**, and get one verdict, a prioritised
+before an upgrade to **Windows Server 2025** (default), **2022** or **2019**, and get one overall status, a prioritised
 list of what to fix, and a self-contained report. Run it again afterwards to check the server against
-its own pre-upgrade snapshot.
+its own pre-upgrade baseline.
 
 [![CI](https://github.com/JeanKadang/IPU-ReadinessAssessment/actions/workflows/ci.yml/badge.svg)](https://github.com/JeanKadang/IPU-ReadinessAssessment/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
@@ -14,14 +14,14 @@ its own pre-upgrade snapshot.
 | Output | For | File |
 |---|---|---|
 | HTML report | People: findings, what to do, evidence | `<Computer>-IPU-Assessment.html` |
-| JSON result | Tools, fleet roll-ups, post-upgrade baseline | `<Computer>-IPU-Assessment.json` |
-| Log | Troubleshooting the collector | `<Computer>-IPU-Assessment.log` |
+| Result JSON | Tools, fleet roll-ups, post-upgrade baseline | `<Computer>-IPU-Assessment.json` |
+| Log | Troubleshooting the assessment script | `<Computer>-IPU-Assessment.log` |
 | One result line | The automation platform (OpenText SA) | stdout, semicolon-delimited |
 | Evidence copies | Putting a server back by hand: Group Policy and RDP evidence, IIS and network configuration, print server backup | `C:\Temp\IPU-Evidence\<topic>\` (not redacted) |
 
 Default output folder: `C:\Temp\IPU-Assessment`. Evidence copies go to a separate folder on purpose, so the report folder can be collected and shared; see [Sharing a report](#sharing-a-report).
 
-For many servers, `Merge-IPUAssessments.ps1` turns all the JSON results into a fleet overview:
+For many servers, `Merge-IPUAssessments.ps1` turns all the result JSON files into a fleet overview:
 
 | Output | For | File |
 |---|---|---|
@@ -50,7 +50,7 @@ It answers four questions:
 1. **Is the path supported?** Source release, edition and target, per Microsoft's installation-media table.
 2. **Will the server and its workloads survive?** SQL, Exchange, IIS, RDS, clustering, VMware, drivers, agents, antivirus/EDR, backup, certificates, removed or deprecated features.
 3. **Is Windows healthy enough?** Pending reboot, patch age, activation, disk space, DISM component store, SFC.
-4. **Did anything get lost afterwards?** Services, ports, routes, network adapters, printers, shares, Group Policy, hosts entries, applications, features and tasks, compared with the pre-upgrade snapshot.
+4. **Did anything get lost afterwards?** Services, ports, routes, network adapters, printers, shares, Group Policy, hosts entries, applications, features and tasks, compared with the pre-upgrade baseline.
 
 Cluster nodes and domain controllers are not a standard in-place upgrade. They get a short report with the facts needed to choose a plan, and the status `SPECIAL` (see the [user guide](docs/user-guide.md#special-cluster-nodes-and-domain-controllers)).
 
@@ -78,7 +78,7 @@ Run in an elevated session on the server (Windows PowerShell 4.0+):
 # Target 2022 instead
 .\src\Windows-IPU-Readiness-Assessment.ps1 -TargetServerVersion 2022
 
-# After the upgrade: compare with the pre-upgrade snapshot
+# After the upgrade: compare with the pre-upgrade baseline
 .\src\Windows-IPU-Readiness-Assessment.ps1 -AssessmentMode Post
 ```
 
@@ -120,7 +120,7 @@ What each of the 38 checks looks at and can report: **[Checks reference](docs/ch
 | `OK` | Checked, fine | No |
 | `INFO` | For visibility | No |
 
-The overall status is the most severe finding, in the order of the table. Only findings count; observations and evidence rows do not.
+The overall status is the most severe finding, in the order of the table. Only findings count; observations and evidence do not.
 
 ## Sharing a report
 
@@ -163,13 +163,13 @@ flowchart TD
 | Path | Contents |
 |---|---|
 | `src/` | `Windows-IPU-Readiness-Assessment.ps1` (the one file that runs on each server; **built**, do not edit by hand), `Merge-IPUAssessments.ps1` (fleet overview, runs on a workstation), `Get-IPUEolStatus.ps1` (end-of-life status of a product version, runs on a workstation) |
-| `src/assessment/` | The parts the assessment is built from, in the order of `manifest.txt` |
+| `src/assessment/` | The parts the assessment script is built from, in the order of `manifest.txt` |
 | `build/` | `Build-Script.ps1` (parts to single file), CI helpers (tests, lint, smoke test), `New-SampleReport.ps1`, `Sync-Skills.ps1` |
 | `docs/build.md` | How the build works, in plain words |
 | `tests/` | Pester tests: decision rules, every check against a simulated server, reports, redaction, and the fleet merge |
-| `docs/user-guide.md` | How to run and interpret the assessment |
+| `docs/user-guide.md` | How to run the assessment script and read its report |
 | `docs/checks.md` | What every check looks at and can report |
-| `docs/result-schema.md`, `docs/result-schema.json` | JSON result format (`IPU-Assessment/1`) and its JSON Schema |
+| `docs/result-schema.md`, `docs/result-schema.json` | Result JSON format (`IPU-Assessment/1`) and its JSON Schema |
 | `docs/samples/` | Synthetic sample report and result, built by `build/New-SampleReport.ps1` |
 | `docs/adr/` | Architecture decision records |
 | `docs/review/` | Repository quality reviews (newest: `audit-review-claude-v3.md`) and the code-level script evaluation (`script-evaluation-4.5.3.md`) |
@@ -219,5 +219,5 @@ A plain-language summary for people who use the scripts. It is not legal advice;
 - **What about the reports?** The server data in a report is yours. The fixed text and layout the script adds come from
   the script; the copyright holders do not apply the GPL's conditions to a report you share with your team or your
   customer. The redaction options (`-RedactReport`, `-RedactExisting`) are for hiding names before you share one.
-- **Does the end-of-life data change this?** The snapshot from [endoflife.date](https://endoflife.date) is under that
-  project's MIT licence; the notice travels in the snapshot file (see [ADR 0003](docs/adr/0003-end-of-life-lookup-architecture.md)).
+- **Does the end-of-life data change this?** The EOL snapshot from [endoflife.date](https://endoflife.date) is under that
+  project's MIT licence; the notice travels in the EOL snapshot (see [ADR 0003](docs/adr/0003-end-of-life-lookup-architecture.md)).
