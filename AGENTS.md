@@ -56,3 +56,17 @@ The repo follows the GitHub workflow skills in `.claude/skills/` (source of trut
 `.claude/settings.json` enables `superpowers`, `code-review` and `code-simplifier` from the official
 marketplace. Claude Code asks you to approve them the first time you open the repo. Personal preference plugins
 belong in your own user settings, not here.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues through the `gh` CLI, with this repo's issue rules on top. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default triage roles, used next to the P0-P3 and category labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` at the root (created when terms are settled) and `docs/adr/`. See `docs/agents/domain.md`.
