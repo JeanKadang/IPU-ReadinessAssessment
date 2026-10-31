@@ -47,9 +47,7 @@ try {
     & secedit.exe /configure /db $db /cfg $inf /areas USER_RIGHTS | Out-Null
 
     # Pester for every user, the repository in a folder the user owns.
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force | Out-Null
-    Install-Module Pester -RequiredVersion $PesterVersion -Scope AllUsers -Force -SkipPublisherCheck
+    & (Join-Path $repo 'build\Install-CiModule.ps1') -Name Pester -RequiredVersion $PesterVersion -Scope AllUsers -SkipPublisherCheck
     if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
     Copy-Item -LiteralPath $repo -Destination $work -Recurse
     & icacls.exe $work /grant ('*' + $sid + ':(OI)(CI)M') /T /Q | Out-Null
