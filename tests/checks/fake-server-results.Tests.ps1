@@ -18,6 +18,14 @@ param()
 
 BeforeAll {
     . (Join-Path $PSScriptRoot 'FakeServer.ps1')
+    # The file probes of the eolcandidates check (OpenSSL, PHP, nginx ...) look at
+    # the real disk with .NET calls that the fake server does not intercept: a
+    # runner with OpenSSL installed would get a row that another machine does
+    # not. This test is about the check data, so no probe finds anything.
+    function Resolve-EolProbePath {
+        param([string]$Pattern)
+        return [pscustomobject]@{ Paths = @(); Error = '' }
+    }
     $script:GoldenPath = Join-Path $PSScriptRoot 'fake-server-results.golden.txt'
     # Evidence copies go to the test drive, not to the machine's C:\Temp.
     $EvidenceRoot = Join-Path $TestDrive 'evidence'
