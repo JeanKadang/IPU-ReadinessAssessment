@@ -582,3 +582,38 @@ Describe 'Teams needed in the fleet overview (#323)' {
         }
     }
 }
+
+Describe 'Checks that were not assessed in the fleet overview (#360)' {
+    BeforeAll {
+        function Save-RunsServer([string]$Computer, [object[]]$Runs, [string]$Folder) {
+            $o = New-FakeResult -Computer $Computer
+            $o.PSObject.Properties.Remove('CheckRuns')
+            $o | Add-Member -NotePropertyName CheckRuns -NotePropertyValue @($Runs)
+            $o | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $Folder ($Computer + '-IPU-Assessment.json')) -Encoding UTF8
+        }
+        function New-RunEntry([string]$Id, [string]$Name, [string]$Outcome, [string]$Message = '') {
+            [pscustomobject]@{ Id = $Id; Name = $Name; Phase = 'Fast'; Outcome = $Outcome; Duration = '00:00:01'; Message = $Message }
+        }
+        $dir = Join-Path $TestDrive 'na360'; New-Item -ItemType Directory -Path $dir | Out-Null
+        Save-RunsServer 'SRV-NA' @(
+            (New-RunEntry 'baseline' 'Baseline inventory' 'Failed' 'boom'),
+            (New-RunEntry 'upgradepath' 'Upgrade path' 'Skipped' 'Needs baseline, which stopped with an error'),
+            (New-RunEntry 'licensing' 'Windows activation' 'Completed'),
+            (New-RunEntry 'cluster' 'Failover cluster' 'Skipped' 'Not applicable: domain controller'),
+            (New-RunEntry 'dism' 'DISM' 'TimedOut' 'ran long')) $dir
+        $script:NaOut = Join-Path $TestDrive 'na360-out'
+        $null = & $script:MergeScript -InputFolder $dir -OutputFolder $script:NaOut
+        $script:NaRow = @(Import-Csv -LiteralPath (Join-Path $script:NaOut 'IPU-Fleet-Servers.csv') -Delimiter ';')[0]
+    }
+    It 'lists the checks that failed or ran out of time' {
+        $script:NaRow.NotAssessed | Should -Match 'Baseline inventory \(Failed\)'
+        $script:NaRow.NotAssessed | Should -Match 'DISM \(TimedOut\)'
+    }
+    It 'lists a check that was not run because a check it needs did not complete, with the reason' {
+        $script:NaRow.NotAssessed | Should -Match 'Upgrade path \(Needs baseline, which stopped with an error\)'
+    }
+    It 'does not list a check skipped by design, nor one that completed' {
+        $script:NaRow.NotAssessed | Should -Not -Match 'Failover cluster'
+        $script:NaRow.NotAssessed | Should -Not -Match 'Windows activation'
+    }
+}

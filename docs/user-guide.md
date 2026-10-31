@@ -792,7 +792,7 @@ The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`
 
 - **Newest wins.** If a server has several results for the same mode, only the newest (by `Completed`) is used. A server can still appear twice, once for Pre and once for Post, when `Mode` is `All`.
 - **Worst first.** Servers are sorted `SPECIAL`, `BLOCKER`, `ACTION`, `WARNING`, `MANUAL`, `OK`, then by name.
-- **`TopIssues`** lists the BLOCKER and ACTION findings for that server. **`NotAssessed`** lists checks that did not complete (skipped checks are not counted).
+- **`TopIssues`** lists the BLOCKER and ACTION findings for that server. **`NotAssessed`** lists checks that did not complete, and checks that were not run because a check they need did not complete (checks skipped by design are not counted).
 - **Partial results** are shown with a `partial` marker: the slow checks had not finished on that server.
 - **Unreadable files** (not valid JSON, or a `Schema` other than `IPU-Assessment/1`) are listed in the report and skipped. They do not stop the run.
 - If no matching files exist, the script stops with `No *-IPU-Assessment.json or *-IPU-PostUpgrade.json files found`.
@@ -931,6 +931,7 @@ access to the output folder.
 | Fleet CSV opens as one column in Excel | Regional list separator differs from `;` | Re-run with `-Delimiter ','` |
 | Report says `PARTIAL REPORT` | Slow checks had not finished (job stopped or timed out) | Raise the SA job timeout above the budget (section 10) and re-run |
 | `Not fully assessed: <check> stopped with an error` | A check hit an unexpected error | See `.log` for the message and line number; review that area manually |
+| `Not fully assessed: <check> was skipped (Needs baseline, which stopped with an error)`, many at once, and a `MANUAL` row *Check not run* for each | A check that provides data to others failed (usually `baseline`: the first CIM query, a WMI problem or an access error), so the checks that read its data were not run instead of reporting "not installed" | Fix the cause shown for the named check in the `.log`, then run the assessment again; do not read the skipped areas as clean |
 | `Skipped - slow-check time budget used up` | DISM and SFC consumed the shared budget | Run manually, or raise `SlowCheckBudgetMinutes` and the job timeout |
 | Application or SQL results look wrong | 32-bit PowerShell host without relaunch | Run from 64-bit PowerShell; the report flags this |
 | No before/after comparison | Pre-upgrade JSON missing | Restore `<Computer>-IPU-Assessment.json` into the same folder |

@@ -4,6 +4,13 @@ The assessment runs 38 checks. The tables group them by report chapter; slow che
 **areas**. A check that throws is reported as `MANUAL` in *Collector coverage* ("Check did not complete");
 the absence of findings in that area is then **not** evidence of readiness.
 
+A check that reads what another check collected is not run when that check stopped with an error or ran out of
+time (#360): it is recorded as skipped ("Needs baseline, which stopped with an error") with one `MANUAL` result,
+*Check not run*, instead of reporting "not installed" or "OK" for things it never saw. `baseline` is the source for 29
+checks (everything that reads the inventory); `printbackup` needs `printers` and `eolsnapshot` needs `eolcandidates`.
+`licensing`, `patchlevel`, `storage`, `sql`, `dism` and `sfc` run their own queries and always run. The list is
+`$script:CheckNeeds` in `src/assessment/35-check-data.ps1`.
+
 How to read the tables:
 
 - **Fast** checks run first; the report is then written once as a checkpoint. **Slow** checks (DISM, SFC,

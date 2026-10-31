@@ -1017,6 +1017,25 @@ function Register-Check {
 
 function Invoke-Check {
     param([Parameter(Mandatory=$true)]$Check)
+    # A check whose source check stopped with an error or ran out of time (#360)
+    # would read empty data and report "not installed" or "OK" for things it
+    # never saw. It is not run: it is recorded as skipped and named in a MANUAL
+    # result, so the area reads as not assessed.
+    $blocking = @(Get-BlockingCheckRun $Check.Id $script:CheckRuns.ToArray())
+    if ($blocking.Count -gt 0) {
+        $blockedMessage = Get-BlockedCheckMessage $blocking
+        Write-AssessmentLog 'WARNING' $Check.Id ('Not run. ' + $blockedMessage)
+        $script:CurrentCheckId = $Check.Id
+        try {
+            Add-Result 'COLLECTOR' $Check.Name 'MANUAL' 'Check not run' @($blockedMessage) -Recommendation ('This area was NOT assessed: ' + $blockedMessage + '. Fix the cause shown for ' + (($blocking | ForEach-Object { $_.Id }) -join ', ') + ' and run the assessment again. The absence of findings here is NOT evidence of readiness.')
+        } catch { Write-Swallowed $_ }
+        $script:CheckRuns.Add([pscustomobject]@{
+            Id=$Check.Id; Name=$Check.Name; Phase=$Check.Phase; Outcome='Skipped'
+            Duration='00:00:00'; Seconds=0; Message=$blockedMessage
+        })
+        $script:CurrentCheckId = 'core'
+        return
+    }
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $script:CurrentCheckId = $Check.Id
     $script:CurrentCheckOutcome = $null
@@ -2029,6 +2048,66 @@ function Get-SnapshotListSourceMap {
         if ($entry.Compare -eq $Compare) { $map[$name] = [string]$entry.Owner }
     }
     return $map
+}
+
+# What a check cannot give a trustworthy result without (#360, step 3). When
+# one of the checks listed for a check stopped with an error or ran out of time,
+# the check is not run: it would read empty data and report "not installed" or
+# "OK" for things it never saw. It is recorded as skipped, with a MANUAL result
+# that names the check it needs. baseline is the source for every check that
+# reads its inventory (the 29 below); a test derives that list from the check
+# bodies, so a new check that reads the inventory must be added here. The two
+# others are named by hand: printbackup reads what printers found, eolsnapshot
+# reads what eolcandidates found. A check that runs its own queries
+# (licensing, patchlevel, storage, sql, dism, sfc) needs nothing.
+$script:CheckNeeds = [ordered]@{
+    upgradepath = 'baseline'; pendingreboot = 'baseline'; history = 'baseline'
+    domain = 'baseline'; grouppolicy = 'baseline'; rdp = 'baseline'
+    platform = 'baseline'; performance = 'baseline'; cluster = 'baseline'; special = 'baseline'
+    network = 'baseline'; exchange = 'baseline'; workloads = 'baseline'; fileshares = 'baseline'
+    printers = 'baseline'; iis = 'baseline'; rds = 'baseline'; pki = 'baseline'
+    agents = 'baseline'; antivirus = 'baseline'; backup = 'baseline'; services = 'baseline'
+    vmware = 'baseline'; drivers = 'baseline'; ports = 'baseline'; tasks = 'baseline'
+    eolcandidates = 'baseline'; checklist = 'baseline'; compatscan = 'baseline'
+    printbackup = 'printers'; eolsnapshot = 'eolcandidates'
+}
+
+function Get-CheckNeed {
+    # Pure: the ids of the checks that a check needs; none for a check that
+    # runs its own queries.
+    param([string]$CheckId)
+    if (-not $script:CheckNeeds.Contains($CheckId)) { return @() }
+    return @(([string]$script:CheckNeeds[$CheckId]) -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
+function Get-BlockingCheckRun {
+    # Pure: the runs of the checks that $CheckId needs which stopped with an
+    # error, ran out of time, or were themselves not run for that reason (their
+    # message starts with "Needs"), so the block follows the chain. A needed
+    # check that was skipped by design (a SPECIAL short report, a switch) or
+    # has not run yet does not block.
+    param([string]$CheckId, [object[]]$CheckRuns)
+    $blocking = @()
+    foreach ($source in @(Get-CheckNeed $CheckId)) {
+        $run = @($CheckRuns | Where-Object { $_.Id -eq $source }) | Select-Object -Last 1
+        if (-not $run) { continue }
+        if ($run.Outcome -eq 'Failed' -or $run.Outcome -eq 'TimedOut' -or ($run.Outcome -eq 'Skipped' -and [string]$run.Message -like 'Needs *')) { $blocking += $run }
+    }
+    return @($blocking)
+}
+
+function Get-BlockedCheckMessage {
+    # Pure: why a check was not run, in a sentence the coverage notice can
+    # put after "was skipped (...)".
+    param([object[]]$BlockingRuns)
+    $parts = @()
+    foreach ($run in @($BlockingRuns)) {
+        $how = 'stopped with an error'
+        if ($run.Outcome -eq 'TimedOut') { $how = 'ran out of time' }
+        elseif ($run.Outcome -eq 'Skipped') { $how = 'was not run' }
+        $parts += ('Needs ' + $run.Id + ', which ' + $how)
+    }
+    return ($parts -join '; ')
 }
 # =============================================================================
 # 4. DECISION RULES (pure functions - no system access; unit-tested)

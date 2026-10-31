@@ -61,6 +61,9 @@ _Avoid_: state, globals, context
 **Owner**:
 The one check (or, outside the checks, the runner, the report or the redaction code) that may write a piece of check data. Any check may read it.
 _Avoid_: producer, writer, source
+**Blocked check**:
+A check that was not run because a check it needs stopped with an error or ran out of time. It is recorded as skipped, with a `MANUAL` result that names the check it needs.
+_Avoid_: dependent check, failed check (it never ran)
 **Checklist item**:
 A result of kind checklist: a standard step of the change procedure. It never counts towards the overall status.
 _Avoid_: task, to-do
