@@ -164,7 +164,6 @@ Describe 'Checks on a fake server: windows health' -Skip:($env:OS -ne 'Windows_N
             Reset-FakeServerKeep
             $null = Invoke-TestCheck 'upgradepath'
             (Get-Row 'UPGRADE_PATH' 'TargetUpgradePath')[0].Value | Should -Match 'SPECIAL'
-            $script:Data.IsClustered | Should -BeTrue
         }
     }
 

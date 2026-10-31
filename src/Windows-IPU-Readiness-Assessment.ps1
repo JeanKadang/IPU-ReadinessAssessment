@@ -1969,14 +1969,13 @@ $script:CheckDataOwners = [ordered]@{
     RdpSummary = 'rdp'; DriveRedirection = 'rdp'; PolicyEvidence = 'rdp'; NlaState = 'rdp'
     # written outside the checks
     SpecialKind = 'main'; NlaBefore = 'report'; RedactLiterals = 'rules'
-    # written but read nowhere (#360): kept as they are until step 2 removes them
-    IsClustered = 'baseline,upgradepath,cluster'; Edition = 'upgradepath'; ClusterName = 'cluster'
-    IISConfigEvidence = 'iis'; PrintBackup = 'printbackup'; RedactionKey = 'report'
 }
 
 # Keys of $script:CheckDataOwners that nothing reads. A test checks that this
-# stays true: the first read of one of them must update this list.
-$script:CheckDataUnused = @('IsClustered', 'Edition', 'ClusterName', 'IISConfigEvidence', 'PrintBackup', 'RedactionKey')
+# stays true: the first read of one of them must update this list. Step 2 of
+# #360 removed the six that were written and never read (IsClustered, Edition,
+# ClusterName, IISConfigEvidence, PrintBackup, RedactionKey), so it is empty now.
+$script:CheckDataUnused = @()
 
 # Owners that are not checks.
 $script:CheckDataNonCheckOwners = @('main', 'report', 'rules')
@@ -4464,7 +4463,6 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
 
     $platform = Get-PlatformClassification $script:Data.CS.Manufacturer $script:Data.CS.Model
     $script:Data.Platform = $platform
-    $script:Data.IsClustered = $false
 
     # Snapshot used for the post-upgrade comparison (stored in the JSON).
     $script:Data.Snapshot = @{
@@ -4522,7 +4520,6 @@ Register-Check -Id 'upgradepath' -Name 'Upgrade path, edition and media' -Script
         $clusterKey = Test-Path 'HKLM:\Cluster'
         if ($clusSvc.Count -gt 0 -and $clusterKey) { $clustered = $true }
     }
-    $script:Data.IsClustered = $clustered
     # A PKI server never gets a target its site policy rules out (#322).
     $pkiAllowed = @()
     if (Test-PkiServer (Get-FeatureState 'ADCS-Cert-Authority') @($script:Data.Services | ForEach-Object { [string]$_.Name })) { $pkiAllowed = ConvertTo-ReleaseList $PkiAllowedTargets }
@@ -4533,7 +4530,6 @@ Register-Check -Id 'upgradepath' -Name 'Upgrade path, edition and media' -Script
     Add-Result 'UPGRADE_PATH' 'TargetUpgradePath' $path.Status $path.Text ('Target=' + (Get-ReleaseDisplayName $TargetServerVersion)) -Source 'Microsoft supported upgrade paths (installation media)' -Link $script:DocLinks.InPlaceUpgrade.Url -LinkTitle $script:DocLinks.InPlaceUpgrade.Title
 
     $edition = Get-EditionDecision $cv.EditionID $cv.InstallationType $TargetServerVersion
-    $script:Data.Edition = $edition
     $mediaText = $edition.MediaImage
     if (-not $mediaText) { $mediaText = 'Not determined' }
     Add-Result 'UPGRADE_PATH' 'EditionAndInstallationType' $edition.Status ('Edition=' + $edition.Edition + ', ' + $edition.Variant) @(('EditionID=' + $cv.EditionID),('InstallationType=' + $cv.InstallationType)) -Recommendation $edition.Text -Source 'HKLM CurrentVersion'
@@ -4973,10 +4969,8 @@ Register-Check -Id 'cluster' -Name 'Failover clustering' -Script {
         Add-Result 'CLUSTER' 'FailoverClustering' 'WARNING' 'Feature installed but no cluster membership found' -Recommendation 'Remove the feature if unused, or confirm the node is not part of a cluster.' -Source 'Get-Cluster'
         return
     }
-    $script:Data.IsClustered = $true
     # Reported as SPECIAL with its own plan (#152); names are site data.
     Add-RedactionLiteral ([string]$cluster.Name) 'HOST'
-    $script:Data.ClusterName = [string]$cluster.Name
     Add-Result 'CLUSTER' 'ClusterMembership' 'INFO' ('Cluster=' + $cluster.Name) -Recommendation 'Cluster node: not a standard in-place upgrade - see the SPECIAL section.' -Source 'Get-Cluster'
     # The details are optional, but one that cannot be read is named, never
     # left out silently (#306).
@@ -5471,7 +5465,6 @@ Register-Check -Id 'iis' -Name 'IIS' -Script {
         try {
             $dest = Join-Path (Initialize-EvidenceFolder 'IIS') ($script:SafeComputerName + '-IPU-IIS-' + (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture))
             $copy = Save-IISConfigEvidence -Destination $dest -Zip $CreatePolicyEvidenceZip
-            $script:Data.IISConfigEvidence = $copy.Location
             Add-Result 'IIS' 'ConfigurationCopy' 'OK' $copy.Location @(('Files=' + ($copy.Files -join ', ')), ('applicationHost.config SHA256=' + $copy.ApplicationHostSha256)) -Recommendation 'Restore: copy the files back to %windir%\System32\inetsrv\config, or put them in a folder under inetsrv\backup and run "appcmd restore backup <folder>". See the user guide.' -Source 'inetsrv\config (copied, not changed)'
             if ($copy.SharedConfigPath) {
                 Add-Result 'IIS' 'SharedConfiguration' 'WARNING' ('Enabled: ' + $copy.SharedConfigPath) 'The local files only point to the shared location.' -Recommendation 'Back up the shared configuration at that path as well, and confirm every server that uses it before the change.' -Kind 'Observation' -Source 'redirection.config'
@@ -6082,7 +6075,6 @@ Register-Check -Id 'printbackup' -Name 'Print server backup (PrintBrm)' -Phase '
         return
     }
     $size = [math]::Round(([double](Get-Item -LiteralPath $file).Length / 1MB), 1)
-    $script:Data.PrintBackup = $file
     Add-Result 'PRINTING' 'PrintBackup' 'OK' $file @(('SizeMB=' + $size), $duration, $space.Text) -Recommendation 'Copy the file off the server before the change: a backup on C: does not survive a failed upgrade that needs a rebuild. It holds the full print configuration and is not redacted. Restore: PrintBrm -R -F <file> (see the user guide).' -Source 'PrintBrm.exe -B (reads the spooler configuration)'
 }
 
@@ -6820,7 +6812,7 @@ function Write-AssessmentReport {
     # copy so it holds every placeholder they use.
     if ($RedactReport -and $WriteRedactionKey) {
         $keyPath = Join-Path (Split-Path -Parent $script:ReportPath) ('DO-NOT-SHARE-' + $script:SafeComputerName + $script:ReportSuffix + '-REDACTION-KEY.csv')
-        try { $script:Data.RedactionKey = Write-RedactionKey (Get-RedactionContext) $keyPath }
+        try { $null = Write-RedactionKey (Get-RedactionContext) $keyPath }
         catch { Write-AssessmentLog 'WARNING' 'REDACTION' ('Redaction key could not be written: ' + $_.Exception.Message) }
     }
     return [pscustomobject]@{ Overall=$overall; Completed=$completed; Bytes=$info.Length; JsonOutcome=$jsonOutcome }
