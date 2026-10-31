@@ -51,6 +51,23 @@ the assessed server, no host data) is changed to fit them, or left out.
 For a larger idea, open an issue first and say what you would like to see; that is easier for us to act on than a
 finished change.
 
+## Run the CI checks locally
+
+One command runs the checks CI runs, in one PowerShell process per task, and prints one summary (#140):
+
+```powershell
+pwsh ./build/Invoke-Local.ps1                        # Lint and Test (the default)
+pwsh ./build/Invoke-Local.ps1 -Task Lint,Test,Smoke  # plus the end-to-end smoke test
+pwsh ./build/Invoke-Local.ps1 -Task All -Coverage    # everything; Test with the coverage floor CI uses
+```
+
+- **Lint**: the built files match their parts (all three), the skill copies are identical, PSScriptAnalyzer at `-FailOn Warning`.
+- **Test**: the Pester suite. **Smoke**: the real assessment end to end; needs PowerShell 7 for the schema check.
+- **Sample** regenerates `docs/samples/`, so it changes files: look at `git diff` afterwards.
+- Pester and PSScriptAnalyzer are installed at the versions pinned in `ci.yml` when they are missing (a newer one already installed is used as it is).
+- It warns when the session is not elevated. CI runs elevated, so a result can differ, most of all for the smoke test.
+- The exit code is 1 when any task failed.
+
 ## What CI runs
 
 | Job | Runs on | What it does |
