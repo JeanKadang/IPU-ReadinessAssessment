@@ -18,6 +18,7 @@ through SA, as before.
 | `20-detection-patterns.ps1` | Built-in detection patterns |
 | `25-eol-core.ps1` | End-of-life rules and product tables, **shared** with `Get-IPUEolStatus.ps1` and `Merge-IPUAssessments.ps1` (see below) |
 | `30-core.ps1` | Shared helpers: results, logging, CIM/registry access, redaction |
+| `35-check-data.ps1` | The owner of each key of `$script:Data` and each list of its `Snapshot` (see *Check data* below) |
 | `40-decision-rules.ps1` | Pure decision functions (unit-tested) |
 | `50-checks.ps1` | The checks that collect data |
 | `60-report.ps1` | HTML and JSON report |
@@ -59,6 +60,14 @@ The end-of-life functions (the verdict rules and the product tables) are one sha
 assessment, the EOL script and the merge step give the same verdict and cannot drift apart. Edit it once, then rebuild
 all three. CI checks each built file against its parts.
 
+## Check data (#360)
+
+The checks share `$script:Data` and its `Snapshot` as one bus: `baseline` fills the inventory, later checks read it,
+and the Post run compares the snapshot lists. `35-check-data.ps1` says who owns each key (the one check that may write
+it) and each snapshot list, and which lists the Post run compares. A check that needs to write a new key declares the
+owner there first; `tests/core/check-data.Tests.ps1` fails otherwise. Readers are not listed: about 25 checks read
+`baseline`'s keys. Next steps (#360): accessors for the declared keys, then a MANUAL result when a check's source check
+failed, then the split of `Register-AssessmentCheck` into one function per check (#255).
 ## Later: a second script
 
 A dedicated cluster assessment (#153) can get its own manifest that lists the shared parts (report, redaction, JSON,

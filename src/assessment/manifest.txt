@@ -5,6 +5,7 @@
 20-detection-patterns.ps1
 25-eol-core.ps1
 30-core.ps1
+35-check-data.ps1
 40-decision-rules.ps1
 50-checks.ps1
 60-report.ps1

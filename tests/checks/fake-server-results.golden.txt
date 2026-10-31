@@ -1,0 +1,173 @@
+check baseline Completed
+  ASSESSMENT | CollectorVersion | INFO | Evidence
+  ASSESSMENT | Target | INFO | Evidence
+  ASSESSMENT | ExecutionContext | INFO | Evidence
+  ASSESSMENT | ReportDestination | INFO | Evidence
+  ASSESSMENT | OutputFolderAccess | INFO | Evidence
+check upgradepath Completed
+  UPGRADE_PATH | CurrentOS | INFO | Evidence
+  UPGRADE_PATH | SourceEndOfSupport | INFO | Evidence
+  UPGRADE_PATH | TargetUpgradePath | OK | Evidence
+  UPGRADE_PATH | EditionAndInstallationType | OK | Evidence
+  UPGRADE_PATH | InstallLanguage | OK | Evidence
+  UPGRADE_PATH | RecommendedInstallationImage | INFO | Evidence
+check licensing Completed
+  LICENSING | CurrentActivation | OK | Evidence
+check pendingreboot Completed
+  WINDOWS_HEALTH | PendingReboot | OK | Evidence
+  WINDOWS_HEALTH | Uptime | OK | Evidence
+check patchlevel Completed
+  WINDOWS_HEALTH | LatestUpdate | OK | Evidence
+check history Completed
+  UPGRADE_HISTORY | OSInstallDate | INFO | Evidence
+  UPGRADE_HISTORY | PreviousUpgradeEvidence | INFO | Evidence
+check domain Completed
+  ACCESS | DomainMembership | INFO | Evidence
+  ACCESS | DomainSecureChannel | OK | Evidence
+  ACCESS | UAC | INFO | Evidence
+  ACCESS | BuiltInAdministrator | INFO | Evidence
+  ACCESS | LocalAdministratorsMember | INFO | Evidence
+  ACCESS | LocalAdministratorsMember | INFO | Evidence
+check grouppolicy Completed
+  GROUP_POLICY | ComputerOU | INFO | Evidence
+  GROUP_POLICY | GroupPolicyLastApplied | OK | Evidence
+  GROUP_POLICY | GPO: Server Baseline | WARNING | Finding
+  GROUP_POLICY | GPO: Default Domain Policy | INFO | Evidence
+  GROUP_POLICY | GPO: Workstation Settings | INFO | Evidence
+  GROUP_POLICY | GPO: Admins Only | INFO | Evidence
+  GROUP_POLICY | ADGroup | INFO | Evidence
+  GROUP_POLICY | ADGroup | INFO | Evidence
+  GROUP_POLICY | ADGroup | INFO | Evidence
+check rdp Completed
+  POLICY_EVIDENCE | LocalGroupPolicyBackup | INFO | Evidence
+  POLICY_EVIDENCE | ComputerRSoP | OK | Evidence
+  RDP | RemoteConnections | INFO | Evidence
+  RDP | Listener | INFO | Evidence
+  RDP | FirewallRDPAllow | OK | Evidence
+  RDP | SeRemoteInteractiveLogonRight | INFO | Evidence
+  RDP | SeDenyRemoteInteractiveLogonRight | INFO | Evidence
+  RDP | RemoteDesktopUsersGroup | INFO | Evidence
+  RDP | RDPAccessReadiness | OK | Evidence
+  RDP | DriveRedirection | OK | Evidence
+  POLICY_EVIDENCE | EvidenceLocation | INFO | Evidence
+check platform Completed
+  PLATFORM | PhysicalOrVirtual | OK | Evidence
+check performance Completed
+  PERFORMANCE | LogicalProcessors | OK | Evidence
+  PERFORMANCE | MemoryGB | OK | Evidence
+check cluster Completed
+  CLUSTER | FailoverClustering | OK | Evidence
+check special Completed
+check storage Completed
+  STORAGE | CFreeSpace | OK | Evidence
+  STORAGE | PartitionAfterC | OK | Evidence
+  STORAGE | WinREStatus | MANUAL | Finding
+  STORAGE | RecoveryPartitionAfterC | WARNING | Finding
+  STORAGE | CExtendableNowGB | INFO | Evidence
+  STORAGE | RecoveryPartition | OK | Evidence
+  STORAGE | SystemPartition | OK | Evidence
+  STORAGE | Disk0 | INFO | Evidence
+  STORAGE | Disk1 | INFO | Evidence
+  STORAGE | AllocatedDiskCapacity | INFO | Evidence
+check network Completed
+  NETWORK | Ethernet0 | INFO | Evidence
+  NETWORK | NetworkEvidence | OK | Evidence
+  NETWORK | NICTeaming | OK | Evidence
+  NETWORK_DEPENDENCY | Hosts line 2 | INFO | Evidence
+  NETWORK_DEPENDENCY | Hosts line 3 | INFO | Evidence
+  NETWORK_DEPENDENCY | HostsFile | MANUAL | Finding
+  NETWORK_DEPENDENCY | Route 10.50.0.0/16 | INFO | Evidence
+  NETWORK_DEPENDENCY | StaticRoutes | MANUAL | Finding
+check exchange Completed
+check sql Completed
+check workloads Completed
+  ROLES | FileAndStorage-Services | INFO | Evidence
+  ROLES | FS-FileServer | INFO | Evidence
+  WORKLOAD | File Server | WARNING | Finding
+  APPLICATIONS | SA Agent | INFO | Evidence
+  APPLICATIONS | Universal Discovery Agent (x86) | INFO | Evidence
+  APPLICATIONS | Operations-agent | INFO | Evidence
+  APPLICATIONS | Trend Micro Deep Security Agent | INFO | Evidence
+  APPLICATIONS | Nessus Agent (x64) | INFO | Evidence
+  APPLICATIONS | VMware Tools | INFO | Evidence
+check fileshares Completed
+  FILE_SHARES | FileShares | INFO | Evidence
+check printers Completed
+  PRINTING | PrintServer | OK | Evidence
+check iis Completed
+  IIS | Web-Server | OK | Evidence
+check rds Completed
+  RDS | RDSessionHost | OK | Evidence
+check pki Completed
+  CERTIFICATES | AA11BB22CC33DD44EE55FF6677889900AABBCCDD | INFO | Evidence
+  CERTIFICATES | RDP-Tcp certificate | OK | Observation
+  CERTIFICATES | HTTP.sys binding 1 | INFO | Evidence
+check agents Completed
+  AGENTS | OpenText Server Automation Agent | INFO | Evidence
+  AGENTS | OpenText Server Automation Agent service | OK | Observation
+  AGENTS | OpenText Universal Discovery Agent | INFO | Evidence
+  AGENTS | OpenText Universal Discovery Agent service | OK | Observation
+  AGENTS | OpenText Operations Agent | INFO | Evidence
+  AGENTS | OpenText Operations Agent service | OK | Observation
+check antivirus Completed
+  ANTIVIRUS | Microsoft Defender Antivirus | OK | Evidence
+  ANTIVIRUS | Trend Micro Deep Security Agent (Server & Workload Protection) | WARNING | Finding
+  SECURITY | Tenable Nessus agent | WARNING | Observation
+  SECURITY | AppLocker | INFO | Evidence
+  SECURITY | BitLocker C: | INFO | Evidence
+  SECURITY | SecureBoot | INFO | Evidence
+  SECURITY | TPM | INFO | Evidence
+  SECURITY | FileSystemFilterDrivers | INFO | Evidence
+check backup Completed
+  BACKUP | GuestBackupAgent | INFO | Evidence
+  BACKUP | VSS writer: System Writer | OK | Evidence
+  BACKUP | VSS writer: Registry Writer | OK | Evidence
+  BACKUP | VSS provider: Microsoft Software Shadow Copy provider 1.0 | OK | Observation
+check services Completed
+  SERVICES | AutomaticServices | INFO | Evidence
+  SERVICES | AppSvc | INFO | Evidence
+  SERVICES | OvCtrl | INFO | Evidence
+  SERVICES | OpswareAgent | INFO | Evidence
+  SERVICES | LanmanServer | INFO | Evidence
+  SERVICES | ds_agent | INFO | Evidence
+  SERVICES | UDAgent | INFO | Evidence
+  SERVICES | VMTools | INFO | Evidence
+  SERVICES | WinDefend | INFO | Evidence
+  SERVICES | TermService | INFO | Evidence
+check vmware Completed
+  VMWARE | VMwareTools | OK | Evidence
+  VMWARE | VMFirmware | INFO | Evidence
+  VMWARE | Driver: pvscsi | INFO | Evidence
+  VMWARE | Driver: vmxnet3ndis6 | INFO | Evidence
+  CHECKLIST | VMware host version | MANUAL | Checklist
+  CHECKLIST | VMware guest OS setting | MANUAL | Checklist
+  VMWARE | BroadcomGuidance | INFO | Observation
+check drivers Completed
+  DRIVERS | Device: vmxnet3 Ethernet Adapter | INFO | Evidence
+  DRIVERS | Summary | INFO | Evidence
+check ports Completed
+  PORTS | UDP:123 | INFO | Evidence
+  PORTS | TCP:445 | INFO | Evidence
+  PORTS | TCP:3389 | INFO | Evidence
+  PORTS | Summary | INFO | Evidence
+check tasks Completed
+  TASKS | \Example\Cleanup | INFO | Evidence
+check eolcandidates Completed
+check eolsnapshot Completed
+  APPLICATIONS | EOL snapshot | INFO | Observation
+check checklist Completed
+  CHECKLIST | Backup and fallback | MANUAL | Checklist
+  CHECKLIST | Credentials and console access | MANUAL | Checklist
+  CHECKLIST | Target licensing | MANUAL | Checklist
+  CHECKLIST | Installation media | MANUAL | Checklist
+  CHECKLIST | Application owner sign-off | MANUAL | Checklist
+  CHECKLIST | Monitoring and management agents | MANUAL | Checklist
+check printbackup Skipped
+check dism Completed
+  WINDOWS_HEALTH | DISM ScanHealth | OK | Evidence
+check sfc Completed
+  WINDOWS_HEALTH | SFC VerifyOnly | OK | Evidence
+check compatscan Skipped
+  COMPAT_SCAN | SetupCompatibilityScan | INFO | Evidence
+data keys: ActivationKind ActivationSummary AdLocation Apps BIOS CPU CS CSummary CV DomainRoleText DriveRedirection DriverNames Edition EndpointProducts EolCandidates Features FilterDrivers InstallLanguage IsClustered KernelDrivers KmsEndpoint NetworkEvidence NlaState OS Platform PolicyEvidence PrintServer RdpSummary RecommendedMedia RedactLiterals Services Snapshot SourceRelease SourceSupport SqlSummary UacSummary
+snapshot lists: Adapters Apps Dns Features Gpos Groups Hosts IPv4 Nla Ou PortOwners Ports PrinterDrivers PrinterPorts Printers Routes Services Tasks Uac

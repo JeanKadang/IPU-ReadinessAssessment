@@ -959,19 +959,13 @@ function Compare-PrinterDriver {
 
 # Which check collects which list of the snapshot (#239). A list whose check
 # did not complete (or was never run: a SPECIAL short report) cannot be
-# compared, and an empty list must not read as "nothing lost".
-$script:SnapshotListSources = [ordered]@{
-    Services = 'baseline'; Apps = 'baseline'; Features = 'baseline'
-    Ports = 'ports'
-    IPv4 = 'network'; Dns = 'network'; Adapters = 'network'; Hosts = 'network'; Routes = 'network'
-    Tasks = 'tasks'
-    Shares = 'fileshares'
-    Printers = 'printers'; PrinterPorts = 'printers'; PrinterDrivers = 'printers'
-}
+# compared, and an empty list must not read as "nothing lost". Derived from
+# the owners in 35-check-data.ps1 (#360), so the map cannot drift from them.
+$script:SnapshotListSources = Get-SnapshotListSourceMap -Compare Both
 
 # Lists the comparison also reads that come from checks a baseline may not
 # record per list; checked on the current side only (#306).
-$script:SnapshotCurrentListSources = [ordered]@{ Gpos = 'grouppolicy'; Groups = 'grouppolicy' }
+$script:SnapshotCurrentListSources = Get-SnapshotListSourceMap -Compare Current
 
 function Get-CurrentListGap {
     # Pure (#306): the snapshot lists THIS run could not read, so the

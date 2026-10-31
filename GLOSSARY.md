@@ -54,6 +54,13 @@ _Avoid_: category, section, group
 A collapsible section of the report that holds the results of one or more areas.
 _Avoid_: section, tab, page
 
+**Check data**:
+The facts the checks hand to each other and to the report while a run is in progress, such as the installed applications or the source release. Each piece has one owner.
+_Avoid_: state, globals, context
+
+**Owner**:
+The one check (or, outside the checks, the runner, the report or the redaction code) that may write a piece of check data. Any check may read it.
+_Avoid_: producer, writer, source
 **Checklist item**:
 A result of kind checklist: a standard step of the change procedure. It never counts towards the overall status.
 _Avoid_: task, to-do
