@@ -108,7 +108,7 @@ Lists may be empty or `null`.
 |---|---|
 | `Services` | `Name`, `State`, `StartMode` of every service |
 | `Apps` | `Name`, `Version` of installed applications |
-| `Features` | Installed Windows feature names |
+| `Features` | Installed Windows feature names. Left out when the feature inventory could not be read (the cmdlet failed or is missing), so the post-upgrade comparison names it as not compared; an empty list means the inventory was read and nothing is installed (#361) |
 | `Ports` | Listening ports below 49152, for example `TCP:443` |
 | `Routes` | Static routes, for example `10.50.0.0/16 via 10.20.30.1` |
 | `IPv4`, `Dns` | IPv4 addresses and DNS servers of enabled adapters |

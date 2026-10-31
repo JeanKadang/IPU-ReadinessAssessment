@@ -255,3 +255,76 @@ Describe 'Checks on a fake server: a failed baseline (#360, step 3)' -Skip:($env
         ($notice.Problems -join '|') | Should -Match 'was skipped \(Needs baseline, which stopped with an error\)'
     }
 }
+
+Describe 'Checks on a fake server: the feature list across a Pre and a Post run (#361)' -Skip:($env:OS -ne 'Windows_NT') {
+    BeforeAll {
+        $EvidenceRoot = Join-Path $TestDrive 'evidence'
+        function Resolve-EolProbePath { param([string]$Pattern) return [pscustomobject]@{ Paths = @(); Error = '' } }
+        function Save-PreRun([string]$Path) {
+            # What a Pre run writes, from the snapshot the real baseline check just collected.
+            # fileshares adds its list in a real run; here it ran and found no shares.
+            $script:Data.Snapshot.Shares = @()
+            $pre = [ordered]@{
+                Schema = 'IPU-Assessment/1'; Mode = 'Pre'; ComputerName = $script:ComputerName; CollectorVersion = '4.7.0'
+                Completed = '2026-10-01 10:00:00'; Overall = 'OK'; Partial = $false
+                Facts = [pscustomobject]@{ CurrentOS = 'Windows Server 2016 Standard' }
+                CheckRuns = @('baseline', 'ports', 'network', 'tasks', 'fileshares', 'printers' | ForEach-Object { [pscustomobject]@{ Id = $_; Name = $_; Phase = 'Fast'; Outcome = 'Completed'; Duration = '00:00:01'; Message = '' } })
+                Results = @(); Snapshot = [pscustomobject]$script:Data.Snapshot
+            }
+            [pscustomobject]$pre | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $Path -Encoding UTF8
+        }
+        function Invoke-PostRunOnFake([string]$BaselinePath) {
+            $script:Data = @{}
+            $run = Invoke-TestCheck 'baseline'
+            $run.Outcome | Should -Be 'Completed'
+            $script:TargetServerVersion = '2025'
+            $script:Data.SourceRelease = '2025'
+            $script:BaselinePath = $BaselinePath
+            Invoke-PostUpgradeComparison
+        }
+    }
+    BeforeEach { Reset-FakeServer }
+    AfterAll { $script:TargetServerVersion = '2025' }
+
+    It 'Pre run could not read the features: the Post run names the list and compares no features' {
+        $script:Fake.FeaturesThrow = $true
+        $script:Data = @{}
+        $null = Invoke-TestCheck 'baseline'
+        $path = Join-Path $TestDrive 'pre-unread.json'
+        Save-PreRun $path
+        $script:Fake.FeaturesThrow = $false
+        Invoke-PostRunOnFake $path
+        $r = Get-Row 'POST_UPGRADE' 'BaselineCoverage'
+        $r.Count | Should -Be 1
+        $r[0].Status | Should -Be 'MANUAL'
+        (@($r[0].Details) -join ' ') | Should -Match 'Features \(the baseline has no Features list\)'
+        (Get-Row 'POST_UPGRADE' 'Windows features missing after upgrade').Count | Should -Be 0
+        (Get-Row 'POST_UPGRADE' 'Comparison').Count | Should -Be 0
+    }
+    It 'Post run could not read the features: the list is named, not reported as lost' {
+        $script:Data = @{}
+        $null = Invoke-TestCheck 'baseline'
+        $script:Data.Snapshot.Features | Should -Contain 'FS-FileServer'
+        $path = Join-Path $TestDrive 'pre-read.json'
+        Save-PreRun $path
+        $script:Fake.FeaturesThrow = $true
+        Invoke-PostRunOnFake $path
+        $r = Get-Row 'POST_UPGRADE' 'CurrentCoverage'
+        $r.Count | Should -Be 1
+        $r[0].Status | Should -Be 'MANUAL'
+        (@($r[0].Details) -join ' ') | Should -Match 'Features \(this run could not read it\)'
+        (Get-Row 'POST_UPGRADE' 'Windows features missing after upgrade').Count | Should -Be 0
+        (Get-Row 'POST_UPGRADE' 'Comparison').Count | Should -Be 0
+    }
+    It 'both runs read the features: they are compared as before, with no coverage rows' {
+        $script:Data = @{}
+        $null = Invoke-TestCheck 'baseline'
+        $path = Join-Path $TestDrive 'pre-both.json'
+        Save-PreRun $path
+        $script:Fake.Features['FS-FileServer'] = $false
+        Invoke-PostRunOnFake $path
+        (Get-Row 'POST_UPGRADE' 'Windows features missing after upgrade')[0].Details | Should -Match 'FS-FileServer'
+        (Get-Row 'POST_UPGRADE' 'BaselineCoverage').Count | Should -Be 0
+        (Get-Row 'POST_UPGRADE' 'CurrentCoverage').Count | Should -Be 0
+    }
+}

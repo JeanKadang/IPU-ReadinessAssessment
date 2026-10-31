@@ -21,9 +21,10 @@ Describe 'Invoke-PostUpgradeComparison (#34)' {
             $script:BaselinePath = $BaselinePath
         }
         function Save-Baseline {
-            param([string]$Path, [bool]$Partial = $false, [hashtable]$Snapshot = @{}, [hashtable]$Extra = @{}, [string[]]$NotCompleted = @())
+            param([string]$Path, [bool]$Partial = $false, [hashtable]$Snapshot = @{}, [hashtable]$Extra = @{}, [string[]]$NotCompleted = @(), [string[]]$Without = @())
             $snap = @{ Services = @(); Ports = @('TCP:443'); Routes = @(); IPv4 = @('10.0.0.5'); Dns = @(); Adapters = @(); Hosts = @(); Apps = @(); Features = @(); Tasks = @(); Shares = @(); Printers = @(); PrinterPorts = @(); PrinterDrivers = @() }
             foreach ($k in $Snapshot.Keys) { $snap[$k] = $Snapshot[$k] }
+            foreach ($k in $Without) { $snap.Remove($k) }
             $runs = @('baseline', 'ports', 'network', 'tasks', 'fileshares', 'printers') | ForEach-Object { [pscustomobject]@{ Id = $_; Outcome = $(if ($NotCompleted -contains $_) { 'Failed' } else { 'Completed' }) } }
             $o = [ordered]@{ Schema = 'IPU-Assessment/1'; Mode = 'Pre'; ComputerName = $env:COMPUTERNAME; CollectorVersion = '4.0.1'; Completed = '2026-10-01 10:00:00'; Overall = 'WARNING'; Partial = $Partial
                 Facts = [pscustomobject]@{ CurrentOS = 'Windows Server 2022 Standard' }; CheckRuns = @($runs); Results = @(); Snapshot = [pscustomobject]$snap }
@@ -165,6 +166,48 @@ Describe 'Invoke-PostUpgradeComparison (#34)' {
         Invoke-PostUpgradeComparison
         (Get-Row 'Listening ports missing after upgrade')[0].Details | Should -Be 'TCP:1433'
         (Get-Row 'Static routes missing after upgrade').Count | Should -Be 0
+    }
+    It 'a Features list the Pre run could not read is named, not compared (#361)' {
+        $path = Join-Path $TestDrive 'features-then-unread.json'
+        Save-Baseline -Path $path -Without @('Features')
+        Set-PostScenario -BaselinePath $path -Now @{ Features = @('FS-FileServer', 'SNMP-Service') }
+        Invoke-PostUpgradeComparison
+        $r = Get-Row 'BaselineCoverage'
+        $r[0].Status | Should -Be 'MANUAL'; $r[0].Kind | Should -Be 'Finding'
+        (@($r[0].Details) -join ' ') | Should -Match 'Features \(the baseline has no Features list\)'
+        (Get-Row 'Windows features missing after upgrade').Count | Should -Be 0
+        (Get-Row 'Comparison').Count | Should -Be 0
+    }
+    It 'a Features list this run could not read is named, not reported as lost (#361)' {
+        $path = Join-Path $TestDrive 'features-now-unread.json'
+        Save-Baseline -Path $path -Snapshot @{ Features = @('FS-FileServer', 'Example-Feature') }
+        Set-PostScenario -BaselinePath $path
+        $script:Data.Snapshot.Remove('Features')
+        Invoke-PostUpgradeComparison
+        (Get-Row 'Windows features missing after upgrade').Count | Should -Be 0
+        $r = Get-Row 'CurrentCoverage'
+        $r[0].Status | Should -Be 'MANUAL'; $r[0].Kind | Should -Be 'Finding'
+        (@($r[0].Details) -join ' ') | Should -Match 'Features \(this run could not read it\)'
+        (Get-Row 'Comparison').Count | Should -Be 0
+    }
+    It 'features that were read in both runs are still compared (#361)' {
+        $path = Join-Path $TestDrive 'features-both-read.json'
+        Save-Baseline -Path $path -Snapshot @{ Features = @('FS-FileServer', 'Example-Feature') }
+        Set-PostScenario -BaselinePath $path -Now @{ Features = @('FS-FileServer') }
+        Invoke-PostUpgradeComparison
+        $r = Get-Row 'Windows features missing after upgrade'
+        $r[0].Status | Should -Be 'WARNING'
+        $r[0].Details | Should -Match 'Example-Feature'
+        (Get-Row 'CurrentCoverage').Count | Should -Be 0
+        (Get-Row 'BaselineCoverage').Count | Should -Be 0
+    }
+    It 'a baseline written before this fix, with an empty Features list, compares as it did (#361)' {
+        $path = Join-Path $TestDrive 'features-old-empty.json'
+        Save-Baseline -Path $path -Snapshot @{ Features = @() }
+        Set-PostScenario -BaselinePath $path -Now @{ Features = @('FS-FileServer') }
+        Invoke-PostUpgradeComparison
+        (Get-Row 'BaselineCoverage').Count | Should -Be 0
+        (Get-Row 'Windows features missing after upgrade').Count | Should -Be 0
     }
     It 'an error becomes a MANUAL finding and a Failed check run' {
         $path = Join-Path $TestDrive 'broken.json'

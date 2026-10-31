@@ -2000,7 +2000,8 @@ $script:CheckDataUnused = @()
 $script:CheckDataNonCheckOwners = @('main', 'report', 'rules')
 
 # The lists of $script:Data.Snapshot (#239, #306). Owner: the check that fills
-# the list (baseline creates every list empty, then the owner fills it).
+# the list (baseline creates every list empty, then the owner fills it; Features
+# is created only when the feature inventory was read, #361).
 # Compare: 'Both' = the Post run compares the list and needs it from both runs;
 # 'Current' = checked on the current side only; '' = stored, not compared as a
 # list. A list whose check did not complete cannot be compared, and an empty
@@ -4547,11 +4548,13 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
     $script:Data.Snapshot = @{
         Services = @($script:Data.Services | ForEach-Object { [pscustomobject]@{ Name=[string]$_.Name; State=[string]$_.State; StartMode=[string]$_.StartMode } })
         Apps     = @($script:Data.Apps | ForEach-Object { [pscustomobject]@{ Name=$_.Name; Version=$_.Version } })
-        Features = @()
         Ports = @(); Routes = @(); IPv4 = @(); Dns = @(); Adapters = @(); Hosts = @(); Tasks = @()
         Printers = @(); PrinterPorts = @(); PrinterDrivers = @()
     }
-    if ($script:Data.Features) { $script:Data.Snapshot.Features = @($script:Data.Features.Keys | Where-Object { $script:Data.Features[$_] } | Sort-Object) }
+    # The list is added only when the inventory was read (#361). A list that was
+    # not read is left out, not stored as empty, so the post-upgrade comparison
+    # names it as not compared instead of reading it as "no features".
+    if ($null -ne $script:Data.Features) { $script:Data.Snapshot.Features = @($script:Data.Features.Keys | Where-Object { $script:Data.Features[$_] } | Sort-Object) }
 
     if ($featureInventoryError) {
         Add-Result 'ASSESSMENT' 'FeatureInventory' 'MANUAL' 'Get-WindowsFeature failed' $featureInventoryError -Recommendation 'List the installed roles and features by hand (Server Manager, or Get-WindowsFeature in an elevated session). Until then the cluster, IIS and RDS rows are MANUAL, not "not installed".' -Source 'ServerManager'
