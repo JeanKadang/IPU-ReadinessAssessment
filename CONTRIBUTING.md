@@ -65,6 +65,8 @@ finished change.
 | `gate` (workflow *Closure gate*) | ubuntu-latest | Weekly (Monday) and on demand: lists issues closed as completed that still have unchecked task boxes (`build/Find-UncheckedClosedIssue.ps1`, #263) and keeps one issue, "Closed issues with unchecked criteria", up to date with them. The issue closes itself when the list is empty. Issues closed as not planned are ignored. When it lists one of yours: tick the box if the work is done, reopen the issue, or move the open item to a new issue and tick it with a link |
 | `notify (failed run on main)` | ubuntu-latest | For the weekly run and for every push to `main` (#123): when a job failed, opens or updates the issue "CI failed on main" (push) or "Scheduled CI run failed" (weekly run) |
 
+Pester and PSScriptAnalyzer are installed by `build/Install-CiModule.ps1` at the versions pinned in `ci.yml`. It tries three times, five seconds apart, and writes one log line per attempt, so a truncated download from the PowerShell Gallery no longer turns a required check red (#141).
+
 A newer push cancels the run still in progress on the same branch. Job names are stable, so the ruleset on `main` requires them by name: pester on both shells, smoke on both shells and both images, and lint. When GitHub retires or adds a Windows Server image, change
 the `smoke` matrix in `.github/workflows/ci.yml` and this table in the same pull request.
 
