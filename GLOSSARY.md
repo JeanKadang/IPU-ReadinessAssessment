@@ -30,7 +30,7 @@ _Avoid_: note, warning (a warning is a status)
 
 **Evidence**:
 A result that only documents what was found, such as an inventory entry.
-_Avoid_: info, data
+_Avoid_: info, data, evidence copy (that is a file saved from the server)
 
 **Overall status**:
 The most serious status among the findings of one server, or `OK` when there are none.
@@ -155,7 +155,7 @@ The date after which the vendor no longer provides security fixes for a release.
 _Avoid_: end of support, expiry, sunset
 
 **Product**:
-Software the end-of-life data covers, such as PHP or Windows Server, identified by the name that endoflife.date uses.
+A vendor product or platform, such as PHP, Veeam or Windows Server. The end-of-life data covers some products and names them as endoflife.date does.
 _Avoid_: application, package, software (an application is one installed entry)
 
 **Release**:
@@ -183,3 +183,65 @@ _Avoid_: result (a result is one row), status (a status is how serious a result 
 **Server snapshot**:
 The state of one server recorded by a Pre run, such as ports, routes, tasks and printers, so that a Post run can report what changed.
 _Avoid_: snapshot (alone), backup, image
+
+**Comparison**:
+What a Post run does: it reads the baseline and reports what was lost or changed since. `Comparison OK` means every compared list was compared and nothing was lost.
+_Avoid_: diff, regression check
+
+**Compared list**:
+One kind of thing a Post run compares with the baseline: services, ports, routes, adapters, printers, tasks, applied policies and so on. It is compared only when both runs read it.
+_Avoid_: item set, inventory (an inventory is evidence)
+
+**Coverage**:
+Whether a compared list could be compared. Baseline coverage is missing when the Pre run did not collect the list; current coverage is missing when the Post run could not read it. A list without coverage is named in a `MANUAL` result, never shown as nothing lost or everything lost.
+_Avoid_: completeness, scope
+
+### Saved from the server
+
+**Evidence copy**:
+A file or archive a run saves from the server for the change record, such as the exported Group Policy, the IIS configuration, the network configuration or the printer backup. It is not a result.
+_Avoid_: evidence (alone, that is a result kind), attachment, dump
+
+**Evidence folder**:
+The restricted folder, readable by SYSTEM and Administrators only, that holds evidence copies.
+_Avoid_: output folder, report folder
+
+### Sharing a report
+
+**Redaction**:
+Replacing names, addresses and accounts in a report with placeholders so it can be shared outside the team. It is best effort: read the copy before sharing it.
+_Avoid_: anonymisation, scrubbing, masking
+
+**Placeholder**:
+The stand-in for one original value, such as `HOST-1` or `IP-3`. The same original always gets the same placeholder within one redaction.
+_Avoid_: token, alias, mask
+
+**Redaction key**:
+The file that says which placeholder stands for which original. It holds the real names, so it never leaves the team.
+_Avoid_: translator, lookup table, map file
+
+**Redacted copy**:
+A copy of a report, result JSON or run log in which the identifying values are replaced. The original is not changed. A redacted copy cannot be a baseline.
+_Avoid_: sanitised copy, anonymised report
+
+### Site data
+
+**Site data file**:
+A JSON file that keeps a site's own settings or product patterns outside the script: a profile or a pattern file. If any entry is invalid, nothing from the file is applied and a `MANUAL` finding says why.
+_Avoid_: config file, settings file
+
+**Profile**:
+A site data file with the site's defaults for parameters and its site policy.
+_Avoid_: config, preset
+
+**Pattern file**:
+A site data file that adds, replaces or disables detection patterns.
+_Avoid_: rules file, signature file
+
+**Detection pattern**:
+A name, service or driver pattern by which the assessment script recognises a vendor product.
+_Avoid_: signature, rule (a rule decides, a pattern recognises)
+
+**Site policy**:
+A decision that belongs to the site rather than to Microsoft, such as which releases a PKI server may be upgraded to, or whether a domain controller is upgraded in place.
+_Avoid_: custom rule, exception
