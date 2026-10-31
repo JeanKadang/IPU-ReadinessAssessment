@@ -35,3 +35,35 @@ _Avoid_: info, data
 **Overall status**:
 The most serious status among the findings of one server, or `OK` when there are none.
 _Avoid_: verdict, score, result (a result is one row)
+
+### Collecting
+
+**Check**:
+One unit of collection with a stable id (for example `baseline`) that reads one part of the server and records results. A check that fails to complete is reported as `MANUAL`.
+_Avoid_: test, probe, scan (a scan is one tool a check may run)
+
+**Phase**:
+Whether a check runs among the fast checks or last among the slow ones, which have a time budget.
+_Avoid_: stage, pass
+
+**Area**:
+A named label on a result that says what it is about, such as the installed applications or the network. Each area belongs to exactly one chapter.
+_Avoid_: category, section, group
+
+**Chapter**:
+A collapsible section of the report that holds the results of one or more areas.
+_Avoid_: section, tab, page
+
+**Checklist item**:
+A result of kind checklist: a standard step of the change procedure. It never counts towards the overall status.
+_Avoid_: task, to-do
+
+### Recommended commands
+
+**Read-only command**:
+A command the report shows that only reads state and is safe to run at any time. The report labels it "Check".
+_Avoid_: check (a check collects data), query
+
+**Change command**:
+A command the report shows that alters the server, to run in the change window after reading it. The report labels it "Change".
+_Avoid_: fix, remediation (the assessment never changes a server itself)
