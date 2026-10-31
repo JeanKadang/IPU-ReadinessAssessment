@@ -44,6 +44,26 @@ Describe 'Checks on a fake server: windows health' -Skip:($env:OS -ne 'Windows_N
             $null -eq $script:Data.Features | Should -BeTrue
             $script:Data.Platform.Hypervisor | Should -Be 'VMware'
             $script:Data.Snapshot | Should -Not -BeNullOrEmpty
+        }
+        It 'leaves the Features list out of the snapshot, so the Post comparison can name it as not read (#361)' {
+            $script:Data.Snapshot.ContainsKey('Features') | Should -BeFalse
+            $script:Data.Snapshot.ContainsKey('Services') | Should -BeTrue
+            $script:Data.Snapshot.ContainsKey('Apps') | Should -BeTrue
+        }
+        It 'a machine without Get-WindowsFeature leaves the list out too (#361)' {
+            $script:Fake.FeaturesThrow = $false
+            $script:Fake.MissingCommands += 'Get-WindowsFeature'
+            $script:Data = @{}
+            (Invoke-TestCheck 'baseline').Outcome | Should -Be 'Completed'
+            $null -eq $script:Data.Features | Should -BeTrue
+            $script:Data.Snapshot.ContainsKey('Features') | Should -BeFalse
+        }
+        It 'a readable inventory with nothing installed is still a list, an empty one (#361)' {
+            $script:Fake.FeaturesThrow = $false
+            $script:Fake.Features = @{}
+            $script:Data = @{}
+            (Invoke-TestCheck 'baseline').Outcome | Should -Be 'Completed'
+            $script:Data.Snapshot.ContainsKey('Features') | Should -BeTrue
             @($script:Data.Snapshot.Features).Count | Should -Be 0
         }
         It 'says so in one MANUAL row' {

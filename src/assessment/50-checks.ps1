@@ -37,11 +37,13 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
     $script:Data.Snapshot = @{
         Services = @($script:Data.Services | ForEach-Object { [pscustomobject]@{ Name=[string]$_.Name; State=[string]$_.State; StartMode=[string]$_.StartMode } })
         Apps     = @($script:Data.Apps | ForEach-Object { [pscustomobject]@{ Name=$_.Name; Version=$_.Version } })
-        Features = @()
         Ports = @(); Routes = @(); IPv4 = @(); Dns = @(); Adapters = @(); Hosts = @(); Tasks = @()
         Printers = @(); PrinterPorts = @(); PrinterDrivers = @()
     }
-    if ($script:Data.Features) { $script:Data.Snapshot.Features = @($script:Data.Features.Keys | Where-Object { $script:Data.Features[$_] } | Sort-Object) }
+    # The list is added only when the inventory was read (#361). A list that was
+    # not read is left out, not stored as empty, so the post-upgrade comparison
+    # names it as not compared instead of reading it as "no features".
+    if ($null -ne $script:Data.Features) { $script:Data.Snapshot.Features = @($script:Data.Features.Keys | Where-Object { $script:Data.Features[$_] } | Sort-Object) }
 
     if ($featureInventoryError) {
         Add-Result 'ASSESSMENT' 'FeatureInventory' 'MANUAL' 'Get-WindowsFeature failed' $featureInventoryError -Recommendation 'List the installed roles and features by hand (Server Manager, or Get-WindowsFeature in an elevated session). Until then the cluster, IIS and RDS rows are MANUAL, not "not installed".' -Source 'ServerManager'

@@ -41,7 +41,8 @@ $script:CheckDataUnused = @()
 $script:CheckDataNonCheckOwners = @('main', 'report', 'rules')
 
 # The lists of $script:Data.Snapshot (#239, #306). Owner: the check that fills
-# the list (baseline creates every list empty, then the owner fills it).
+# the list (baseline creates every list empty, then the owner fills it; Features
+# is created only when the feature inventory was read, #361).
 # Compare: 'Both' = the Post run compares the list and needs it from both runs;
 # 'Current' = checked on the current side only; '' = stored, not compared as a
 # list. A list whose check did not complete cannot be compared, and an empty

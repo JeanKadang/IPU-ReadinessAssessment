@@ -189,9 +189,17 @@ Describe 'Check data owners: the lists of the snapshot (#360)' {
     }
     It 'baseline creates every declared list' {
         foreach ($list in $script:SnapshotListOwners.Keys) {
-            if ($list -in @('Gpos', 'Groups', 'Shares', 'Uac', 'Ou', 'Nla', 'PortOwners')) { continue }
+            # Features is added only when the inventory was read (#361): not seeded.
+            if ($list -in @('Gpos', 'Groups', 'Shares', 'Uac', 'Ou', 'Nla', 'PortOwners', 'Features')) { continue }
             $script:Writes['baseline'].Seeds | Should -Contain $list -Because ('baseline seeds Snapshot.' + $list + ' empty so a failed check leaves the list empty, which CheckRuns then flags')
         }
+    }
+}
+
+Describe 'The Features list is created only when it was read (#361)' {
+    It 'baseline assigns Snapshot.Features after the table, and does not seed it' {
+        $script:Writes['baseline'].Lists | Should -Contain 'Features'
+        $script:Writes['baseline'].Seeds | Should -Not -Contain 'Features' -Because 'a list seeded empty cannot be told from a list that was read and is empty'
     }
 }
 
