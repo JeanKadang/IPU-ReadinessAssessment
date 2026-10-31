@@ -1,0 +1,47 @@
+name: Closure gate
+
+# Weekly check for issues closed as completed while their task list still has
+# unchecked boxes (#263). Keeps ONE issue, "Closed issues with unchecked
+# criteria", up to date: it opens (or is rewritten) when there are hits and
+# closes itself when there are none. Issues closed as not planned are ignored.
+# No third-party action: gh and PowerShell only.
+on:
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Find closed issues with unchecked criteria
+        id: scan
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./build/Find-UncheckedClosedIssue.ps1 -ReportPath (Join-Path $env:RUNNER_TEMP 'gate.md') | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+      - name: Update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COUNT: ${{ steps.scan.outputs.count }}
+          REPORT: ${{ runner.temp }}/gate.md
+        run: |
+          title='Closed issues with unchecked criteria'
+          existing=$(gh issue list --state open --search "\"$title\" in:title" --json number,title --jq "[.[] | select(.title == \"$title\")][0].number // empty")
+          if [ "$COUNT" -gt 0 ]; then
+            if [ -n "$existing" ]; then
+              gh issue edit "$existing" --body-file "$REPORT"
+            else
+              gh issue create --title "$title" --label tooling --label P3 --body-file "$REPORT"
+            fi
+          elif [ -n "$existing" ]; then
+            gh issue close "$existing" --reason completed --comment "Every issue closed as completed has its boxes ticked now."
+          fi
