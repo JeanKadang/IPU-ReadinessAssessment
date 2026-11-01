@@ -8,5 +8,11 @@
 35-check-data.ps1
 40-decision-rules.ps1
 50-checks.ps1
+51-checks-health.ps1
+52-checks-workloads.ps1
+53-checks-hardware.ps1
+54-checks-storage-network.ps1
+55-checks-access-security.ps1
+56-checks-backup-services.ps1
 60-report.ps1
 70-main.ps1

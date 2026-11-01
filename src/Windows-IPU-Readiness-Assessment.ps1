@@ -4513,9 +4513,50 @@ function Get-StatusRank {
 # 5. CHECKS
 # =============================================================================
 function Register-AssessmentCheck {
+    Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script { Invoke-BaselineCheck }
+    Register-Check -Id 'upgradepath' -Name 'Upgrade path, edition and media' -Script { Invoke-UpgradePathCheck }
+    Register-Check -Id 'licensing' -Name 'Windows activation' -Script { Invoke-LicensingCheck }
+    Register-Check -Id 'pendingreboot' -Name 'Pending reboot and uptime' -Script { Invoke-PendingRebootCheck }
+    Register-Check -Id 'patchlevel' -Name 'Patch level' -Script { Invoke-PatchLevelCheck }
+    Register-Check -Id 'history' -Name 'Previous upgrade history' -Script { Invoke-HistoryCheck }
+    Register-Check -Id 'domain' -Name 'Domain role and access' -Script { Invoke-DomainCheck }
+    Register-Check -Id 'grouppolicy' -Name 'Group Policy and AD groups' -Script { Invoke-GroupPolicyCheck }
+    Register-Check -Id 'rdp' -Name 'RDP access, policy and evidence' -Script { Invoke-RdpPolicyAssessment }
+    Register-Check -Id 'platform' -Name 'Platform and hardware' -Script { Invoke-PlatformCheck }
+    Register-Check -Id 'performance' -Name 'CPU and memory' -Script { Invoke-PerformanceCheck }
+    Register-Check -Id 'cluster' -Name 'Failover clustering' -Script { Invoke-ClusterCheck }
+    Register-Check -Id 'special' -Name 'SPECIAL server (cluster node, domain controller)' -Script { Invoke-SpecialCheck }
+    Register-Check -Id 'storage' -Name 'Storage' -Script { Invoke-StorageCheck }
+    Register-Check -Id 'network' -Name 'Network, teaming, hosts and routes' -Script { Invoke-NetworkCheck }
+    Register-Check -Id 'exchange' -Name 'Exchange Server' -Script { Invoke-ExchangeCheck }
+    Register-Check -Id 'sql' -Name 'SQL Server' -Script { Invoke-SqlCheck }
+    Register-Check -Id 'workloads' -Name 'Roles and workloads' -Script { Invoke-WorkloadsCheck }
+    Register-Check -Id 'fileshares' -Name 'File shares' -Script { Invoke-FileSharesCheck }
+    Register-Check -Id 'printers' -Name 'Print server: printers, ports and drivers' -Script { Invoke-PrintersCheck }
+    Register-Check -Id 'iis' -Name 'IIS' -Script { Invoke-IisCheck }
+    Register-Check -Id 'rds' -Name 'Remote Desktop Services roles' -Script { Invoke-RdsCheck }
+    Register-Check -Id 'pki' -Name 'PKI, certificates and TLS bindings' -Script { Invoke-PkiCheck }
+    Register-Check -Id 'agents' -Name 'Management agents (OpenText)' -Script { Invoke-AgentsCheck }
+    Register-Check -Id 'antivirus' -Name 'Antivirus, EDR and security tools' -Script { Invoke-AntivirusCheck }
+    Register-Check -Id 'backup' -Name 'Backup and VSS' -Script { Invoke-BackupCheck }
+    Register-Check -Id 'services' -Name 'Services' -Script { Invoke-ServicesCheck }
+    Register-Check -Id 'vmware' -Name 'VMware guest readiness' -Script { Invoke-VmwareCheck }
+    Register-Check -Id 'drivers' -Name 'Non-Microsoft drivers' -Script { Invoke-DriversCheck }
+    Register-Check -Id 'ports' -Name 'Listening ports' -Script { Invoke-PortsCheck }
+    Register-Check -Id 'tasks' -Name 'Scheduled tasks' -Script { Invoke-TasksCheck }
+    Register-Check -Id 'eolcandidates' -Name 'Products for end-of-life checks' -Script { Invoke-EolCandidatesCheck }
+    Register-Check -Id 'eolsnapshot' -Name 'End-of-life snapshot' -Script { Invoke-EolSnapshotCheck }
+    Register-Check -Id 'checklist' -Name 'Standard change checklist' -Script { Invoke-ChecklistCheck }
+    # SLOW CHECKS (time-boxed, run after the checkpoint report is written)
+    Register-Check -Id 'printbackup' -Name 'Print server backup (PrintBrm)' -Phase 'Slow' -Script { Invoke-PrintBackupCheck }
+    Register-Check -Id 'dism' -Name 'DISM component store scan' -Phase 'Slow' -Script { Invoke-DismCheck }
+    Register-Check -Id 'sfc' -Name 'SFC protected file verification' -Phase 'Slow' -Script { Invoke-SfcCheck }
+    Register-Check -Id 'compatscan' -Name 'Setup compatibility scan' -Phase 'Slow' -Script { Invoke-CompatScanCheck }
+}
+# Chapter: Upgrade path, licensing and Windows health (docs/checks.md). The slow checks of this chapter run after the checkpoint report.
+# Each check is one function; Register-AssessmentCheck (50-checks.ps1) lists them in run order.
 
-# ---------------------------------------------------------------------------
-Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
+function Invoke-BaselineCheck {
     $script:Data.OS       = @(Get-CimRequired 'Win32_OperatingSystem') | Select-Object -First 1
     $script:Data.CS       = @(Get-CimRequired 'Win32_ComputerSystem') | Select-Object -First 1
     $script:Data.BIOS     = @(Get-CimSafe 'Win32_BIOS') | Select-Object -First 1
@@ -4581,8 +4622,7 @@ Register-Check -Id 'baseline' -Name 'Baseline inventory' -Script {
     }
 }
 
-# ---------------------------------------------------------------------------
-Register-Check -Id 'upgradepath' -Name 'Upgrade path, edition and media' -Script {
+function Invoke-UpgradePathCheck {
     $os = $script:Data.OS; $cv = $script:Data.CV
     $buildText = [string]$os.BuildNumber
     if ($cv.UBR) { $buildText += '.' + $cv.UBR }
@@ -4648,8 +4688,7 @@ Register-Check -Id 'upgradepath' -Name 'Upgrade path, edition and media' -Script
     }
 }
 
-# ---------------------------------------------------------------------------
-Register-Check -Id 'licensing' -Name 'Windows activation' -Script {
+function Invoke-LicensingCheck {
     $statusNames = @{ 0='Unlicensed'; 1='Licensed'; 2='OOBGrace'; 3='OOTGrace'; 4='NonGenuineGrace'; 5='Notification'; 6='ExtendedGrace' }
     $products = @()
     $queryError = ''
@@ -4709,8 +4748,7 @@ Register-Check -Id 'licensing' -Name 'Windows activation' -Script {
     }
 }
 
-# ---------------------------------------------------------------------------
-Register-Check -Id 'pendingreboot' -Name 'Pending reboot and uptime' -Script {
+function Invoke-PendingRebootCheck {
     $hard = @(); $soft = @()
     if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') { $hard += 'CBS RebootPending' }
     if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\PackagesPending') { $hard += 'CBS PackagesPending' }
@@ -4754,8 +4792,7 @@ Register-Check -Id 'pendingreboot' -Name 'Pending reboot and uptime' -Script {
     }
 }
 
-# ---------------------------------------------------------------------------
-Register-Check -Id 'patchlevel' -Name 'Patch level' -Script {
+function Invoke-PatchLevelCheck {
     # SilentlyContinue: An empty or failed list is reported as MANUAL below ('No dated update history').
     $fixes = @(Get-HotFix -ErrorAction SilentlyContinue | Where-Object { $_.InstalledOn })
     $latest = $null
@@ -4779,8 +4816,7 @@ Register-Check -Id 'patchlevel' -Name 'Patch level' -Script {
     }
 }
 
-# ---------------------------------------------------------------------------
-Register-Check -Id 'history' -Name 'Previous upgrade history' -Script {
+function Invoke-HistoryCheck {
     $found = $false
     # HKLM\SYSTEM\Setup always exists: a failed read fails the check (#306),
     # it must not look like a server that was never upgraded.
@@ -4818,8 +4854,144 @@ Register-Check -Id 'history' -Name 'Previous upgrade history' -Script {
     }
 }
 
-# ---------------------------------------------------------------------------
-Register-Check -Id 'domain' -Name 'Domain role and access' -Script {
+function Invoke-DismCheck {
+    if (-not $RunDISMScanHealth) {
+        Add-Result 'WINDOWS_HEALTH' 'DISM ScanHealth' 'MANUAL' 'Skipped by configuration' -Recommendation 'Run the read-only scan before final IPU approval.'
+        $script:CurrentCheckMessage = 'Not configured: switched off with -RunDISMScanHealth $false'
+        $script:CurrentCheckOutcome = 'Skipped'; return
+    }
+    $timeout = [math]::Min($DISMTimeoutMinutes * 60, $script:SlowSecondsLeft)
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $r = Invoke-NativeCapture (Join-Path $env:windir 'System32\dism.exe') @('/English','/Online','/Cleanup-Image','/ScanHealth') $timeout
+    $sw.Stop()
+    $duration = 'Duration=' + (Format-Duration $sw.Elapsed)
+    if ($r.TimedOut) {
+        Add-Result 'WINDOWS_HEALTH' 'DISM ScanHealth' 'MANUAL' ('Stopped after ' + [math]::Round($timeout/60) + ' minutes') @($duration, (Get-StopFailureText $r.StillRunning)) -Recommendation 'Run "DISM /Online /Cleanup-Image /ScanHealth" manually outside the SA job.' -Source 'dism.exe'
+        $script:CurrentCheckOutcome = 'TimedOut'; return
+    }
+    if ($r.Error) { throw $r.Error }
+    $verdict = Get-DismVerdict $r.Output $r.ExitCode
+    $summary = @($r.Lines | Where-Object { $_ -notmatch '^\[=*' -and $_ -notmatch '%' } | Select-Object -Last 3) -join ' | '
+    Add-Result 'WINDOWS_HEALTH' 'DISM ScanHealth' $verdict.Status ('ExitCode=' + $r.ExitCode) @($duration,$summary,('Basis=' + $verdict.Basis)) -Recommendation $verdict.Recommendation -Source 'dism.exe /English /Online /Cleanup-Image /ScanHealth'
+}
+
+function Invoke-SfcCheck {
+    if (-not $RunSFCVerifyOnly) {
+        Add-Result 'WINDOWS_HEALTH' 'SFC VerifyOnly' 'MANUAL' 'Skipped by configuration' -Recommendation 'Run the read-only verification before final IPU approval.'
+        $script:CurrentCheckMessage = 'Not configured: switched off with -RunSFCVerifyOnly $false'
+        $script:CurrentCheckOutcome = 'Skipped'; return
+    }
+    $timeout = [math]::Min($SFCTimeoutMinutes * 60, $script:SlowSecondsLeft)
+    $started = Get-Date
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $r = Invoke-NativeCapture (Join-Path $env:windir 'System32\sfc.exe') @('/verifyonly') $timeout
+    $sw.Stop()
+    $duration = 'Duration=' + (Format-Duration $sw.Elapsed)
+    if ($r.TimedOut) {
+        Add-Result 'WINDOWS_HEALTH' 'SFC VerifyOnly' 'MANUAL' ('Stopped after ' + [math]::Round($timeout/60) + ' minutes') @($duration, (Get-StopFailureText $r.StillRunning)) -Recommendation 'Run "sfc /verifyonly" manually outside the SA job.' -Source 'sfc.exe'
+        $script:CurrentCheckOutcome = 'TimedOut'; return
+    }
+    if ($r.Error) { throw $r.Error }
+    $cbs = @()
+    $stamp = $started.AddMinutes(-1).ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)
+    foreach ($line in (Read-FileTail (Join-Path $env:windir 'Logs\CBS\CBS.log'))) {
+        if ($line.Length -ge 16 -and $line.Substring(0,16) -ge $stamp) { $cbs += $line }
+    }
+    $verdict = Get-SfcVerdict $r.Output $cbs
+    $summary = @($r.Lines | Where-Object { $_ -notmatch '\d{1,3}\s*%' } | Select-Object -Last 2) -join ' | '
+    $rec = @{ OK=''; ACTION='Resolve protected-file integrity violations (DISM /RestoreHealth, then sfc /scannow in a change) and re-run before IPU.'; WARNING='SFC did not check anything: a Windows repair is waiting for a reboot (see the pending-reboot row). Reboot, then re-run the assessment. This is not evidence of damaged files.'; MANUAL='Result could not be classified; review the output and CBS.log.' }[$verdict.Status]
+    Add-Result 'WINDOWS_HEALTH' 'SFC VerifyOnly' $verdict.Status ('ExitCode=' + $r.ExitCode + ', Basis=' + $verdict.Basis) @($duration,$summary) -Recommendation $rec -Source 'sfc.exe /verifyonly, CBS.log'
+}
+
+function Invoke-CompatScanCheck {
+    if ($AssessmentMode -eq 'Post') { $script:CurrentCheckMessage = 'Not applicable after the upgrade'; $script:CurrentCheckOutcome = 'Skipped'; return }
+    if (-not $TargetMediaPath) {
+        Add-Result 'COMPAT_SCAN' 'SetupCompatibilityScan' 'INFO' 'Not run - no installation media given' ('Optional. To let Windows Setup check this server with Microsoft''s own compatibility rules, run again with -TargetMediaPath set to the ' + (Get-ReleaseDisplayName $TargetServerVersion) + ' ISO, or a folder or share with the installation files.') -Source 'SETTINGS' -Link $script:DocLinks.SetupOptions.Url -LinkTitle $script:DocLinks.SetupOptions.Title
+        $script:CurrentCheckMessage = 'Not configured: no installation media given (-TargetMediaPath)'
+        $script:CurrentCheckOutcome = 'Skipped'; return
+    }
+    $timeout = [math]::Min($CompatScanTimeoutMinutes * 60, $script:SlowSecondsLeft)
+    $mountedIso = $null
+    try {
+        $mediaRoot = $TargetMediaPath
+        if ($TargetMediaPath -match '\.iso$') {
+            if (-not (Test-Path -LiteralPath $TargetMediaPath)) { throw ('ISO not found: ' + $TargetMediaPath) }
+            $mountedIso = Mount-DiskImage -ImagePath $TargetMediaPath -PassThru -ErrorAction Stop
+            $letter = ($mountedIso | Get-Volume -ErrorAction Stop).DriveLetter
+            if (-not $letter) { throw 'The mounted ISO received no drive letter.' }
+            $mediaRoot = $letter + ':\'
+        }
+        $setupExe = Join-Path $mediaRoot 'setup.exe'
+        if (-not (Test-Path -LiteralPath $setupExe)) { throw ('setup.exe not found in ' + $mediaRoot) }
+
+        # Pick the image that matches this server's edition and installation
+        # type; a mismatch is itself a finding (wrong media).
+        $imageFile = @('sources\install.wim','sources\install.esd') | ForEach-Object { Join-Path $mediaRoot $_ } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        if (-not $imageFile) { throw 'No install.wim or install.esd found in the media.' }
+        $wantEdition = ([string]$script:Data.CV.EditionID -replace '(Core|Cor)$','')
+        $wantType = [string]$script:Data.CV.InstallationType
+        $index = 0; $imageNames = @(); $imageLanguages = ''
+        foreach ($img in @(Get-WindowsImage -ImagePath $imageFile -ErrorAction Stop)) {
+            $detail = Get-WindowsImage -ImagePath $imageFile -Index $img.ImageIndex -ErrorAction Stop
+            $imageNames += ('[' + $img.ImageIndex + '] ' + $img.ImageName)
+            if (-not $index -and [string]$detail.EditionId -eq $wantEdition -and [string]$detail.InstallationType -eq $wantType) {
+                $index = [int]$img.ImageIndex; $imageLanguages = (@($detail.Languages) -join ',')
+            }
+        }
+        if (-not $index) {
+            Add-Result 'COMPAT_SCAN' 'MatchingImage' 'ACTION' ('No image for ' + $wantEdition + ' / ' + $wantType + ' in the media') $imageNames -Recommendation 'The media does not contain an image matching this server''s edition and installation type. Use the correct media; IPU cannot switch edition down or between Core and Desktop Experience.' -Source $imageFile
+            return
+        }
+        Add-Result 'COMPAT_SCAN' 'MatchingImage' 'OK' ('Index ' + $index) @(('Languages=' + $imageLanguages),($imageNames -join ' | ')) -Source $imageFile
+        if ($script:Data.InstallLanguage -and $imageLanguages -and -not (Test-MediaLanguageMatch @($imageLanguages -split ',') $script:Data.InstallLanguage)) {
+            Add-Result 'COMPAT_SCAN' 'MediaLanguage' 'BLOCKER' ('Media=' + $imageLanguages + ', Installed=' + $script:Data.InstallLanguage) '' -Recommendation 'Changing language during IPU is not supported. Use media in the installed language.' -Source $imageFile
+        }
+
+        $arguments = @('/auto','upgrade','/quiet','/compat','scanonly','/imageindex',[string]$index,'/dynamicupdate','disable')
+        if ($TargetServerVersion -eq '2025') { $arguments += @('/eula','accept') }
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        $r = Invoke-NativeCapture $setupExe $arguments $timeout
+        $sw.Stop()
+        if ($r.TimedOut) {
+            Add-Result 'COMPAT_SCAN' 'SetupCompatibilityScan' 'MANUAL' ('Stopped after ' + [math]::Round($timeout/60) + ' minutes') @(('Duration=' + (Format-Duration $sw.Elapsed)), (Get-StopFailureText $r.StillRunning)) -Recommendation 'Run the scan manually: setup.exe /auto upgrade /quiet /compat scanonly /imageindex <n>.' -Source 'setup.exe'
+            $script:CurrentCheckOutcome = 'TimedOut'; return
+        }
+        if ($r.Error) { throw $r.Error }
+        $decision = Get-CompatScanDecision $r.ExitCode
+
+        # Keep Setup's CompatData XML and list the hard blocks it names.
+        $evidence = Join-Path $ReportDirectory ($script:SafeComputerName + '-CompatData')
+        $blocks = @()
+        $panther = 'C:\$WINDOWS.~BT\Sources\Panther'
+        # SilentlyContinue: Setup writes no CompatData file when it finds nothing; the verdict comes from the exit code.
+        $xmlFiles = @(Get-ChildItem -LiteralPath $panther -Filter 'CompatData*.xml' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge (Get-Date).AddSeconds(-1 * ($sw.Elapsed.TotalSeconds + 60)) })
+        if ($xmlFiles.Count -gt 0) {
+            $null = Initialize-OutputFolder $evidence
+            foreach ($x in $xmlFiles) {
+                Copy-Item -LiteralPath $x.FullName -Destination $evidence -Force
+                try {
+                    [xml]$doc = Get-Content -LiteralPath $x.FullName -Raw
+                    foreach ($node in @($doc.SelectNodes('//*[@BlockingType="Hard"]'))) {
+                        $owner = $node.ParentNode
+                        $label = @($owner.Attributes['Name'],$owner.Attributes['Title'],$owner.Attributes['Id'] | Where-Object { $_ } | ForEach-Object { $_.Value }) | Select-Object -First 1
+                        if (-not $label) { $label = $owner.LocalName }
+                        $blocks += $label
+                    }
+                } catch { Write-Swallowed $_ }
+            }
+        }
+        $details = @(('Duration=' + (Format-Duration $sw.Elapsed)),('ImageIndex=' + $index))
+        if ($blocks.Count -gt 0) { $details += ('Hard blocks: ' + (@($blocks | Sort-Object -Unique) -join ', ')) }
+        if ($xmlFiles.Count -gt 0) { $details += ('CompatData copied to ' + $evidence) }
+        Add-Result 'COMPAT_SCAN' 'SetupCompatibilityScan' $decision.Status ($decision.Code + ' - ' + $decision.Text) $details -Recommendation $(if ($decision.Status -eq 'OK') { '' } else { 'Read the CompatData XML (and Panther setuperr.log) to see exactly what Setup objects to, fix it, and re-run the scan.' }) -Source ('setup.exe /compat scanonly from ' + $TargetMediaPath)
+    } finally {
+        if ($mountedIso) { try { Dismount-DiskImage -ImagePath $TargetMediaPath -ErrorAction Stop | Out-Null } catch { Write-Swallowed $_ } }
+    }
+}
+# Chapter: Workloads and applications (docs/checks.md).
+# Each check is one function; Register-AssessmentCheck (50-checks.ps1) lists them in run order.
+
+function Invoke-DomainCheck {
     $cs = $script:Data.CS
     $role = [int]$cs.DomainRole
     $roleNames = @{ 0='Workgroup computer (standalone)'; 1='Member workstation'; 2='Workgroup server (standalone)'; 3='Member server'; 4='Backup domain controller'; 5='Primary domain controller' }
@@ -4873,112 +5045,391 @@ Register-Check -Id 'domain' -Name 'Domain role and access' -Script {
     if ($admins.Count -eq 0) { Add-Result 'ACCESS' 'LocalAdministratorsMember' 'MANUAL' 'No members returned' -Recommendation 'Enumerate local Administrators manually.' -Kind 'Finding' -Source 'Local group S-1-5-32-544' }
 }
 
-# ---------------------------------------------------------------------------
-Register-Check -Id 'grouppolicy' -Name 'Group Policy and AD groups' -Script {
-    # #80: which GPOs apply, which are filtered out and why, WMI filters on the
-    # Windows version (they can stop or start matching after the upgrade),
-    # the computer's AD groups, and when policy last applied.
-    $domainMember = [bool]$script:Data.CS.PartOfDomain
-    $gp = $null; $gpError = ''
-    try { $gp = ConvertFrom-GpResultXml (Get-GpResultXml) } catch { $gpError = $_.Exception.Message; Write-Swallowed $_ }
-    # gpresult run as SYSTEM can answer "does not have RSoP data" on 2012 R2
-    # to 2019 (#160). The Group Policy service's own record of the applied
-    # GPOs is the fallback; MANUAL stays only when both fail.
-    $gpSource = 'gpresult'
-    if (-not $gp -and $domainMember) {
-        $fbEntries = 0; $fbNamed = 0; $fbError = ''; $fbMissing = $false
-        try {
-            $entries = Get-GpoListRegistryEntry
-            $fbEntries = @($entries | Where-Object { $_ }).Count
-            $fallback = ConvertFrom-GpoListEntry @($entries)
-            $fbNamed = @($fallback.Gpos).Count
-            if ($fbNamed -gt 0) { $gp = $fallback; $gpSource = 'registry' }
-        } catch {
-            $fbError = $_.Exception.Message
-            $fbMissing = ($_.Exception -is [System.Management.Automation.ItemNotFoundException])
-            Write-Swallowed $_
-        }
-        # Say what the fallback found, so a MANUAL row can be followed up (#215).
-        if (-not $gp) { $gpError = ($gpError + ' | ' + (Get-GpoFallbackNote $fbEntries $fbNamed $fbError $fbMissing)).Trim(' |') }
+function Invoke-ExchangeCheck {
+    $exchangeServices = @($script:Data.Services | Where-Object { $_.Name -match '^MSExchange(IS|Transport|FrontEndTransport|ServiceHost|ADTopology|EdgeSync|MailboxAssistants|RPC)$' })
+    $setupKeys = @()
+    foreach ($v in @('v15','v14','v8.0')) {
+        $k = 'HKLM:\SOFTWARE\Microsoft\ExchangeServer\' + $v + '\Setup'
+        $p = Get-RegistryValueSafe $k 'MsiInstallPath'
+        if ($p.Exists) { $setupKeys += ($v + ': ' + $p.Value) }
     }
-    $groups = @(); $filters = @{}; $adError = ''; $adRead = $true
-    if ($domainMember) {
-        try {
-            # Assign first: the function returns the list as one object.
-            $groups = Get-AdComputerGroup
-            $groups = @($groups | Where-Object { $_ })
-            if ($gp) { $filters = Get-WmiFilterQuery @($gp.Gpos | ForEach-Object { $_.Guid }) }
-        } catch { $adRead = $false; $adError = $_.Exception.Message; Write-Swallowed $_ }
+    if ($exchangeServices.Count -gt 0) {
+        Add-Result 'EXCHANGE' 'ExchangeServerRole' 'BLOCKER' ('Exchange services: ' + (@($exchangeServices | ForEach-Object { $_.Name }) -join ', ')) $setupKeys -Recommendation 'Microsoft does not support an in-place OS upgrade on a server with Exchange installed. Build a new Exchange server on the target OS and migrate.' -Source 'Win32_Service, ExchangeServer\Setup'
+    } elseif ($setupKeys.Count -gt 0) {
+        Add-Result 'EXCHANGE' 'ExchangeComponents' 'ACTION' 'Exchange setup registration found without Exchange server services' $setupKeys -Recommendation 'Probably Exchange Management Tools only. Confirm with the messaging team; if a server role is installed, IPU is not supported.' -Source 'ExchangeServer\Setup'
     }
-    # Where the computer object is in AD (#99): the OU decides which GPOs link.
-    $dn = ''
-    if ($domainMember -and $adRead) {
-        try { $dn = Get-AdComputerDn } catch { Write-Swallowed $_ }
-    }
-    if ($dn) {
-        $script:Data.AdLocation = ConvertTo-AdLocation $dn
-        Add-Result 'GROUP_POLICY' 'ComputerOU' 'INFO' $script:Data.AdLocation ('DistinguishedName=' + $dn) -Source 'AD computer object (distinguishedName)'
-        if ($script:Data.Snapshot) { $script:Data.Snapshot.Ou = $dn }
-    } elseif (-not $domainMember) {
-        $script:Data.AdLocation = 'Not applicable (workgroup)'
-    } elseif ($adRead) {
-        $script:Data.AdLocation = 'Not readable'
-    } else {
-        $script:Data.AdLocation = 'Not readable (domain not reachable)'
-    }
-    $last = $null
-    if ($domainMember) { $last = Get-GroupPolicyLastApplied }
-    foreach ($row in (Get-GroupPolicyDecision $domainMember ($null -ne $gp) $adRead $last (Get-Date) $GroupPolicyMaxAgeDays $gpError $adError)) {
-        Add-Result 'GROUP_POLICY' $row.Item $row.Status $row.Value $row.Details -Recommendation $row.Recommendation -Kind $row.Kind -Source 'gpresult, Active Directory, Group Policy state'
-    }
-    if ($gpSource -eq 'registry') {
-        Add-Result 'GROUP_POLICY' 'GroupPolicySource' 'INFO' 'Applied GPOs read from the Group Policy state in the registry' @('gpresult: ' + $gpError, 'Only applied GPOs are recorded there: GPOs filtered out (and why) are not listed.') -Source 'HKLM\...\Group Policy\State\Machine\GPO-List'
-    }
-    if ($gp) {
-        $target = Get-ReleaseDisplayName $TargetServerVersion
-        foreach ($g in @($gp.Gpos)) {
-            Add-RedactionLiteral $g.Name 'GPO'
-            if ($g.FilterName) { Add-RedactionLiteral $g.FilterName 'NAME' }
-            $state = 'Applied'; if (-not $g.Applied) { $state = $g.Reason }
-            $details = @(('Linked at ' + (@($g.Links) -join '; ')))
-            $filter = $filters[$g.Guid]
-            if ($filter) {
-                Add-RedactionLiteral $filter.Name 'NAME'
-                $details += ('WMI filter: ' + $filter.Name)
-                foreach ($q in @($filter.Queries)) { $details += ('Query: ' + $q.Query) }
-            } elseif ($g.FilterName) { $details += ('WMI filter: ' + $g.FilterName) }
-            $osDependent = $filter -and @($filter.Queries | Where-Object { Test-WmiFilterOsDependent $_.Query }).Count -gt 0
-            if ($osDependent) {
-                Add-Result 'GROUP_POLICY' ('GPO: ' + $g.Name) 'WARNING' ($state + ' - WMI filter depends on the Windows version') $details -Recommendation ('After the upgrade the server reports ' + $target + '. Check that this filter still matches (or still excludes) it as intended, before the change.') -Source 'gpresult, WMI filter in AD'
-            } else {
-                Add-Result 'GROUP_POLICY' ('GPO: ' + $g.Name) 'INFO' $state $details -Source $gpSource
+}
+
+function Invoke-SqlCheck {
+    $instances = @()
+    foreach ($root in @('HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server','HKLM:\SOFTWARE\Wow6432Node\Microsoft\Microsoft SQL Server')) {
+        foreach ($type in @('SQL','RS','OLAP')) {
+            # SilentlyContinue: No Instance Names key means no instance of this type (absence is normal).
+            $names = Get-ItemProperty (Join-Path $root ('Instance Names\' + $type)) -ErrorAction SilentlyContinue
+            if (-not $names) { continue }
+            foreach ($prop in @($names.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' })) {
+                # SilentlyContinue: A missing Setup key leaves the version empty, which is reported as MANUAL below.
+                $setup = Get-ItemProperty (Join-Path $root ([string]$prop.Value + '\Setup')) -ErrorAction SilentlyContinue
+                $version = [string]$setup.Version
+                if (-not $version) { $version = [string]$setup.PatchLevel }
+                $instances += [pscustomobject]@{ Instance=$prop.Name; Type=$type; Id=[string]$prop.Value; Version=$version; Edition=[string]$setup.Edition; Root=$root }
             }
         }
-        if (-not $domainMember) {
-            Add-Result 'GROUP_POLICY' 'ADGroup' 'INFO' 'Not applicable (workgroup)' -Source 'Win32_ComputerSystem'
-        }
-        if ($script:Data.Snapshot) {
-            $script:Data.Snapshot.Gpos = @($gp.Gpos | Where-Object { $_.Applied } | ForEach-Object { $_.Name } | Sort-Object -Unique)
-        }
-    } elseif (-not $domainMember) {
-        # Workgroup server and gpresult failed: still only local policy.
-        Add-Result 'GROUP_POLICY' 'LocalPolicy' 'MANUAL' 'Could not list the local policy (gpresult)' $gpError -Recommendation (Get-LocalPolicyAdvice (Test-LgpoAvailable) $EnableRDPPolicyEvidence) -Kind 'Finding' -Source 'gpresult'
     }
-    # The AD groups come from AD, not gpresult: list them even when no GPO
-    # list could be read (#160).
-    if ($domainMember -and $adRead) {
-        foreach ($n in $groups) { Add-Result 'GROUP_POLICY' 'ADGroup' 'INFO' $n -Source 'AD tokenGroups (nested groups included)' }
-        if ($script:Data.Snapshot) { $script:Data.Snapshot.Groups = @($groups) }
+    $instances = @($instances | Sort-Object Type,Instance,Id -Unique)
+    $script:Data.SqlSummary = ''
+    if ($instances.Count -eq 0) { return }
+    # Named instances are often named after the application or the customer (#195).
+    foreach ($i in $instances) { if ($script:SqlDefaultInstanceNames -notcontains $i.Instance) { Add-RedactionLiteral $i.Instance 'NAME'; Add-RedactionLiteral $i.Id 'NAME' } }
+    $summary = @()
+    foreach ($i in $instances) {
+        $major = 0
+        [void][int]::TryParse((($i.Version -split '\.')[0]), [ref]$major)
+        $typeName = @{ SQL='Database Engine'; RS='Reporting Services'; OLAP='Analysis Services' }[$i.Type]
+        if ($major -le 0) {
+            Add-Result 'SQL' ($typeName + ': ' + $i.Instance) 'MANUAL' 'Version not found' ('InstanceId=' + $i.Id) -Recommendation 'Determine the SQL Server version and check it against the target OS support matrix.' -Source ($i.Root + '\Instance Names')
+            continue
+        }
+        $d = Get-SqlSupportDecision $major $TargetServerVersion ([string]$i.Version)
+        $summary += ($i.Instance + '=' + $d.Release)
+        Add-Result 'SQL' ($typeName + ': ' + $i.Instance) $d.Status $d.Release @(('Version=' + $i.Version),('Edition=' + $i.Edition),('InstanceId=' + $i.Id)) -Recommendation $d.Text -Source 'SQL Server instance registry; Microsoft SQL Server / Windows compatibility matrix'
+    }
+    $script:Data.SqlSummary = ($summary -join ', ')
+}
+
+function Invoke-WorkloadsCheck {
+    if ($null -eq $script:Data.Features) {
+        Add-Result 'ROLES' 'Inventory' 'MANUAL' 'Get-WindowsFeature unavailable' -Recommendation 'List installed roles/features manually.' -Kind 'Finding' -Source 'ServerManager'
+    } else {
+        foreach ($name in @($script:Data.Features.Keys | Where-Object { $script:Data.Features[$_] } | Sort-Object)) {
+            Add-Result 'ROLES' $name 'INFO' 'Installed' -Source 'Get-WindowsFeature'
+        }
+    }
+    $roleChecks = @(
+        @{ Name='DNS';        Label='DNS Server';  Rec='Confirm DNS zones are AD-integrated or replicated, and that clients can use another DNS server during the window.' },
+        @{ Name='DHCP';       Label='DHCP Server'; Rec='Back up DHCP (Export-DhcpServer) and confirm failover/partner coverage for the change window.' },
+        @{ Name='Print-Server'; Label='Print Server'; Rec='See the Print server section: printers, ports, drivers and the PrintBrm backup.' },
+        @{ Name='Hyper-V';    Label='Hyper-V host'; Rec='All guests are affected. Plan guest shutdown/migration and confirm vSwitch teaming is SET, not LBFO.' },
+        @{ Name='FS-DFS-Replication'; Label='DFS Replication'; Rec='Confirm DFSR health and backlog before IPU; plan to monitor replication afterwards.' },
+        @{ Name='WDS';        Label='Windows Deployment Services'; Rec='Validate WDS/PXE dependencies with the deployment team.' },
+        @{ Name='UpdateServices'; Label='WSUS'; Rec='Back up the WSUS database/content and confirm the upgrade method with the patch team.' },
+        @{ Name='ADFS-Federation'; Label='AD FS'; Rec='AD FS farms are normally upgraded by adding new servers to the farm. Engage the identity team.' },
+        @{ Name='NPAS';       Label='Network Policy Server'; Rec='Export the NPS configuration before IPU.' },
+        @{ Name='FS-FileServer'; Label='File Server'; Rec='Document shares and permissions; confirm users are informed of the outage.' }
+    )
+    foreach ($rc in $roleChecks) {
+        if ((Get-FeatureState $rc.Name) -eq $true) { Add-Result 'WORKLOAD' $rc.Label 'WARNING' 'Installed' -Recommendation $rc.Rec -Source 'Get-WindowsFeature' }
+    }
+
+    # Application workloads (pattern table in section 2), matched on names
+    # and service names only - not executable paths - to avoid false positives.
+    foreach ($m in (Find-DetectionMatch $script:DetectionPatterns.Workloads $script:Data.Apps $script:Data.Services)) {
+        Add-Result 'WORKLOAD' $m.Label 'WARNING' ('Applications=' + @($m.Apps).Count + ', Services=' + @($m.Services).Count) (Get-DetectionEvidence $m) -Recommendation ('Engage the application owner and confirm ' + $m.Label + ' supports ' + (Get-ReleaseDisplayName $TargetServerVersion) + '.') -Source 'Uninstall registry and Win32_Service names'
+    }
+
+    # Features removed or no longer developed in the target release.
+    if ($null -ne $script:Data.Features) {
+        $installed = @($script:Data.Features.Keys | Where-Object { $script:Data.Features[$_] })
+        foreach ($f in (Get-FeatureLifecycleFinding $installed $TargetServerVersion)) {
+            Add-Result 'FEATURE_LIFECYCLE' $f.Name $f.Status ('Feature ' + $f.Feature + ' is installed') '' -Recommendation $f.Text -Kind $f.Kind -Source 'Microsoft: features removed or no longer developed'
+        }
+    }
+    $browser = @($script:Data.Services | Where-Object { $_.Name -eq 'Browser' -and $_.State -eq 'Running' })
+    if ($browser.Count -gt 0) {
+        Add-Result 'FEATURE_LIFECYCLE' 'Computer Browser service' 'WARNING' 'Running' '' -Recommendation 'The Computer Browser protocol is no longer developed by Microsoft. Find out what depends on network browsing (often old SMB1 clients).' -Kind 'Observation' -Source 'Win32_Service'
+    }
+    foreach ($a in $script:Data.Apps) {
+        Add-Result 'APPLICATIONS' $a.Name 'INFO' ('Version=' + $a.Version) @(('Publisher=' + $a.Publisher),('InstallDate=' + $a.InstallDate)) -Source 'Uninstall registry (no Win32_Product)'
     }
 }
 
-# ---------------------------------------------------------------------------
-Register-Check -Id 'rdp' -Name 'RDP access, policy and evidence' -Script {
-    Invoke-RdpPolicyAssessment
+function Invoke-FileSharesCheck {
+    # #95: what is shared, from where and to whom, so owners can plan and
+    # test, and the post-upgrade run can report a share that is gone.
+    $role = Get-FeatureState 'FS-FileServer'
+    if (-not (Test-CommandAvailable 'Get-SmbShare')) {
+        if ($role -eq $true) { Add-Result 'FILE_SHARES' 'FileShares' 'MANUAL' 'Get-SmbShare is not available' -Recommendation 'List the shares manually (net share) and record their share permissions before the change.' -Kind 'Finding' -Source 'SmbShare module' }
+        return
+    }
+    $printing = (Get-FeatureState 'Print-Server') -eq $true
+    $shares = @(Get-SmbShare -ErrorAction Stop | Where-Object { -not $_.Special -and ($printing -or $_.Name -ne 'print$') } | Sort-Object Name)
+    if ($shares.Count -eq 0) {
+        $note = 'No shares besides the default administrative shares'
+        if ($role -eq $true) { Add-Result 'FILE_SHARES' 'FileShares' 'INFO' $note 'The File Server role is installed but shares nothing.' -Source 'Get-SmbShare' }
+        else { Add-Result 'FILE_SHARES' 'FileShares' 'INFO' $note -Source 'Get-SmbShare' }
+        return
+    }
+    Add-Result 'FILE_SHARES' 'FileShares' 'WARNING' ('Count=' + $shares.Count) (@($shares | ForEach-Object { $_.Name }) -join ', ') -Recommendation 'Shared folders must be reachable again right after the upgrade. Test access from a client with the share owners, and keep this list (with permissions) for the comparison afterwards.' -Source 'Get-SmbShare'
+    foreach ($sh in $shares) {
+        Add-RedactionLiteral ([string]$sh.Name) 'NAME'
+        if ($sh.Description) { Add-RedactionLiteral ([string]$sh.Description) 'NAME' }
+        $access = @()
+        if (Test-CommandAvailable 'Get-SmbShareAccess') {
+            try {
+                $access = @(Get-SmbShareAccess -Name $sh.Name -ErrorAction Stop | ForEach-Object { [string]$_.AccountName + ': ' + [string]$_.AccessRight + $(if ([string]$_.AccessControlType -eq 'Deny') { ' (Deny)' } else { '' }) })
+            } catch { Write-Swallowed $_ }
+        }
+        $details = @(('Path=' + $sh.Path))
+        if ($sh.Description) { $details += ('Description=' + $sh.Description) }
+        $details += ('Share permissions: ' + $(if ($access.Count) { $access -join '; ' } else { 'not readable' }))
+        Add-Result 'FILE_SHARES' ('Share: ' + $sh.Name) 'INFO' ([string]$sh.Path) $details -Source 'Get-SmbShare, Get-SmbShareAccess'
+    }
+    if ($script:Data.Snapshot) { $script:Data.Snapshot.Shares = @($shares | ForEach-Object { [string]$_.Name }) }
 }
 
-# ---------------------------------------------------------------------------
-Register-Check -Id 'platform' -Name 'Platform and hardware' -Script {
+function Invoke-PrintersCheck {
+    # #148: what a print server holds, so it can be checked after the
+    # upgrade and the driver work planned. Read-only.
+    $role = (Get-FeatureState 'Print-Server') -eq $true
+    $script:Data.PrintServer = $false
+    try { $inv = Get-PrinterInventory }
+    catch {
+        $spooler = @($script:Data.Services | Where-Object { $_.Name -eq 'Spooler' }) | Select-Object -First 1
+        $startMode = ''; if ($spooler) { $startMode = [string]$spooler.StartMode }
+        if ((Get-PrinterReadFailureDecision $role $startMode ($null -ne $spooler)) -eq 'Manual') {
+            Add-Result 'PRINTING' 'Printers' 'MANUAL' 'Could not read the printers' $_.Exception.Message -Recommendation 'Check that the Print Spooler service runs, and list printers, ports and drivers in Print Management before the change.' -Kind 'Finding' -Source 'PrintManagement, Win32_Printer'
+        } else {
+            Add-Result 'PRINTING' 'PrintServer' 'OK' 'Not a print server' 'Print Server role not installed and the Print Spooler service is disabled or missing' -Source 'Win32_Service'
+        }
+        return
+    }
+    $printers = @($inv.Printers | Where-Object { $_ -and [string]$_.DriverName -notmatch $script:VirtualPrinterDrivers } | Sort-Object Name)
+    $shared = @($printers | Where-Object { $_.Shared })
+    if (-not $role -and $shared.Count -eq 0) {
+        Add-Result 'PRINTING' 'PrintServer' 'OK' 'Not a print server' ('Print Server role not installed, shared printers=0, local printers=' + $printers.Count) -Source $inv.Source
+        return
+    }
+    $script:Data.PrintServer = $true
+    $target = Get-ReleaseDisplayName $TargetServerVersion
+    Add-Result 'PRINTING' 'Printers' 'WARNING' ('Count=' + $printers.Count + ', shared=' + $shared.Count) ('Print Server role=' + $role) -Recommendation 'Keep the PrintBrm backup and this list. After the upgrade, print a test page on each shared printer and test from a client; the post-upgrade run reports printers and ports that are gone.' -Source $inv.Source
+    foreach ($p in $printers) { Add-RedactionLiteral $p.Name 'NAME'; if ($p.ShareName) { Add-RedactionLiteral $p.ShareName 'NAME' } }
+    foreach ($p in $printers) {
+        $details = @(('Share=' + $(if ($p.Shared -and $p.ShareName) { $p.ShareName } else { '(not shared)' })), ('Published in AD=' + $p.Published))
+        Add-Result 'PRINTING' ('Printer: ' + $p.Name) 'INFO' ('Driver=' + $p.DriverName + '; Port=' + $p.PortName) $details -Source $inv.Source
+    }
+
+    # Ports in use by a printer, and every LPR port.
+    $usedNames = @($printers | ForEach-Object { @(([string]$_.PortName) -split ',') } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $ports = @($inv.Ports | Where-Object { $_ -and ($usedNames -contains [string]$_.Name -or (Get-PrinterPortKind $_.Description $_.Monitor $_.Protocol) -eq 'LPR port monitor') } | Sort-Object Name)
+    foreach ($pt in $ports) { Add-RedactionLiteral $pt.Name 'NAME'; if ($pt.Address -and $pt.Address -notmatch '^[0-9.:]+$') { Add-RedactionLiteral $pt.Address 'HOST' } }
+    foreach ($pt in $ports) {
+        $kind = Get-PrinterPortKind $pt.Description $pt.Monitor $pt.Protocol
+        $details = @()
+        if ($pt.Address) { $details += ('Address=' + $pt.Address + $(if ($pt.PortNumber) { ':' + $pt.PortNumber } else { '' })) }
+        if ($pt.Queue) { $details += ('Queue=' + $pt.Queue) }
+        if ($pt.Monitor) { $details += ('Monitor=' + $pt.Monitor) }
+        if ($kind -eq 'LPR port monitor') {
+            Add-Result 'PRINTING' ('Port: ' + $pt.Name) 'WARNING' $kind $details -Recommendation 'Microsoft deprecated LPR/LPD and plans to remove it. Move the printer to a Standard TCP/IP port (RAW, or LPR protocol on the standard port) and test before the upgrade.' -Kind 'Observation' -Source 'Get-PrinterPort' -Link 'https://learn.microsoft.com/en-us/windows/whats-new/deprecated-features' -LinkTitle 'Deprecated Windows features'
+        } else {
+            Add-Result 'PRINTING' ('Port: ' + $pt.Name) 'INFO' $kind $details -Source 'Get-PrinterPort'
+        }
+    }
+    if ((Get-FeatureState 'Print-LPD-Service') -eq $true) {
+        Add-Result 'PRINTING' 'LPD Service' 'WARNING' 'Installed' 'UNIX and other clients can print to this server over LPD.' -Recommendation 'Microsoft deprecated LPR/LPD and plans to remove it. Find the clients that use it and move them to IPP or a Standard TCP/IP port.' -Kind 'Observation' -Source 'Get-WindowsFeature' -Link 'https://learn.microsoft.com/en-us/windows/whats-new/deprecated-features' -LinkTitle 'Deprecated Windows features'
+    }
+
+    # Drivers.
+    foreach ($r in @(Get-PrinterDriverDecision $inv.Drivers $target $TargetServerVersion)) {
+        if ($r.Item -eq 'PrinterDrivers' -and $r.Status -eq 'WARNING') { Add-Result 'PRINTING' $r.Item $r.Status $r.Value $r.Details -Recommendation $r.Recommendation -Source $inv.Source -Link $script:PrinterDriverDocUrl -LinkTitle 'End of servicing plan for third-party printer drivers' }
+        else { Add-Result 'PRINTING' $r.Item $r.Status $r.Value $r.Details -Recommendation $r.Recommendation -Source $inv.Source }
+    }
+
+    # Port monitors and print processors.
+    try {
+        foreach ($r in @(Get-PrintComponentDecision (Get-PrintMonitorInventory) $target)) {
+            Add-Result 'PRINTING' $r.Item $r.Status $r.Value $r.Details -Recommendation $r.Recommendation -Source 'HKLM\SYSTEM\CurrentControlSet\Control\Print'
+        }
+    } catch {
+        Add-Result 'PRINTING' 'PrintComponents' 'MANUAL' 'Could not read the port monitors and print processors' $_.Exception.Message -Recommendation 'Check Print Management > Print Servers > Ports and the registry key HKLM\SYSTEM\CurrentControlSet\Control\Print\Monitors for monitors that are not from Microsoft.' -Kind 'Finding' -Source 'HKLM\SYSTEM\CurrentControlSet\Control\Print'
+    }
+
+    if ($script:Data.Snapshot) {
+        $script:Data.Snapshot.Printers = @($printers | ForEach-Object { [string]$_.Name })
+        $script:Data.Snapshot.PrinterPorts = @($ports | ForEach-Object { [string]$_.Name })
+        $script:Data.Snapshot.PrinterDrivers = @($printers | ForEach-Object { [pscustomobject]@{ Printer = [string]$_.Name; Driver = [string]$_.DriverName } })
+    }
+}
+
+function Invoke-IisCheck {
+    $iisState = Get-FeatureState 'Web-Server'
+    if ($null -eq $iisState) { Add-Result 'IIS' 'Web-Server' 'MANUAL' 'Feature state unknown: the role inventory failed' -Recommendation 'Check by hand whether IIS is installed (Get-WindowsFeature Web-Server, or the W3SVC service).' -Source 'Get-WindowsFeature'; return }
+    if ($iisState -ne $true) { Add-Result 'IIS' 'Web-Server' 'OK' 'Not installed' -Source 'Get-WindowsFeature'; return }
+    Add-Result 'IIS' 'Web-Server' 'WARNING' 'Installed' -Recommendation 'Immediately before the IPU, run the appcmd.exe add backup command shown (the copy in this report is from assessment time), and keep site, binding and certificate documentation.' -Source 'Get-WindowsFeature' -Command (Get-RecommendationCommand 'IisBackup').Command -CommandKind 'Change' -Link $script:DocLinks.AppCmd.Url -LinkTitle $script:DocLinks.AppCmd.Title
+    if ($EnableIISConfigEvidence) {
+        try {
+            $dest = Join-Path (Initialize-EvidenceFolder 'IIS') ($script:SafeComputerName + '-IPU-IIS-' + (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture))
+            $copy = Save-IISConfigEvidence -Destination $dest -Zip $CreatePolicyEvidenceZip
+            Add-Result 'IIS' 'ConfigurationCopy' 'OK' $copy.Location @(('Files=' + ($copy.Files -join ', ')), ('applicationHost.config SHA256=' + $copy.ApplicationHostSha256)) -Recommendation 'Restore: copy the files back to %windir%\System32\inetsrv\config, or put them in a folder under inetsrv\backup and run "appcmd restore backup <folder>". See the user guide.' -Source 'inetsrv\config (copied, not changed)'
+            if ($copy.SharedConfigPath) {
+                Add-Result 'IIS' 'SharedConfiguration' 'WARNING' ('Enabled: ' + $copy.SharedConfigPath) 'The local files only point to the shared location.' -Recommendation 'Back up the shared configuration at that path as well, and confirm every server that uses it before the change.' -Kind 'Observation' -Source 'redirection.config'
+            }
+        } catch {
+            Add-Result 'IIS' 'ConfigurationCopy' 'MANUAL' 'Could not copy the IIS configuration' $_.Exception.Message -Recommendation 'Back up the IIS configuration manually before the change: appcmd add backup PreIPU, or copy %windir%\System32\inetsrv\config.' -Kind 'Finding' -Source 'inetsrv\config'
+        }
+    } else {
+        Add-Result 'IIS' 'ConfigurationCopy' 'INFO' 'Not taken (EnableIISConfigEvidence is off)' -Source 'SETTINGS'
+    }
+    $iisManual = 'List the sites and bindings by hand (appcmd list site, or IIS Manager) before the change.'
+    if (-not (Get-Module -ListAvailable WebAdministration)) {
+        Add-Result 'IIS' 'Sites' 'MANUAL' 'Sites and bindings not listed (WebAdministration module missing)' -Recommendation $iisManual -Kind 'Finding' -Source 'WebAdministration'
+        return
+    }
+    $sites = @()
+    try { Import-Module WebAdministration -ErrorAction Stop; $sites = @(Get-Website -ErrorAction Stop) }
+    catch {
+        Write-Swallowed $_
+        Add-Result 'IIS' 'Sites' 'MANUAL' 'Sites and bindings could not be read' $_.Exception.Message -Recommendation $iisManual -Kind 'Finding' -Source 'WebAdministration'
+        return
+    }
+    foreach ($site in $sites) {
+        $bindings = @($site.Bindings.Collection | ForEach-Object { $_.protocol + ':' + $_.bindingInformation }) -join ' | '
+        Add-Result 'IIS' ('Site: ' + $site.Name) 'INFO' ('State=' + $site.State) @(('Path=' + $site.PhysicalPath),('Bindings=' + $bindings)) -Source 'WebAdministration'
+    }
+}
+
+function Invoke-RdsCheck {
+    $rdsh = Get-FeatureState 'RDS-RD-Server'
+    $rdlic = Get-FeatureState 'RDS-Licensing'
+    if ($null -eq $rdsh -or $null -eq $rdlic) { Add-Result 'RDS' 'RDSRoles' 'MANUAL' 'Feature state unknown: the role inventory failed' -Recommendation 'Check by hand whether the Remote Desktop Session Host and Licensing roles are installed (Get-WindowsFeature RDS-*).' -Source 'Get-WindowsFeature'; return }
+    if ($rdsh -eq $true) { Add-Result 'RDS' 'RDSessionHost' 'ACTION' 'Installed' -Recommendation ('Plan a longer IPU window, record the licensing configuration, and confirm RDS CALs are valid for ' + (Get-ReleaseDisplayName $TargetServerVersion) + ' (CALs must be the same or newer release as the server).') -Source 'Get-WindowsFeature' }
+    else { Add-Result 'RDS' 'RDSessionHost' 'OK' 'Not installed' -Source 'Get-WindowsFeature' }
+    if ($rdlic -eq $true) { Add-Result 'RDS' 'RDLicensingServer' 'ACTION' 'Installed' -Recommendation 'This is an RD Licensing server. Upgrading it affects every RDS host that uses it; confirm installed CALs and the order of upgrades with the RDS owner.' -Source 'Get-WindowsFeature' }
+    if ($rdsh -eq $true -or $rdlic -eq $true) {
+        $ts = @(Get-CimSafe 'Win32_TerminalServiceSetting' '' 'root\cimv2\TerminalServices') | Select-Object -First 1
+        if ($ts) {
+            $mode = @{ 2='PerDevice'; 4='PerUser'; 5='NotConfigured' }[[int]$ts.LicensingType]
+            $servers = @()
+            try { $servers = @((Invoke-CimMethod -InputObject $ts -MethodName GetSpecifiedLicenseServerList -ErrorAction Stop).SpecifiedLSList) } catch { Write-Swallowed $_ }
+            Add-Result 'RDS' 'LicensingConfiguration' 'INFO' ('Mode=' + $mode) ('LicenseServers=' + ($servers -join ',')) -Source 'Win32_TerminalServiceSetting'
+        }
+    }
+}
+
+function Invoke-EolCandidatesCheck {
+    # Which products with an end-of-life date are on the server (#286, ADR
+    # 0003). Only reads: uninstall entries, service command lines, file version
+    # resources, one registry value. A product is never run to ask its version.
+    $found = @(Find-EolAppCandidate $script:EolDetection $script:Data.Apps)
+    $targets = @(Get-EolServiceTarget $script:EolDetection $script:Data.Services)
+    foreach ($d in @($script:EolDetection)) {
+        if (-not $d.Probe) { continue }
+        foreach ($pattern in @($d.Probe)) {
+            $r = Resolve-EolProbePath $pattern
+            foreach ($p in @($r.Paths)) { $targets += [pscustomobject]@{ Product = [string]$d.Product; Name = [string]$d.Name; Path = $p; Source = 'File probe'; Evidence = (Split-Path -Leaf $p) } }
+            if ($r.Error) { $found += [pscustomobject]@{ Product = [string]$d.Product; Name = [string]$d.Name; Version = ''; Source = 'File probe'; Evidence = $pattern; Error = $r.Error } }
+        }
+    }
+    foreach ($t in $targets) {
+        $v = Get-FileVersionText $t.Path
+        $found += [pscustomobject]@{ Product = $t.Product; Name = $t.Name; Version = $v.Version; Source = $t.Source; Evidence = $t.Evidence; Error = $v.Error }
+    }
+    $netfxError = ''
+    try {
+        $nd = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full' -ErrorAction Stop
+        $fx = ConvertFrom-DotNetFrameworkRelease $nd.Release
+        if ($fx) { $found += [pscustomobject]@{ Product = 'dotnetfx'; Name = '.NET Framework'; Version = $fx; Source = 'Registry'; Evidence = 'NDP\v4\Full Release' } }
+    } catch { if (-not (Test-NotFoundError $_)) { $netfxError = $_.Exception.Message } }
+
+    $script:Data.EolCandidates = @(Merge-EolCandidate $found)
+    foreach ($c in $script:Data.EolCandidates) {
+        $name = @($script:EolDetection | Where-Object { $_.Product -eq $c.Product } | ForEach-Object { $_.Name })[0]
+        if (-not $name) { $name = $(if ($c.Product -eq 'dotnetfx') { '.NET Framework' } else { $c.Product }) }
+        Add-Result 'APPLICATIONS' ('EOL candidate: ' + $name) 'INFO' $c.Version ($c.Source + ': ' + $c.Evidence) -Kind 'Observation' -Source 'Uninstall registry, service files, file versions'
+    }
+    # A product seen but without a version is a MANUAL finding, not silence.
+    $have = @{}; foreach ($c in $script:Data.EolCandidates) { $have[$c.Product] = $true }
+    $reported = @{}
+    foreach ($f in @($found | Where-Object { -not $_.Version })) {
+        if ($have.ContainsKey($f.Product) -or $reported.ContainsKey($f.Product)) { continue }
+        $reported[$f.Product] = $true
+        $why = 'The version could not be read.'
+        if ($f.PSObject.Properties['Error'] -and $f.Error) { $why = [string]$f.Error }
+        Add-Result 'APPLICATIONS' ('EOL detection: ' + $f.Name) 'MANUAL' ($f.Name + ' found, version not known') ($f.Source + ': ' + $f.Evidence + '. ' + $why) -Recommendation ('Read the version of ' + $f.Name + ' by hand (its file properties or its own documentation) and check its end-of-life date. The assessment never runs a product to ask.') -Kind 'Finding' -Source $f.Source
+    }
+    if ($netfxError) {
+        Add-Result 'APPLICATIONS' 'EOL detection: .NET Framework' 'MANUAL' '.NET Framework version could not be read' $netfxError -Recommendation 'Check the .NET Framework version by hand (Release value under HKLM\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full).' -Kind 'Finding' -Source 'Registry'
+    }
+}
+
+function Invoke-EolSnapshotCheck {
+    $scriptFolder = ''
+    if ($script:ScriptFolder) { $scriptFolder = $script:ScriptFolder }
+    $searched = @(Get-EolSnapshotSearchPath $EolSnapshotPath $scriptFolder $ReportDirectory)
+    $found = ''; $asOf = ''; $readError = ''; $snap = $null
+    foreach ($candidate in $searched) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { $found = $candidate; break }
+    }
+    if ($found) {
+        try {
+            $snap = Get-Content -LiteralPath $found -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            $asOf = $snap.asOf
+            if ($asOf -is [datetime]) { $asOf = $asOf.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) }
+            $asOf = [string]$asOf
+        } catch { $readError = $_.Exception.Message }
+    }
+    $today = Get-Date
+    $d = Get-EolSnapshotDecision $searched $found $asOf $readError ([bool]$EolSnapshotPath) $today
+    Add-Result 'APPLICATIONS' 'EOL snapshot' $d.Status $d.Value $d.Details -Recommendation $d.Recommendation -Kind $d.Kind -Source 'eol-snapshot.json'
+    # With a readable snapshot, every product the eolcandidates check found gets a verdict (#275).
+    if (-not $found -or $readError -or -not $snap) { return }
+    foreach ($c in @($script:Data.EolCandidates)) {
+        $v = Get-EolCandidateVerdict $c $snap $today
+        $recommendation = Get-EolRecommendation $v
+        $kind = Get-EolResultKind $v
+        Add-Result 'APPLICATIONS' ('EOL: ' + $v.Name + ' ' + $c.Version) $v.Status $v.Text ($c.Source + ': ' + $c.Evidence) -Recommendation $recommendation -Kind $kind -Source 'eol-snapshot.json'
+    }
+}
+
+function Invoke-PrintBackupCheck {
+    # #148: PrintBrm -B exports printers, ports, drivers and queues into one
+    # file. It only reads the spooler configuration. The file is not redacted
+    # and is never part of the report.
+    if ($AssessmentMode -eq 'Post') { $script:CurrentCheckMessage = 'Not applicable: not needed after the upgrade'; $script:CurrentCheckOutcome = 'Skipped'; return }
+    if (-not $script:Data.PrintServer) { $script:CurrentCheckMessage = 'Not applicable: not a print server'; $script:CurrentCheckOutcome = 'Skipped'; return }
+    $cmd = Get-PrintBackupCommand
+    if (-not $EnablePrintBackup) {
+        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' 'Not taken (EnablePrintBackup is off)' -Recommendation 'Export the print configuration before the change, to a drive with enough free space, and keep the file off the server.' -Kind 'Finding' -Source 'SETTINGS' -Command $cmd -CommandKind 'Check'
+        return
+    }
+    $brm = Join-Path $env:windir 'System32\spool\tools\PrintBrm.exe'
+    if (-not (Test-Path -LiteralPath $brm -PathType Leaf)) {
+        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' 'PrintBrm.exe not found' $brm -Recommendation 'Export the printers with Print Management (Export printers to a file) before the change, and keep the file off the server.' -Kind 'Finding' -Source 'PrintBrm.exe'
+        return
+    }
+    $root = [IO.Path]::GetPathRoot($EvidenceRoot).TrimEnd('\')
+    $disk = @(Get-CimRequired 'Win32_LogicalDisk' ("DeviceID='" + $root + "'")) | Select-Object -First 1
+    if (-not $disk -or $null -eq $disk.FreeSpace) { throw ('Could not read the free space of ' + $root) }
+    $space = Get-PrintBackupSpaceDecision (Get-PrintDriverStoreSize) ([long]$disk.FreeSpace)
+    if (-not $space.Proceed) {
+        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' ('Skipped: not enough free space on ' + $root) $space.Text -Recommendation 'Run the export to a drive or share with enough free space before the change, and keep the file off the server.' -Kind 'Finding' -Source 'spool\drivers, Win32_LogicalDisk' -Command $cmd -CommandKind 'Check'
+        return
+    }
+    $timeout = [math]::Min($PrintBackupTimeoutMinutes * 60, $script:SlowSecondsLeft)
+    $dest = Join-Path (Initialize-EvidenceFolder 'Printers') ($script:SafeComputerName + '-IPU-Print-' + (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture))
+    $null = Initialize-OutputFolder $dest
+    $file = Join-Path $dest ($script:SafeComputerName + '-printers.printerExport')
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $r = Invoke-NativeCapture $brm @('-B', '-F', $file) $timeout
+    $sw.Stop()
+    $duration = 'Duration=' + (Format-Duration $sw.Elapsed)
+    if ($r.TimedOut) {
+        # A cut-off export is not a backup; remove this run's partial file.
+        if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
+        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' ('Stopped after ' + [math]::Round($timeout / 60) + ' minutes') @($duration, $space.Text, (Get-StopFailureText $r.StillRunning)) -Recommendation 'Run the export by hand outside the SA job, before the change, and keep the file off the server.' -Kind 'Finding' -Source 'PrintBrm.exe -B' -Command $cmd -CommandKind 'Check'
+        $script:CurrentCheckOutcome = 'TimedOut'; return
+    }
+    if ($r.Error) { throw $r.Error }
+    if ($r.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $file -PathType Leaf)) {
+        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' ('PrintBrm failed (exit code ' + $r.ExitCode + ')') @($duration, (@($r.Lines | Select-Object -Last 3) -join ' | ')) -Recommendation 'Read the PrintBrm output and the PrintBrm event log (Applications and Services Logs > Microsoft > Windows > PrintBRM), then export by hand before the change.' -Kind 'Finding' -Source 'PrintBrm.exe -B' -Command $cmd -CommandKind 'Check'
+        return
+    }
+    $size = [math]::Round(([double](Get-Item -LiteralPath $file).Length / 1MB), 1)
+    Add-Result 'PRINTING' 'PrintBackup' 'OK' $file @(('SizeMB=' + $size), $duration, $space.Text) -Recommendation 'Copy the file off the server before the change: a backup on C: does not survive a failed upgrade that needs a rebuild. It holds the full print configuration and is not redacted. Restore: PrintBrm -R -F <file> (see the user guide).' -Source 'PrintBrm.exe -B (reads the spooler configuration)'
+}
+# Chapter: Hardware and virtualization (docs/checks.md).
+# Each check is one function; Register-AssessmentCheck (50-checks.ps1) lists them in run order.
+
+function Invoke-PlatformCheck {
     $cs = $script:Data.CS; $bios = $script:Data.BIOS
     $platform = $script:Data.Platform
     if ($platform.Type -eq 'Virtual') {
@@ -5023,8 +5474,7 @@ Register-Check -Id 'platform' -Name 'Platform and hardware' -Script {
     }
 }
 
-# ---------------------------------------------------------------------------
-Register-Check -Id 'performance' -Name 'CPU and memory' -Script {
+function Invoke-PerformanceCheck {
     $cs = $script:Data.CS
     $logical = [int]$cs.NumberOfLogicalProcessors
     if ($logical -le 1) { Add-Result 'PERFORMANCE' 'LogicalProcessors' 'ACTION' $logical -Recommendation 'Add CPU before IPU; setup on a single logical CPU is very slow.' -Source 'Win32_ComputerSystem' }
@@ -5035,8 +5485,79 @@ Register-Check -Id 'performance' -Name 'CPU and memory' -Script {
     else { Add-Result 'PERFORMANCE' 'MemoryGB' 'OK' (Format-Number $ramGB) -Source 'Win32_ComputerSystem' }
 }
 
-# ---------------------------------------------------------------------------
-Register-Check -Id 'cluster' -Name 'Failover clustering' -Script {
+function Invoke-VmwareCheck {
+    if ($script:Data.Platform.Hypervisor -ne 'VMware') {
+        Add-Result 'VMWARE' 'Applicability' 'INFO' ('Not a VMware VM (' + $script:Data.Platform.Type + ')') -Source 'Platform classification'
+        return
+    }
+    $tools = @($script:Data.Apps | Where-Object { $_.Name -eq 'VMware Tools' }) | Select-Object -First 1
+    $version = ''
+    if ($tools) { $version = [string]$tools.Version }
+    else {
+        $exe = Join-Path $env:ProgramFiles 'VMware\VMware Tools\vmtoolsd.exe'
+        if (Test-Path -LiteralPath $exe) { $version = [string](Get-Item -LiteralPath $exe).VersionInfo.ProductVersion }
+    }
+    $decision = Get-VMwareToolsDecision $version $TargetServerVersion
+    $toolsSvc = @($script:Data.Services | Where-Object { $_.Name -eq 'VMTools' }) | Select-Object -First 1
+    $svcText = 'VMTools service not found'
+    if ($toolsSvc) { $svcText = 'VMTools service ' + $toolsSvc.State + ', ' + $toolsSvc.StartMode }
+    Add-Result 'VMWARE' 'VMwareTools' $decision.Status ('Version=' + $version) $svcText -Recommendation $decision.Text -Source 'Uninstall registry / vmtoolsd.exe'
+
+    $firmware = 'BIOS'
+    if (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\State') { $firmware = 'EFI' }
+    Add-Result 'VMWARE' 'VMFirmware' 'INFO' $firmware ('BIOS version=' + $script:Data.BIOS.SMBIOSBIOSVersion) -Recommendation 'BIOS-firmware VMs upgrade in place; Secure Boot and vTPM need EFI firmware.' -Source 'SecureBoot registry, Win32_BIOS'
+
+    foreach ($drv in @($script:Data.KernelDrivers | Where-Object { $_.Name -match '^(pvscsi|vmxnet3|vmxnet3ndis6|vsepflt|vnetflt|vnetWFP|vmci|vsock|vm3dmp|vmmemctl|vmhgfs|vmrawdsk|vmusbmouse|vmmouse|glxgi)' } | Sort-Object Name)) {
+        $fileVersion = ''
+        $path = ([string]$drv.PathName -replace '^\\\?\?\\','' -replace '^\\SystemRoot', $env:windir -replace '^(?i)system32', (Join-Path $env:windir 'System32'))
+        try { if ($path -and (Test-Path -LiteralPath $path)) { $fileVersion = (Get-Item -LiteralPath $path).VersionInfo.FileVersion } } catch { Write-Swallowed $_ }
+        Add-Result 'VMWARE' ('Driver: ' + $drv.Name) 'INFO' $drv.DisplayName ('FileVersion=' + $fileVersion) -Source 'Win32_SystemDriver'
+    }
+
+    $hostText = 'Confirm the ESXi host version supports ' + (Get-ReleaseDisplayName $TargetServerVersion) + ' guests (VMware Compatibility Guide).'
+    if ($TargetServerVersion -eq '2025') { $hostText = 'Windows Server 2025 is certified on vSphere 7.0 U3 and 8.0.x. Confirm the host (and any vMotion/DRS target) runs one of these.' }
+    Add-Result 'CHECKLIST' 'VMware host version' 'MANUAL' 'Not visible from inside the guest' '' -Recommendation $hostText -Kind 'Checklist'
+    Add-Result 'CHECKLIST' 'VMware guest OS setting' 'MANUAL' 'After the upgrade' '' -Recommendation ('After IPU, power off the VM and change its Guest OS version to Microsoft Windows Server ' + $TargetServerVersion + ' (64-bit), as Broadcom''s IPU KB 374927 instructs.') -Kind 'Checklist'
+    Add-Result 'VMWARE' 'BroadcomGuidance' 'INFO' 'Broadcom KB 374927' 'Broadcom recommends a new VM with a clean install over an in-place upgrade of the guest OS.' -Recommendation 'Company decision; listed so the choice to do an IPU is made knowingly.' -Kind 'Observation' -Source 'knowledge.broadcom.com/external/article/374927'
+}
+
+function Invoke-DriversCheck {
+    $unsigned = @()
+    $pnp = @(); $pnpError = ''
+    try { $pnp = @(Get-CimRequired 'Win32_PnPSignedDriver' | Where-Object { $_.DeviceName -and $_.DriverProviderName -and $_.DriverProviderName -notmatch '^Microsoft' }) }
+    catch {
+        $pnpError = $_.Exception.Message; Write-Swallowed $_
+        Add-Result 'DRIVERS' 'DeviceDrivers' 'MANUAL' 'The device driver list could not be read' $pnpError -Recommendation 'List the third-party drivers by hand (driverquery /v, or Device Manager) before the change; old drivers are the most common cause of IPU rollback.' -Kind 'Finding' -Source 'Win32_PnPSignedDriver'
+    }
+    foreach ($d in @($pnp | Sort-Object DeviceName,DriverVersion -Unique)) {
+        $date = [string]$d.DriverDate
+        $driverDate = ConvertTo-DateTimeValue $d.DriverDate
+        if ($driverDate) { $date = $driverDate.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) }
+        Add-Result 'DRIVERS' ('Device: ' + $d.DeviceName) 'INFO' ('Provider=' + $d.DriverProviderName) @(('Version=' + $d.DriverVersion),('Date=' + $date),('Class=' + $d.DeviceClass),('Signed=' + $d.IsSigned)) -Source 'Win32_PnPSignedDriver'
+        if ($d.IsSigned -eq $false) { $unsigned += $d.DeviceName }
+    }
+    $kernelCount = 0
+    foreach ($drv in @($script:Data.KernelDrivers | Sort-Object Name)) {
+        $path = ([string]$drv.PathName -replace '^\\\?\?\\','' -replace '^\\SystemRoot', $env:windir -replace '^(?i)system32', (Join-Path $env:windir 'System32'))
+        if (-not $path -or -not (Test-Path -LiteralPath $path)) { continue }
+        $info = $null
+        try { $info = (Get-Item -LiteralPath $path).VersionInfo } catch { Write-Swallowed $_; continue }
+        if ($info.CompanyName -and $info.CompanyName -notmatch 'Microsoft') {
+            $kernelCount++
+            Add-Result 'DRIVERS' ('Kernel driver: ' + $drv.Name) 'INFO' ('Company=' + $info.CompanyName) @(('FileVersion=' + $info.FileVersion),('Path=' + $path)) -Source 'Win32_SystemDriver'
+        }
+    }
+    $devicesText = 'NonMicrosoftDevices=' + @($pnp | Sort-Object DeviceName -Unique).Count
+    if ($pnpError) { $devicesText = 'NonMicrosoftDevices=unknown' }
+    Add-Result 'DRIVERS' 'Summary' 'INFO' ($devicesText + ', NonMicrosoftKernelDrivers=' + $kernelCount) -Recommendation 'Old third-party drivers are the most common cause of IPU rollback (0xC1900101). Update them, especially storage, network and security drivers, before IPU.' -Source 'Win32_PnPSignedDriver, Win32_SystemDriver'
+    if ($unsigned.Count -gt 0) {
+        Add-Result 'DRIVERS' 'UnsignedDrivers' 'WARNING' ('Count=' + $unsigned.Count) ($unsigned -join ', ') -Recommendation 'Unsigned drivers may not load after the upgrade. Replace them with signed versions before IPU.' -Source 'Win32_PnPSignedDriver'
+    }
+}
+# Chapter: Storage, clustering and network (docs/checks.md).
+# Each check is one function; Register-AssessmentCheck (50-checks.ps1) lists them in run order.
+
+function Invoke-ClusterCheck {
     $clusSvcPresent = @($script:Data.Services | Where-Object { $_.Name -eq 'ClusSvc' -and $_.StartMode -ne 'Disabled' }).Count -gt 0
     $feature = Resolve-ClusterFeatureState (Get-FeatureState 'Failover-Clustering') $clusSvcPresent ([bool](Test-Path 'HKLM:\Cluster'))
     if ($null -eq $feature) { Add-Result 'CLUSTER' 'FailoverClustering' 'MANUAL' 'Feature state unknown: the role inventory failed' -Recommendation 'Confirm by hand whether this server is a cluster node (Get-Cluster, the Cluster service) before planning an IPU.' -Source 'Get-WindowsFeature'; return }
@@ -5067,9 +5588,7 @@ Register-Check -Id 'cluster' -Name 'Failover clustering' -Script {
     }
 }
 
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-Register-Check -Id 'special' -Name 'SPECIAL server (cluster node, domain controller)' -Script {
+function Invoke-SpecialCheck {
     # #152: a cluster node or a domain controller is not a standard IPU. The
     # main flow has decided the kind after the baseline; this check writes
     # the SPECIAL row and what the report tells the project and the customer.
@@ -5087,8 +5606,7 @@ Register-Check -Id 'special' -Name 'SPECIAL server (cluster node, domain control
     Add-Result 'SPECIAL' $content.Title 'SPECIAL' 'Not a standard in-place upgrade: expensive and risky' @($facts) -Recommendation 'Separate plan needed. Tell the project and the customer. See the SPECIAL section for the risks and the options.' -Source 'Domain role, cluster' -Link $first.Url -LinkTitle $first.Title
 }
 
-# ---------------------------------------------------------------------------
-Register-Check -Id 'storage' -Name 'Storage' -Script {
+function Invoke-StorageCheck {
     $c = @(Get-CimRequired 'Win32_LogicalDisk' "DeviceID='C:'") | Select-Object -First 1
     $sizeGB = [math]::Round(([double]$c.Size / 1GB),2)
     $freeGB = [math]::Round(([double]$c.FreeSpace / 1GB),2)
@@ -5193,8 +5711,7 @@ Register-Check -Id 'storage' -Name 'Storage' -Script {
     Add-Result 'STORAGE' 'AllocatedDiskCapacity' 'INFO' ('TotalGB=' + (Format-Number ($total/1GB))) 'Rough indication of VM snapshot exposure; growth depends on changed blocks.' -Source 'Get-Disk'
 }
 
-# ---------------------------------------------------------------------------
-Register-Check -Id 'network' -Name 'Network, teaming, hosts and routes' -Script {
+function Invoke-NetworkCheck {
     # VLAN IDs come from the NetAdapter module (optional, #94), by MAC (#149).
     $vlanByMac = @{}
     if (Test-CommandAvailable 'Get-NetAdapter') {
@@ -5327,275 +5844,155 @@ Register-Check -Id 'network' -Name 'Network, teaming, hosts and routes' -Script 
     }
 }
 
-# ---------------------------------------------------------------------------
-Register-Check -Id 'exchange' -Name 'Exchange Server' -Script {
-    $exchangeServices = @($script:Data.Services | Where-Object { $_.Name -match '^MSExchange(IS|Transport|FrontEndTransport|ServiceHost|ADTopology|EdgeSync|MailboxAssistants|RPC)$' })
-    $setupKeys = @()
-    foreach ($v in @('v15','v14','v8.0')) {
-        $k = 'HKLM:\SOFTWARE\Microsoft\ExchangeServer\' + $v + '\Setup'
-        $p = Get-RegistryValueSafe $k 'MsiInstallPath'
-        if ($p.Exists) { $setupKeys += ($v + ': ' + $p.Value) }
-    }
-    if ($exchangeServices.Count -gt 0) {
-        Add-Result 'EXCHANGE' 'ExchangeServerRole' 'BLOCKER' ('Exchange services: ' + (@($exchangeServices | ForEach-Object { $_.Name }) -join ', ')) $setupKeys -Recommendation 'Microsoft does not support an in-place OS upgrade on a server with Exchange installed. Build a new Exchange server on the target OS and migrate.' -Source 'Win32_Service, ExchangeServer\Setup'
-    } elseif ($setupKeys.Count -gt 0) {
-        Add-Result 'EXCHANGE' 'ExchangeComponents' 'ACTION' 'Exchange setup registration found without Exchange server services' $setupKeys -Recommendation 'Probably Exchange Management Tools only. Confirm with the messaging team; if a server role is installed, IPU is not supported.' -Source 'ExchangeServer\Setup'
-    }
-}
-
-# ---------------------------------------------------------------------------
-Register-Check -Id 'sql' -Name 'SQL Server' -Script {
-    $instances = @()
-    foreach ($root in @('HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server','HKLM:\SOFTWARE\Wow6432Node\Microsoft\Microsoft SQL Server')) {
-        foreach ($type in @('SQL','RS','OLAP')) {
-            # SilentlyContinue: No Instance Names key means no instance of this type (absence is normal).
-            $names = Get-ItemProperty (Join-Path $root ('Instance Names\' + $type)) -ErrorAction SilentlyContinue
-            if (-not $names) { continue }
-            foreach ($prop in @($names.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' })) {
-                # SilentlyContinue: A missing Setup key leaves the version empty, which is reported as MANUAL below.
-                $setup = Get-ItemProperty (Join-Path $root ([string]$prop.Value + '\Setup')) -ErrorAction SilentlyContinue
-                $version = [string]$setup.Version
-                if (-not $version) { $version = [string]$setup.PatchLevel }
-                $instances += [pscustomobject]@{ Instance=$prop.Name; Type=$type; Id=[string]$prop.Value; Version=$version; Edition=[string]$setup.Edition; Root=$root }
-            }
-        }
-    }
-    $instances = @($instances | Sort-Object Type,Instance,Id -Unique)
-    $script:Data.SqlSummary = ''
-    if ($instances.Count -eq 0) { return }
-    # Named instances are often named after the application or the customer (#195).
-    foreach ($i in $instances) { if ($script:SqlDefaultInstanceNames -notcontains $i.Instance) { Add-RedactionLiteral $i.Instance 'NAME'; Add-RedactionLiteral $i.Id 'NAME' } }
-    $summary = @()
-    foreach ($i in $instances) {
-        $major = 0
-        [void][int]::TryParse((($i.Version -split '\.')[0]), [ref]$major)
-        $typeName = @{ SQL='Database Engine'; RS='Reporting Services'; OLAP='Analysis Services' }[$i.Type]
-        if ($major -le 0) {
-            Add-Result 'SQL' ($typeName + ': ' + $i.Instance) 'MANUAL' 'Version not found' ('InstanceId=' + $i.Id) -Recommendation 'Determine the SQL Server version and check it against the target OS support matrix.' -Source ($i.Root + '\Instance Names')
-            continue
-        }
-        $d = Get-SqlSupportDecision $major $TargetServerVersion ([string]$i.Version)
-        $summary += ($i.Instance + '=' + $d.Release)
-        Add-Result 'SQL' ($typeName + ': ' + $i.Instance) $d.Status $d.Release @(('Version=' + $i.Version),('Edition=' + $i.Edition),('InstanceId=' + $i.Id)) -Recommendation $d.Text -Source 'SQL Server instance registry; Microsoft SQL Server / Windows compatibility matrix'
-    }
-    $script:Data.SqlSummary = ($summary -join ', ')
-}
-
-# ---------------------------------------------------------------------------
-Register-Check -Id 'workloads' -Name 'Roles and workloads' -Script {
-    if ($null -eq $script:Data.Features) {
-        Add-Result 'ROLES' 'Inventory' 'MANUAL' 'Get-WindowsFeature unavailable' -Recommendation 'List installed roles/features manually.' -Kind 'Finding' -Source 'ServerManager'
-    } else {
-        foreach ($name in @($script:Data.Features.Keys | Where-Object { $script:Data.Features[$_] } | Sort-Object)) {
-            Add-Result 'ROLES' $name 'INFO' 'Installed' -Source 'Get-WindowsFeature'
-        }
-    }
-    $roleChecks = @(
-        @{ Name='DNS';        Label='DNS Server';  Rec='Confirm DNS zones are AD-integrated or replicated, and that clients can use another DNS server during the window.' },
-        @{ Name='DHCP';       Label='DHCP Server'; Rec='Back up DHCP (Export-DhcpServer) and confirm failover/partner coverage for the change window.' },
-        @{ Name='Print-Server'; Label='Print Server'; Rec='See the Print server section: printers, ports, drivers and the PrintBrm backup.' },
-        @{ Name='Hyper-V';    Label='Hyper-V host'; Rec='All guests are affected. Plan guest shutdown/migration and confirm vSwitch teaming is SET, not LBFO.' },
-        @{ Name='FS-DFS-Replication'; Label='DFS Replication'; Rec='Confirm DFSR health and backlog before IPU; plan to monitor replication afterwards.' },
-        @{ Name='WDS';        Label='Windows Deployment Services'; Rec='Validate WDS/PXE dependencies with the deployment team.' },
-        @{ Name='UpdateServices'; Label='WSUS'; Rec='Back up the WSUS database/content and confirm the upgrade method with the patch team.' },
-        @{ Name='ADFS-Federation'; Label='AD FS'; Rec='AD FS farms are normally upgraded by adding new servers to the farm. Engage the identity team.' },
-        @{ Name='NPAS';       Label='Network Policy Server'; Rec='Export the NPS configuration before IPU.' },
-        @{ Name='FS-FileServer'; Label='File Server'; Rec='Document shares and permissions; confirm users are informed of the outage.' }
-    )
-    foreach ($rc in $roleChecks) {
-        if ((Get-FeatureState $rc.Name) -eq $true) { Add-Result 'WORKLOAD' $rc.Label 'WARNING' 'Installed' -Recommendation $rc.Rec -Source 'Get-WindowsFeature' }
-    }
-
-    # Application workloads (pattern table in section 2), matched on names
-    # and service names only - not executable paths - to avoid false positives.
-    foreach ($m in (Find-DetectionMatch $script:DetectionPatterns.Workloads $script:Data.Apps $script:Data.Services)) {
-        Add-Result 'WORKLOAD' $m.Label 'WARNING' ('Applications=' + @($m.Apps).Count + ', Services=' + @($m.Services).Count) (Get-DetectionEvidence $m) -Recommendation ('Engage the application owner and confirm ' + $m.Label + ' supports ' + (Get-ReleaseDisplayName $TargetServerVersion) + '.') -Source 'Uninstall registry and Win32_Service names'
-    }
-
-    # Features removed or no longer developed in the target release.
-    if ($null -ne $script:Data.Features) {
-        $installed = @($script:Data.Features.Keys | Where-Object { $script:Data.Features[$_] })
-        foreach ($f in (Get-FeatureLifecycleFinding $installed $TargetServerVersion)) {
-            Add-Result 'FEATURE_LIFECYCLE' $f.Name $f.Status ('Feature ' + $f.Feature + ' is installed') '' -Recommendation $f.Text -Kind $f.Kind -Source 'Microsoft: features removed or no longer developed'
-        }
-    }
-    $browser = @($script:Data.Services | Where-Object { $_.Name -eq 'Browser' -and $_.State -eq 'Running' })
-    if ($browser.Count -gt 0) {
-        Add-Result 'FEATURE_LIFECYCLE' 'Computer Browser service' 'WARNING' 'Running' '' -Recommendation 'The Computer Browser protocol is no longer developed by Microsoft. Find out what depends on network browsing (often old SMB1 clients).' -Kind 'Observation' -Source 'Win32_Service'
-    }
-    foreach ($a in $script:Data.Apps) {
-        Add-Result 'APPLICATIONS' $a.Name 'INFO' ('Version=' + $a.Version) @(('Publisher=' + $a.Publisher),('InstallDate=' + $a.InstallDate)) -Source 'Uninstall registry (no Win32_Product)'
-    }
-}
-
-# ---------------------------------------------------------------------------
-Register-Check -Id 'fileshares' -Name 'File shares' -Script {
-    # #95: what is shared, from where and to whom, so owners can plan and
-    # test, and the post-upgrade run can report a share that is gone.
-    $role = Get-FeatureState 'FS-FileServer'
-    if (-not (Test-CommandAvailable 'Get-SmbShare')) {
-        if ($role -eq $true) { Add-Result 'FILE_SHARES' 'FileShares' 'MANUAL' 'Get-SmbShare is not available' -Recommendation 'List the shares manually (net share) and record their share permissions before the change.' -Kind 'Finding' -Source 'SmbShare module' }
+function Invoke-PortsCheck {
+    if (-not (Test-CommandAvailable 'Get-NetTCPConnection')) {
+        $script:Data.Snapshot.Remove('Ports')
+        Add-Result 'PORTS' 'ListeningPorts' 'MANUAL' 'Get-NetTCPConnection unavailable' -Recommendation 'List the listening ports by hand (netstat -ano) for the post-upgrade test plan.' -Kind 'Finding' -Source 'NetTCPIP'
         return
     }
-    $printing = (Get-FeatureState 'Print-Server') -eq $true
-    $shares = @(Get-SmbShare -ErrorAction Stop | Where-Object { -not $_.Special -and ($printing -or $_.Name -ne 'print$') } | Sort-Object Name)
-    if ($shares.Count -eq 0) {
-        $note = 'No shares besides the default administrative shares'
-        if ($role -eq $true) { Add-Result 'FILE_SHARES' 'FileShares' 'INFO' $note 'The File Server role is installed but shares nothing.' -Source 'Get-SmbShare' }
-        else { Add-Result 'FILE_SHARES' 'FileShares' 'INFO' $note -Source 'Get-SmbShare' }
-        return
-    }
-    Add-Result 'FILE_SHARES' 'FileShares' 'WARNING' ('Count=' + $shares.Count) (@($shares | ForEach-Object { $_.Name }) -join ', ') -Recommendation 'Shared folders must be reachable again right after the upgrade. Test access from a client with the share owners, and keep this list (with permissions) for the comparison afterwards.' -Source 'Get-SmbShare'
-    foreach ($sh in $shares) {
-        Add-RedactionLiteral ([string]$sh.Name) 'NAME'
-        if ($sh.Description) { Add-RedactionLiteral ([string]$sh.Description) 'NAME' }
-        $access = @()
-        if (Test-CommandAvailable 'Get-SmbShareAccess') {
-            try {
-                $access = @(Get-SmbShareAccess -Name $sh.Name -ErrorAction Stop | ForEach-Object { [string]$_.AccountName + ': ' + [string]$_.AccessRight + $(if ([string]$_.AccessControlType -eq 'Deny') { ' (Deny)' } else { '' }) })
-            } catch { Write-Swallowed $_ }
+    $procNames = @{}
+    # SilentlyContinue: process names only label the owners; a process that ended meanwhile is normal.
+    foreach ($proc in @(Get-Process -ErrorAction SilentlyContinue)) { $procNames[[int]$proc.Id] = $proc.ProcessName }
+    $svcByPid = @{}
+    foreach ($svc in $script:Data.Services) {
+        if ($svc.ProcessId -and [int]$svc.ProcessId -gt 0) {
+            $key = [int]$svc.ProcessId
+            if (-not $svcByPid.ContainsKey($key)) { $svcByPid[$key] = @() }
+            $svcByPid[$key] += [string]$svc.Name
         }
-        $details = @(('Path=' + $sh.Path))
-        if ($sh.Description) { $details += ('Description=' + $sh.Description) }
-        $details += ('Share permissions: ' + $(if ($access.Count) { $access -join '; ' } else { 'not readable' }))
-        Add-Result 'FILE_SHARES' ('Share: ' + $sh.Name) 'INFO' ([string]$sh.Path) $details -Source 'Get-SmbShare, Get-SmbShareAccess'
     }
-    if ($script:Data.Snapshot) { $script:Data.Snapshot.Shares = @($shares | ForEach-Object { [string]$_.Name }) }
+    $owners = @{}
+    $endpoints = @()
+    # A failed query stops the check (reported as not completed); only "nothing found" is an empty list (#242).
+    $tcpListeners = @()
+    try { $tcpListeners = @(Get-NetTCPConnection -State Listen -ErrorAction Stop) } catch { if (-not (Test-NotFoundError $_)) { throw } }
+    foreach ($c in $tcpListeners) { $endpoints += [pscustomobject]@{ Key=('TCP:' + $c.LocalPort); Port=[int]$c.LocalPort; ProcessId=[int]$c.OwningProcess } }
+    if (Test-CommandAvailable 'Get-NetUDPEndpoint') {
+        $udpEndpoints = @()
+        try { $udpEndpoints = @(Get-NetUDPEndpoint -ErrorAction Stop) } catch { if (-not (Test-NotFoundError $_)) { throw } }
+        foreach ($u in $udpEndpoints) { $endpoints += [pscustomobject]@{ Key=('UDP:' + $u.LocalPort); Port=[int]$u.LocalPort; ProcessId=[int]$u.OwningProcess } }
+    }
+    # Ports from the Windows dynamic range (49152+) change between boots and
+    # are left out so the before/after comparison stays meaningful.
+    foreach ($ep in @($endpoints | Where-Object { $_.Port -lt 49152 })) {
+        $owner = ''
+        if ($svcByPid.ContainsKey($ep.ProcessId)) { $owner = 'Service ' + (@($svcByPid[$ep.ProcessId]) -join '/') }
+        elseif ($procNames.ContainsKey($ep.ProcessId)) { $owner = 'Process ' + $procNames[$ep.ProcessId] }
+        if (-not $owners.ContainsKey($ep.Key)) { $owners[$ep.Key] = @() }
+        if ($owner -and $owners[$ep.Key] -notcontains $owner) { $owners[$ep.Key] += $owner }
+    }
+    foreach ($k in @($owners.Keys | Sort-Object { [int](($_ -split ':')[1]) }, { $_ })) {
+        Add-Result 'PORTS' $k 'INFO' (@($owners[$k]) -join ', ') -Source 'Get-NetTCPConnection, Get-NetUDPEndpoint'
+    }
+    $script:Data.Snapshot.Ports = @($owners.Keys | Sort-Object)
+    # Who opened each port, so the comparison can pair a closed port with a
+    # disabled service (#158).
+    $po = [ordered]@{}; foreach ($k in @($owners.Keys | Sort-Object)) { $po[$k] = (@($owners[$k]) -join ', ') }
+    $script:Data.Snapshot.PortOwners = $po
+    Add-Result 'PORTS' 'Summary' 'INFO' ('ListeningPorts=' + $owners.Count) 'Use this list for the post-upgrade test plan. Dynamic ports (49152+) are not listed.' -Source 'Get-NetTCPConnection, Get-NetUDPEndpoint'
 }
+# Chapter: Access, certificates and security (docs/checks.md).
+# Each check is one function; Register-AssessmentCheck (50-checks.ps1) lists them in run order.
 
-# ---------------------------------------------------------------------------
-Register-Check -Id 'printers' -Name 'Print server: printers, ports and drivers' -Script {
-    # #148: what a print server holds, so it can be checked after the
-    # upgrade and the driver work planned. Read-only.
-    $role = (Get-FeatureState 'Print-Server') -eq $true
-    $script:Data.PrintServer = $false
-    try { $inv = Get-PrinterInventory }
-    catch {
-        $spooler = @($script:Data.Services | Where-Object { $_.Name -eq 'Spooler' }) | Select-Object -First 1
-        $startMode = ''; if ($spooler) { $startMode = [string]$spooler.StartMode }
-        if ((Get-PrinterReadFailureDecision $role $startMode ($null -ne $spooler)) -eq 'Manual') {
-            Add-Result 'PRINTING' 'Printers' 'MANUAL' 'Could not read the printers' $_.Exception.Message -Recommendation 'Check that the Print Spooler service runs, and list printers, ports and drivers in Print Management before the change.' -Kind 'Finding' -Source 'PrintManagement, Win32_Printer'
-        } else {
-            Add-Result 'PRINTING' 'PrintServer' 'OK' 'Not a print server' 'Print Server role not installed and the Print Spooler service is disabled or missing' -Source 'Win32_Service'
-        }
-        return
-    }
-    $printers = @($inv.Printers | Where-Object { $_ -and [string]$_.DriverName -notmatch $script:VirtualPrinterDrivers } | Sort-Object Name)
-    $shared = @($printers | Where-Object { $_.Shared })
-    if (-not $role -and $shared.Count -eq 0) {
-        Add-Result 'PRINTING' 'PrintServer' 'OK' 'Not a print server' ('Print Server role not installed, shared printers=0, local printers=' + $printers.Count) -Source $inv.Source
-        return
-    }
-    $script:Data.PrintServer = $true
-    $target = Get-ReleaseDisplayName $TargetServerVersion
-    Add-Result 'PRINTING' 'Printers' 'WARNING' ('Count=' + $printers.Count + ', shared=' + $shared.Count) ('Print Server role=' + $role) -Recommendation 'Keep the PrintBrm backup and this list. After the upgrade, print a test page on each shared printer and test from a client; the post-upgrade run reports printers and ports that are gone.' -Source $inv.Source
-    foreach ($p in $printers) { Add-RedactionLiteral $p.Name 'NAME'; if ($p.ShareName) { Add-RedactionLiteral $p.ShareName 'NAME' } }
-    foreach ($p in $printers) {
-        $details = @(('Share=' + $(if ($p.Shared -and $p.ShareName) { $p.ShareName } else { '(not shared)' })), ('Published in AD=' + $p.Published))
-        Add-Result 'PRINTING' ('Printer: ' + $p.Name) 'INFO' ('Driver=' + $p.DriverName + '; Port=' + $p.PortName) $details -Source $inv.Source
-    }
-
-    # Ports in use by a printer, and every LPR port.
-    $usedNames = @($printers | ForEach-Object { @(([string]$_.PortName) -split ',') } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-    $ports = @($inv.Ports | Where-Object { $_ -and ($usedNames -contains [string]$_.Name -or (Get-PrinterPortKind $_.Description $_.Monitor $_.Protocol) -eq 'LPR port monitor') } | Sort-Object Name)
-    foreach ($pt in $ports) { Add-RedactionLiteral $pt.Name 'NAME'; if ($pt.Address -and $pt.Address -notmatch '^[0-9.:]+$') { Add-RedactionLiteral $pt.Address 'HOST' } }
-    foreach ($pt in $ports) {
-        $kind = Get-PrinterPortKind $pt.Description $pt.Monitor $pt.Protocol
-        $details = @()
-        if ($pt.Address) { $details += ('Address=' + $pt.Address + $(if ($pt.PortNumber) { ':' + $pt.PortNumber } else { '' })) }
-        if ($pt.Queue) { $details += ('Queue=' + $pt.Queue) }
-        if ($pt.Monitor) { $details += ('Monitor=' + $pt.Monitor) }
-        if ($kind -eq 'LPR port monitor') {
-            Add-Result 'PRINTING' ('Port: ' + $pt.Name) 'WARNING' $kind $details -Recommendation 'Microsoft deprecated LPR/LPD and plans to remove it. Move the printer to a Standard TCP/IP port (RAW, or LPR protocol on the standard port) and test before the upgrade.' -Kind 'Observation' -Source 'Get-PrinterPort' -Link 'https://learn.microsoft.com/en-us/windows/whats-new/deprecated-features' -LinkTitle 'Deprecated Windows features'
-        } else {
-            Add-Result 'PRINTING' ('Port: ' + $pt.Name) 'INFO' $kind $details -Source 'Get-PrinterPort'
-        }
-    }
-    if ((Get-FeatureState 'Print-LPD-Service') -eq $true) {
-        Add-Result 'PRINTING' 'LPD Service' 'WARNING' 'Installed' 'UNIX and other clients can print to this server over LPD.' -Recommendation 'Microsoft deprecated LPR/LPD and plans to remove it. Find the clients that use it and move them to IPP or a Standard TCP/IP port.' -Kind 'Observation' -Source 'Get-WindowsFeature' -Link 'https://learn.microsoft.com/en-us/windows/whats-new/deprecated-features' -LinkTitle 'Deprecated Windows features'
-    }
-
-    # Drivers.
-    foreach ($r in @(Get-PrinterDriverDecision $inv.Drivers $target $TargetServerVersion)) {
-        if ($r.Item -eq 'PrinterDrivers' -and $r.Status -eq 'WARNING') { Add-Result 'PRINTING' $r.Item $r.Status $r.Value $r.Details -Recommendation $r.Recommendation -Source $inv.Source -Link $script:PrinterDriverDocUrl -LinkTitle 'End of servicing plan for third-party printer drivers' }
-        else { Add-Result 'PRINTING' $r.Item $r.Status $r.Value $r.Details -Recommendation $r.Recommendation -Source $inv.Source }
-    }
-
-    # Port monitors and print processors.
-    try {
-        foreach ($r in @(Get-PrintComponentDecision (Get-PrintMonitorInventory) $target)) {
-            Add-Result 'PRINTING' $r.Item $r.Status $r.Value $r.Details -Recommendation $r.Recommendation -Source 'HKLM\SYSTEM\CurrentControlSet\Control\Print'
-        }
-    } catch {
-        Add-Result 'PRINTING' 'PrintComponents' 'MANUAL' 'Could not read the port monitors and print processors' $_.Exception.Message -Recommendation 'Check Print Management > Print Servers > Ports and the registry key HKLM\SYSTEM\CurrentControlSet\Control\Print\Monitors for monitors that are not from Microsoft.' -Kind 'Finding' -Source 'HKLM\SYSTEM\CurrentControlSet\Control\Print'
-    }
-
-    if ($script:Data.Snapshot) {
-        $script:Data.Snapshot.Printers = @($printers | ForEach-Object { [string]$_.Name })
-        $script:Data.Snapshot.PrinterPorts = @($ports | ForEach-Object { [string]$_.Name })
-        $script:Data.Snapshot.PrinterDrivers = @($printers | ForEach-Object { [pscustomobject]@{ Printer = [string]$_.Name; Driver = [string]$_.DriverName } })
-    }
-}
-
-# ---------------------------------------------------------------------------
-Register-Check -Id 'iis' -Name 'IIS' -Script {
-    $iisState = Get-FeatureState 'Web-Server'
-    if ($null -eq $iisState) { Add-Result 'IIS' 'Web-Server' 'MANUAL' 'Feature state unknown: the role inventory failed' -Recommendation 'Check by hand whether IIS is installed (Get-WindowsFeature Web-Server, or the W3SVC service).' -Source 'Get-WindowsFeature'; return }
-    if ($iisState -ne $true) { Add-Result 'IIS' 'Web-Server' 'OK' 'Not installed' -Source 'Get-WindowsFeature'; return }
-    Add-Result 'IIS' 'Web-Server' 'WARNING' 'Installed' -Recommendation 'Immediately before the IPU, run the appcmd.exe add backup command shown (the copy in this report is from assessment time), and keep site, binding and certificate documentation.' -Source 'Get-WindowsFeature' -Command (Get-RecommendationCommand 'IisBackup').Command -CommandKind 'Change' -Link $script:DocLinks.AppCmd.Url -LinkTitle $script:DocLinks.AppCmd.Title
-    if ($EnableIISConfigEvidence) {
+function Invoke-GroupPolicyCheck {
+    # #80: which GPOs apply, which are filtered out and why, WMI filters on the
+    # Windows version (they can stop or start matching after the upgrade),
+    # the computer's AD groups, and when policy last applied.
+    $domainMember = [bool]$script:Data.CS.PartOfDomain
+    $gp = $null; $gpError = ''
+    try { $gp = ConvertFrom-GpResultXml (Get-GpResultXml) } catch { $gpError = $_.Exception.Message; Write-Swallowed $_ }
+    # gpresult run as SYSTEM can answer "does not have RSoP data" on 2012 R2
+    # to 2019 (#160). The Group Policy service's own record of the applied
+    # GPOs is the fallback; MANUAL stays only when both fail.
+    $gpSource = 'gpresult'
+    if (-not $gp -and $domainMember) {
+        $fbEntries = 0; $fbNamed = 0; $fbError = ''; $fbMissing = $false
         try {
-            $dest = Join-Path (Initialize-EvidenceFolder 'IIS') ($script:SafeComputerName + '-IPU-IIS-' + (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture))
-            $copy = Save-IISConfigEvidence -Destination $dest -Zip $CreatePolicyEvidenceZip
-            Add-Result 'IIS' 'ConfigurationCopy' 'OK' $copy.Location @(('Files=' + ($copy.Files -join ', ')), ('applicationHost.config SHA256=' + $copy.ApplicationHostSha256)) -Recommendation 'Restore: copy the files back to %windir%\System32\inetsrv\config, or put them in a folder under inetsrv\backup and run "appcmd restore backup <folder>". See the user guide.' -Source 'inetsrv\config (copied, not changed)'
-            if ($copy.SharedConfigPath) {
-                Add-Result 'IIS' 'SharedConfiguration' 'WARNING' ('Enabled: ' + $copy.SharedConfigPath) 'The local files only point to the shared location.' -Recommendation 'Back up the shared configuration at that path as well, and confirm every server that uses it before the change.' -Kind 'Observation' -Source 'redirection.config'
-            }
+            $entries = Get-GpoListRegistryEntry
+            $fbEntries = @($entries | Where-Object { $_ }).Count
+            $fallback = ConvertFrom-GpoListEntry @($entries)
+            $fbNamed = @($fallback.Gpos).Count
+            if ($fbNamed -gt 0) { $gp = $fallback; $gpSource = 'registry' }
         } catch {
-            Add-Result 'IIS' 'ConfigurationCopy' 'MANUAL' 'Could not copy the IIS configuration' $_.Exception.Message -Recommendation 'Back up the IIS configuration manually before the change: appcmd add backup PreIPU, or copy %windir%\System32\inetsrv\config.' -Kind 'Finding' -Source 'inetsrv\config'
+            $fbError = $_.Exception.Message
+            $fbMissing = ($_.Exception -is [System.Management.Automation.ItemNotFoundException])
+            Write-Swallowed $_
         }
+        # Say what the fallback found, so a MANUAL row can be followed up (#215).
+        if (-not $gp) { $gpError = ($gpError + ' | ' + (Get-GpoFallbackNote $fbEntries $fbNamed $fbError $fbMissing)).Trim(' |') }
+    }
+    $groups = @(); $filters = @{}; $adError = ''; $adRead = $true
+    if ($domainMember) {
+        try {
+            # Assign first: the function returns the list as one object.
+            $groups = Get-AdComputerGroup
+            $groups = @($groups | Where-Object { $_ })
+            if ($gp) { $filters = Get-WmiFilterQuery @($gp.Gpos | ForEach-Object { $_.Guid }) }
+        } catch { $adRead = $false; $adError = $_.Exception.Message; Write-Swallowed $_ }
+    }
+    # Where the computer object is in AD (#99): the OU decides which GPOs link.
+    $dn = ''
+    if ($domainMember -and $adRead) {
+        try { $dn = Get-AdComputerDn } catch { Write-Swallowed $_ }
+    }
+    if ($dn) {
+        $script:Data.AdLocation = ConvertTo-AdLocation $dn
+        Add-Result 'GROUP_POLICY' 'ComputerOU' 'INFO' $script:Data.AdLocation ('DistinguishedName=' + $dn) -Source 'AD computer object (distinguishedName)'
+        if ($script:Data.Snapshot) { $script:Data.Snapshot.Ou = $dn }
+    } elseif (-not $domainMember) {
+        $script:Data.AdLocation = 'Not applicable (workgroup)'
+    } elseif ($adRead) {
+        $script:Data.AdLocation = 'Not readable'
     } else {
-        Add-Result 'IIS' 'ConfigurationCopy' 'INFO' 'Not taken (EnableIISConfigEvidence is off)' -Source 'SETTINGS'
+        $script:Data.AdLocation = 'Not readable (domain not reachable)'
     }
-    $iisManual = 'List the sites and bindings by hand (appcmd list site, or IIS Manager) before the change.'
-    if (-not (Get-Module -ListAvailable WebAdministration)) {
-        Add-Result 'IIS' 'Sites' 'MANUAL' 'Sites and bindings not listed (WebAdministration module missing)' -Recommendation $iisManual -Kind 'Finding' -Source 'WebAdministration'
-        return
+    $last = $null
+    if ($domainMember) { $last = Get-GroupPolicyLastApplied }
+    foreach ($row in (Get-GroupPolicyDecision $domainMember ($null -ne $gp) $adRead $last (Get-Date) $GroupPolicyMaxAgeDays $gpError $adError)) {
+        Add-Result 'GROUP_POLICY' $row.Item $row.Status $row.Value $row.Details -Recommendation $row.Recommendation -Kind $row.Kind -Source 'gpresult, Active Directory, Group Policy state'
     }
-    $sites = @()
-    try { Import-Module WebAdministration -ErrorAction Stop; $sites = @(Get-Website -ErrorAction Stop) }
-    catch {
-        Write-Swallowed $_
-        Add-Result 'IIS' 'Sites' 'MANUAL' 'Sites and bindings could not be read' $_.Exception.Message -Recommendation $iisManual -Kind 'Finding' -Source 'WebAdministration'
-        return
+    if ($gpSource -eq 'registry') {
+        Add-Result 'GROUP_POLICY' 'GroupPolicySource' 'INFO' 'Applied GPOs read from the Group Policy state in the registry' @('gpresult: ' + $gpError, 'Only applied GPOs are recorded there: GPOs filtered out (and why) are not listed.') -Source 'HKLM\...\Group Policy\State\Machine\GPO-List'
     }
-    foreach ($site in $sites) {
-        $bindings = @($site.Bindings.Collection | ForEach-Object { $_.protocol + ':' + $_.bindingInformation }) -join ' | '
-        Add-Result 'IIS' ('Site: ' + $site.Name) 'INFO' ('State=' + $site.State) @(('Path=' + $site.PhysicalPath),('Bindings=' + $bindings)) -Source 'WebAdministration'
-    }
-}
-
-# ---------------------------------------------------------------------------
-Register-Check -Id 'rds' -Name 'Remote Desktop Services roles' -Script {
-    $rdsh = Get-FeatureState 'RDS-RD-Server'
-    $rdlic = Get-FeatureState 'RDS-Licensing'
-    if ($null -eq $rdsh -or $null -eq $rdlic) { Add-Result 'RDS' 'RDSRoles' 'MANUAL' 'Feature state unknown: the role inventory failed' -Recommendation 'Check by hand whether the Remote Desktop Session Host and Licensing roles are installed (Get-WindowsFeature RDS-*).' -Source 'Get-WindowsFeature'; return }
-    if ($rdsh -eq $true) { Add-Result 'RDS' 'RDSessionHost' 'ACTION' 'Installed' -Recommendation ('Plan a longer IPU window, record the licensing configuration, and confirm RDS CALs are valid for ' + (Get-ReleaseDisplayName $TargetServerVersion) + ' (CALs must be the same or newer release as the server).') -Source 'Get-WindowsFeature' }
-    else { Add-Result 'RDS' 'RDSessionHost' 'OK' 'Not installed' -Source 'Get-WindowsFeature' }
-    if ($rdlic -eq $true) { Add-Result 'RDS' 'RDLicensingServer' 'ACTION' 'Installed' -Recommendation 'This is an RD Licensing server. Upgrading it affects every RDS host that uses it; confirm installed CALs and the order of upgrades with the RDS owner.' -Source 'Get-WindowsFeature' }
-    if ($rdsh -eq $true -or $rdlic -eq $true) {
-        $ts = @(Get-CimSafe 'Win32_TerminalServiceSetting' '' 'root\cimv2\TerminalServices') | Select-Object -First 1
-        if ($ts) {
-            $mode = @{ 2='PerDevice'; 4='PerUser'; 5='NotConfigured' }[[int]$ts.LicensingType]
-            $servers = @()
-            try { $servers = @((Invoke-CimMethod -InputObject $ts -MethodName GetSpecifiedLicenseServerList -ErrorAction Stop).SpecifiedLSList) } catch { Write-Swallowed $_ }
-            Add-Result 'RDS' 'LicensingConfiguration' 'INFO' ('Mode=' + $mode) ('LicenseServers=' + ($servers -join ',')) -Source 'Win32_TerminalServiceSetting'
+    if ($gp) {
+        $target = Get-ReleaseDisplayName $TargetServerVersion
+        foreach ($g in @($gp.Gpos)) {
+            Add-RedactionLiteral $g.Name 'GPO'
+            if ($g.FilterName) { Add-RedactionLiteral $g.FilterName 'NAME' }
+            $state = 'Applied'; if (-not $g.Applied) { $state = $g.Reason }
+            $details = @(('Linked at ' + (@($g.Links) -join '; ')))
+            $filter = $filters[$g.Guid]
+            if ($filter) {
+                Add-RedactionLiteral $filter.Name 'NAME'
+                $details += ('WMI filter: ' + $filter.Name)
+                foreach ($q in @($filter.Queries)) { $details += ('Query: ' + $q.Query) }
+            } elseif ($g.FilterName) { $details += ('WMI filter: ' + $g.FilterName) }
+            $osDependent = $filter -and @($filter.Queries | Where-Object { Test-WmiFilterOsDependent $_.Query }).Count -gt 0
+            if ($osDependent) {
+                Add-Result 'GROUP_POLICY' ('GPO: ' + $g.Name) 'WARNING' ($state + ' - WMI filter depends on the Windows version') $details -Recommendation ('After the upgrade the server reports ' + $target + '. Check that this filter still matches (or still excludes) it as intended, before the change.') -Source 'gpresult, WMI filter in AD'
+            } else {
+                Add-Result 'GROUP_POLICY' ('GPO: ' + $g.Name) 'INFO' $state $details -Source $gpSource
+            }
         }
+        if (-not $domainMember) {
+            Add-Result 'GROUP_POLICY' 'ADGroup' 'INFO' 'Not applicable (workgroup)' -Source 'Win32_ComputerSystem'
+        }
+        if ($script:Data.Snapshot) {
+            $script:Data.Snapshot.Gpos = @($gp.Gpos | Where-Object { $_.Applied } | ForEach-Object { $_.Name } | Sort-Object -Unique)
+        }
+    } elseif (-not $domainMember) {
+        # Workgroup server and gpresult failed: still only local policy.
+        Add-Result 'GROUP_POLICY' 'LocalPolicy' 'MANUAL' 'Could not list the local policy (gpresult)' $gpError -Recommendation (Get-LocalPolicyAdvice (Test-LgpoAvailable) $EnableRDPPolicyEvidence) -Kind 'Finding' -Source 'gpresult'
+    }
+    # The AD groups come from AD, not gpresult: list them even when no GPO
+    # list could be read (#160).
+    if ($domainMember -and $adRead) {
+        foreach ($n in $groups) { Add-Result 'GROUP_POLICY' 'ADGroup' 'INFO' $n -Source 'AD tokenGroups (nested groups included)' }
+        if ($script:Data.Snapshot) { $script:Data.Snapshot.Groups = @($groups) }
     }
 }
 
-# ---------------------------------------------------------------------------
-Register-Check -Id 'pki' -Name 'PKI, certificates and TLS bindings' -Script {
+function Invoke-PkiCheck {
     $adcs = @()
     foreach ($f in @('ADCS-Cert-Authority','ADCS-Web-Enrollment','ADCS-Enroll-Web-Pol','ADCS-Enroll-Web-Svc','ADCS-Device-Enrollment','ADCS-Online-Cert')) {
         if ((Get-FeatureState $f) -eq $true) { $adcs += $f }
@@ -5717,8 +6114,7 @@ Register-Check -Id 'pki' -Name 'PKI, certificates and TLS bindings' -Script {
     }
 }
 
-# ---------------------------------------------------------------------------
-Register-Check -Id 'agents' -Name 'Management agents (OpenText)' -Script {
+function Invoke-AgentsCheck {
     $matches_ = Find-DetectionMatch $script:DetectionPatterns.Agents $script:Data.Apps $script:Data.Services
     foreach ($pattern in $script:DetectionPatterns.Agents) {
         $m = @($matches_ | Where-Object { $_.Label -eq $pattern.Label }) | Select-Object -First 1
@@ -5734,8 +6130,7 @@ Register-Check -Id 'agents' -Name 'Management agents (OpenText)' -Script {
     }
 }
 
-# ---------------------------------------------------------------------------
-Register-Check -Id 'antivirus' -Name 'Antivirus, EDR and security tools' -Script {
+function Invoke-AntivirusCheck {
     $target = Get-ReleaseDisplayName $TargetServerVersion
     $protected = $false
 
@@ -5828,475 +6223,6 @@ Register-Check -Id 'antivirus' -Name 'Antivirus, EDR and security tools' -Script
         Add-Result 'SECURITY' 'FileSystemFilterDrivers' 'INFO' ('Count=' + @($script:Data.FilterDrivers).Count) (@($script:Data.FilterDrivers) -join ', ') -Recommendation 'If a previous IPU failed with 0xC1900101 (driver), review the non-Microsoft filter drivers.' -Source 'fltmc filters'
     }
 }
-
-# ---------------------------------------------------------------------------
-Register-Check -Id 'backup' -Name 'Backup and VSS' -Script {
-    $backup = Find-DetectionMatch $script:DetectionPatterns.Backup $script:Data.Apps $script:Data.Services
-    foreach ($m in $backup) {
-        Add-Result 'BACKUP' $m.Label 'INFO' ('Applications=' + @($m.Apps).Count + ', Services=' + @($m.Services).Count) (Get-DetectionEvidence $m) -Source 'Uninstall registry, Win32_Service'
-    }
-    if ($backup.Count -eq 0) {
-        Add-Result 'BACKUP' 'GuestBackupAgent' 'INFO' 'No recognized in-guest backup agent' 'VM-level backup is invisible from inside the guest; this does not mean the server is unprotected.' -Source 'Uninstall registry, Win32_Service'
-    }
-
-    $vss = Invoke-NativeCapture (Join-Path $env:windir 'System32\vssadmin.exe') @('list','writers') 120
-    $writers = ConvertFrom-VssWriterOutput $vss.Lines
-    if ($vss.TimedOut -or $writers.Count -eq 0) {
-        Add-Result 'BACKUP' 'VSSWriters' 'MANUAL' 'VSS writer state could not be read' @(('TimedOut=' + $vss.TimedOut),$vss.Error) -Recommendation 'Run "vssadmin list writers" manually; failed writers break application-consistent backups and snapshots.' -Kind 'Finding' -Source 'vssadmin list writers'
-    }
-    $failed = 0
-    $noError = Get-VssNoErrorText $writers
-    foreach ($w in $writers) {
-        $st = Get-VssWriterStatus $w $noError
-        if ($st -eq 'ACTION') { $failed++ }
-        Add-Result 'BACKUP' ('VSS writer: ' + $w.Name) $st ('[' + $w.StateCode + '] ' + $w.StateText) $w.LastError -Kind 'Evidence' -Source 'vssadmin list writers'
-    }
-    if ($failed -gt 0) {
-        Add-Result 'BACKUP' 'VSSWriters' 'ACTION' ('FailedWriters=' + $failed) -Recommendation 'Resolve VSS writer errors (often fixed by restarting the owning service) so the pre-change backup/snapshot is application-consistent.' -Source 'vssadmin list writers'
-    }
-    foreach ($prov in @(Get-CimSafe 'Win32_ShadowProvider')) {
-        $st = 'OK'; $rec = ''
-        if ($prov.Name -notmatch '^Microsoft (Software|File Share) Shadow Copy provider') { $st = 'WARNING'; $rec = 'Third-party VSS provider: confirm it supports the target OS.' }
-        Add-Result 'BACKUP' ('VSS provider: ' + $prov.Name) $st ('Version=' + $prov.Version) -Recommendation $rec -Kind 'Observation' -Source 'Win32_ShadowProvider'
-    }
-}
-
-# ---------------------------------------------------------------------------
-Register-Check -Id 'services' -Name 'Services' -Script {
-    $auto = @($script:Data.Services | Where-Object { $_.StartMode -eq 'Auto' })
-    $autoStopped = @($auto | Where-Object { $_.State -ne 'Running' })
-    Add-Result 'SERVICES' 'AutomaticServices' 'INFO' ('Total=' + $auto.Count) ('NotRunning=' + $autoStopped.Count) -Recommendation 'Save this list. After IPU, compare which Automatic services are running to spot what did not come back.' -Source 'Win32_Service'
-    foreach ($s in @($script:Data.Services | Where-Object { $_.StartName })) { Add-RedactionLiteral ([string]$s.StartName) 'ACCOUNT' }
-    foreach ($s in @($script:Data.Services | Where-Object { $_.StartMode -in @('Auto','Manual') } | Sort-Object StartMode,DisplayName)) {
-        Add-Result 'SERVICES' $s.Name 'INFO' $s.DisplayName @(('State=' + $s.State),('StartMode=' + $s.StartMode),('LogOnAs=' + $s.StartName)) -Source 'Win32_Service'
-    }
-}
-
-# ---------------------------------------------------------------------------
-Register-Check -Id 'vmware' -Name 'VMware guest readiness' -Script {
-    if ($script:Data.Platform.Hypervisor -ne 'VMware') {
-        Add-Result 'VMWARE' 'Applicability' 'INFO' ('Not a VMware VM (' + $script:Data.Platform.Type + ')') -Source 'Platform classification'
-        return
-    }
-    $tools = @($script:Data.Apps | Where-Object { $_.Name -eq 'VMware Tools' }) | Select-Object -First 1
-    $version = ''
-    if ($tools) { $version = [string]$tools.Version }
-    else {
-        $exe = Join-Path $env:ProgramFiles 'VMware\VMware Tools\vmtoolsd.exe'
-        if (Test-Path -LiteralPath $exe) { $version = [string](Get-Item -LiteralPath $exe).VersionInfo.ProductVersion }
-    }
-    $decision = Get-VMwareToolsDecision $version $TargetServerVersion
-    $toolsSvc = @($script:Data.Services | Where-Object { $_.Name -eq 'VMTools' }) | Select-Object -First 1
-    $svcText = 'VMTools service not found'
-    if ($toolsSvc) { $svcText = 'VMTools service ' + $toolsSvc.State + ', ' + $toolsSvc.StartMode }
-    Add-Result 'VMWARE' 'VMwareTools' $decision.Status ('Version=' + $version) $svcText -Recommendation $decision.Text -Source 'Uninstall registry / vmtoolsd.exe'
-
-    $firmware = 'BIOS'
-    if (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\State') { $firmware = 'EFI' }
-    Add-Result 'VMWARE' 'VMFirmware' 'INFO' $firmware ('BIOS version=' + $script:Data.BIOS.SMBIOSBIOSVersion) -Recommendation 'BIOS-firmware VMs upgrade in place; Secure Boot and vTPM need EFI firmware.' -Source 'SecureBoot registry, Win32_BIOS'
-
-    foreach ($drv in @($script:Data.KernelDrivers | Where-Object { $_.Name -match '^(pvscsi|vmxnet3|vmxnet3ndis6|vsepflt|vnetflt|vnetWFP|vmci|vsock|vm3dmp|vmmemctl|vmhgfs|vmrawdsk|vmusbmouse|vmmouse|glxgi)' } | Sort-Object Name)) {
-        $fileVersion = ''
-        $path = ([string]$drv.PathName -replace '^\\\?\?\\','' -replace '^\\SystemRoot', $env:windir -replace '^(?i)system32', (Join-Path $env:windir 'System32'))
-        try { if ($path -and (Test-Path -LiteralPath $path)) { $fileVersion = (Get-Item -LiteralPath $path).VersionInfo.FileVersion } } catch { Write-Swallowed $_ }
-        Add-Result 'VMWARE' ('Driver: ' + $drv.Name) 'INFO' $drv.DisplayName ('FileVersion=' + $fileVersion) -Source 'Win32_SystemDriver'
-    }
-
-    $hostText = 'Confirm the ESXi host version supports ' + (Get-ReleaseDisplayName $TargetServerVersion) + ' guests (VMware Compatibility Guide).'
-    if ($TargetServerVersion -eq '2025') { $hostText = 'Windows Server 2025 is certified on vSphere 7.0 U3 and 8.0.x. Confirm the host (and any vMotion/DRS target) runs one of these.' }
-    Add-Result 'CHECKLIST' 'VMware host version' 'MANUAL' 'Not visible from inside the guest' '' -Recommendation $hostText -Kind 'Checklist'
-    Add-Result 'CHECKLIST' 'VMware guest OS setting' 'MANUAL' 'After the upgrade' '' -Recommendation ('After IPU, power off the VM and change its Guest OS version to Microsoft Windows Server ' + $TargetServerVersion + ' (64-bit), as Broadcom''s IPU KB 374927 instructs.') -Kind 'Checklist'
-    Add-Result 'VMWARE' 'BroadcomGuidance' 'INFO' 'Broadcom KB 374927' 'Broadcom recommends a new VM with a clean install over an in-place upgrade of the guest OS.' -Recommendation 'Company decision; listed so the choice to do an IPU is made knowingly.' -Kind 'Observation' -Source 'knowledge.broadcom.com/external/article/374927'
-}
-
-# ---------------------------------------------------------------------------
-Register-Check -Id 'drivers' -Name 'Non-Microsoft drivers' -Script {
-    $unsigned = @()
-    $pnp = @(); $pnpError = ''
-    try { $pnp = @(Get-CimRequired 'Win32_PnPSignedDriver' | Where-Object { $_.DeviceName -and $_.DriverProviderName -and $_.DriverProviderName -notmatch '^Microsoft' }) }
-    catch {
-        $pnpError = $_.Exception.Message; Write-Swallowed $_
-        Add-Result 'DRIVERS' 'DeviceDrivers' 'MANUAL' 'The device driver list could not be read' $pnpError -Recommendation 'List the third-party drivers by hand (driverquery /v, or Device Manager) before the change; old drivers are the most common cause of IPU rollback.' -Kind 'Finding' -Source 'Win32_PnPSignedDriver'
-    }
-    foreach ($d in @($pnp | Sort-Object DeviceName,DriverVersion -Unique)) {
-        $date = [string]$d.DriverDate
-        $driverDate = ConvertTo-DateTimeValue $d.DriverDate
-        if ($driverDate) { $date = $driverDate.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) }
-        Add-Result 'DRIVERS' ('Device: ' + $d.DeviceName) 'INFO' ('Provider=' + $d.DriverProviderName) @(('Version=' + $d.DriverVersion),('Date=' + $date),('Class=' + $d.DeviceClass),('Signed=' + $d.IsSigned)) -Source 'Win32_PnPSignedDriver'
-        if ($d.IsSigned -eq $false) { $unsigned += $d.DeviceName }
-    }
-    $kernelCount = 0
-    foreach ($drv in @($script:Data.KernelDrivers | Sort-Object Name)) {
-        $path = ([string]$drv.PathName -replace '^\\\?\?\\','' -replace '^\\SystemRoot', $env:windir -replace '^(?i)system32', (Join-Path $env:windir 'System32'))
-        if (-not $path -or -not (Test-Path -LiteralPath $path)) { continue }
-        $info = $null
-        try { $info = (Get-Item -LiteralPath $path).VersionInfo } catch { Write-Swallowed $_; continue }
-        if ($info.CompanyName -and $info.CompanyName -notmatch 'Microsoft') {
-            $kernelCount++
-            Add-Result 'DRIVERS' ('Kernel driver: ' + $drv.Name) 'INFO' ('Company=' + $info.CompanyName) @(('FileVersion=' + $info.FileVersion),('Path=' + $path)) -Source 'Win32_SystemDriver'
-        }
-    }
-    $devicesText = 'NonMicrosoftDevices=' + @($pnp | Sort-Object DeviceName -Unique).Count
-    if ($pnpError) { $devicesText = 'NonMicrosoftDevices=unknown' }
-    Add-Result 'DRIVERS' 'Summary' 'INFO' ($devicesText + ', NonMicrosoftKernelDrivers=' + $kernelCount) -Recommendation 'Old third-party drivers are the most common cause of IPU rollback (0xC1900101). Update them, especially storage, network and security drivers, before IPU.' -Source 'Win32_PnPSignedDriver, Win32_SystemDriver'
-    if ($unsigned.Count -gt 0) {
-        Add-Result 'DRIVERS' 'UnsignedDrivers' 'WARNING' ('Count=' + $unsigned.Count) ($unsigned -join ', ') -Recommendation 'Unsigned drivers may not load after the upgrade. Replace them with signed versions before IPU.' -Source 'Win32_PnPSignedDriver'
-    }
-}
-
-# ---------------------------------------------------------------------------
-Register-Check -Id 'ports' -Name 'Listening ports' -Script {
-    if (-not (Test-CommandAvailable 'Get-NetTCPConnection')) {
-        $script:Data.Snapshot.Remove('Ports')
-        Add-Result 'PORTS' 'ListeningPorts' 'MANUAL' 'Get-NetTCPConnection unavailable' -Recommendation 'List the listening ports by hand (netstat -ano) for the post-upgrade test plan.' -Kind 'Finding' -Source 'NetTCPIP'
-        return
-    }
-    $procNames = @{}
-    # SilentlyContinue: process names only label the owners; a process that ended meanwhile is normal.
-    foreach ($proc in @(Get-Process -ErrorAction SilentlyContinue)) { $procNames[[int]$proc.Id] = $proc.ProcessName }
-    $svcByPid = @{}
-    foreach ($svc in $script:Data.Services) {
-        if ($svc.ProcessId -and [int]$svc.ProcessId -gt 0) {
-            $key = [int]$svc.ProcessId
-            if (-not $svcByPid.ContainsKey($key)) { $svcByPid[$key] = @() }
-            $svcByPid[$key] += [string]$svc.Name
-        }
-    }
-    $owners = @{}
-    $endpoints = @()
-    # A failed query stops the check (reported as not completed); only "nothing found" is an empty list (#242).
-    $tcpListeners = @()
-    try { $tcpListeners = @(Get-NetTCPConnection -State Listen -ErrorAction Stop) } catch { if (-not (Test-NotFoundError $_)) { throw } }
-    foreach ($c in $tcpListeners) { $endpoints += [pscustomobject]@{ Key=('TCP:' + $c.LocalPort); Port=[int]$c.LocalPort; ProcessId=[int]$c.OwningProcess } }
-    if (Test-CommandAvailable 'Get-NetUDPEndpoint') {
-        $udpEndpoints = @()
-        try { $udpEndpoints = @(Get-NetUDPEndpoint -ErrorAction Stop) } catch { if (-not (Test-NotFoundError $_)) { throw } }
-        foreach ($u in $udpEndpoints) { $endpoints += [pscustomobject]@{ Key=('UDP:' + $u.LocalPort); Port=[int]$u.LocalPort; ProcessId=[int]$u.OwningProcess } }
-    }
-    # Ports from the Windows dynamic range (49152+) change between boots and
-    # are left out so the before/after comparison stays meaningful.
-    foreach ($ep in @($endpoints | Where-Object { $_.Port -lt 49152 })) {
-        $owner = ''
-        if ($svcByPid.ContainsKey($ep.ProcessId)) { $owner = 'Service ' + (@($svcByPid[$ep.ProcessId]) -join '/') }
-        elseif ($procNames.ContainsKey($ep.ProcessId)) { $owner = 'Process ' + $procNames[$ep.ProcessId] }
-        if (-not $owners.ContainsKey($ep.Key)) { $owners[$ep.Key] = @() }
-        if ($owner -and $owners[$ep.Key] -notcontains $owner) { $owners[$ep.Key] += $owner }
-    }
-    foreach ($k in @($owners.Keys | Sort-Object { [int](($_ -split ':')[1]) }, { $_ })) {
-        Add-Result 'PORTS' $k 'INFO' (@($owners[$k]) -join ', ') -Source 'Get-NetTCPConnection, Get-NetUDPEndpoint'
-    }
-    $script:Data.Snapshot.Ports = @($owners.Keys | Sort-Object)
-    # Who opened each port, so the comparison can pair a closed port with a
-    # disabled service (#158).
-    $po = [ordered]@{}; foreach ($k in @($owners.Keys | Sort-Object)) { $po[$k] = (@($owners[$k]) -join ', ') }
-    $script:Data.Snapshot.PortOwners = $po
-    Add-Result 'PORTS' 'Summary' 'INFO' ('ListeningPorts=' + $owners.Count) 'Use this list for the post-upgrade test plan. Dynamic ports (49152+) are not listed.' -Source 'Get-NetTCPConnection, Get-NetUDPEndpoint'
-}
-
-# ---------------------------------------------------------------------------
-Register-Check -Id 'tasks' -Name 'Scheduled tasks' -Script {
-    if (-not (Test-CommandAvailable 'Get-ScheduledTask')) {
-        Add-Result 'TASKS' 'ScheduledTasks' 'INFO' 'Get-ScheduledTask unavailable' -Source 'ScheduledTasks module'
-        return
-    }
-    $named = @(); $perUser = 0
-    foreach ($t in @(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.TaskPath -notlike '\Microsoft\*' } | Sort-Object TaskPath,TaskName)) {
-        $user = [string]$t.Principal.UserId
-        if (-not $user) { $user = [string]$t.Principal.GroupId }
-        $actions = @($t.Actions | ForEach-Object { (([string]$_.Execute) + ' ' + ([string]$_.Arguments)).Trim() } | Where-Object { $_ }) -join '; '
-        $fullName = $t.TaskPath + $t.TaskName
-        $isBuiltIn = Test-BuiltInTaskAccount $user ([string]$t.Principal.LogonType)
-        if ($user -and -not $isBuiltIn) { Add-RedactionLiteral $user 'ACCOUNT' }
-        $script:Data.Snapshot.Tasks += $fullName
-        # Windows' own per-user feed tasks: one line for all of them (#214).
-        if (Test-WindowsPerUserTask $fullName) { $perUser++; continue }
-        Add-Result 'TASKS' $fullName 'INFO' ('RunAs=' + $user) @(('State=' + $t.State),('Action=' + $actions)) -Source 'Get-ScheduledTask'
-        if ($user -and -not $isBuiltIn) { $named += ($fullName + ' (' + $user + ')') }
-    }
-    if ($perUser -gt 0) {
-        Add-Result 'TASKS' 'WindowsPerUserTasks' 'INFO' ('Count=' + $perUser) 'User_Feed_Synchronization-{GUID}: created by Windows for each user who signed in; they run as that user.' -Recommendation 'Not relevant for the upgrade.' -Source 'Get-ScheduledTask'
-    }
-    if ($named.Count -gt 0) {
-        Add-Result 'TASKS' 'TasksWithNamedAccounts' 'WARNING' ('Count=' + $named.Count) $named -Recommendation 'These tasks run as named accounts with stored credentials. Confirm the passwords are known/managed and test the tasks after IPU.' -Kind 'Observation' -Source 'Get-ScheduledTask'
-    }
-}
-
-# ---------------------------------------------------------------------------
-Register-Check -Id 'eolcandidates' -Name 'Products for end-of-life checks' -Script {
-    # Which products with an end-of-life date are on the server (#286, ADR
-    # 0003). Only reads: uninstall entries, service command lines, file version
-    # resources, one registry value. A product is never run to ask its version.
-    $found = @(Find-EolAppCandidate $script:EolDetection $script:Data.Apps)
-    $targets = @(Get-EolServiceTarget $script:EolDetection $script:Data.Services)
-    foreach ($d in @($script:EolDetection)) {
-        if (-not $d.Probe) { continue }
-        foreach ($pattern in @($d.Probe)) {
-            $r = Resolve-EolProbePath $pattern
-            foreach ($p in @($r.Paths)) { $targets += [pscustomobject]@{ Product = [string]$d.Product; Name = [string]$d.Name; Path = $p; Source = 'File probe'; Evidence = (Split-Path -Leaf $p) } }
-            if ($r.Error) { $found += [pscustomobject]@{ Product = [string]$d.Product; Name = [string]$d.Name; Version = ''; Source = 'File probe'; Evidence = $pattern; Error = $r.Error } }
-        }
-    }
-    foreach ($t in $targets) {
-        $v = Get-FileVersionText $t.Path
-        $found += [pscustomobject]@{ Product = $t.Product; Name = $t.Name; Version = $v.Version; Source = $t.Source; Evidence = $t.Evidence; Error = $v.Error }
-    }
-    $netfxError = ''
-    try {
-        $nd = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full' -ErrorAction Stop
-        $fx = ConvertFrom-DotNetFrameworkRelease $nd.Release
-        if ($fx) { $found += [pscustomobject]@{ Product = 'dotnetfx'; Name = '.NET Framework'; Version = $fx; Source = 'Registry'; Evidence = 'NDP\v4\Full Release' } }
-    } catch { if (-not (Test-NotFoundError $_)) { $netfxError = $_.Exception.Message } }
-
-    $script:Data.EolCandidates = @(Merge-EolCandidate $found)
-    foreach ($c in $script:Data.EolCandidates) {
-        $name = @($script:EolDetection | Where-Object { $_.Product -eq $c.Product } | ForEach-Object { $_.Name })[0]
-        if (-not $name) { $name = $(if ($c.Product -eq 'dotnetfx') { '.NET Framework' } else { $c.Product }) }
-        Add-Result 'APPLICATIONS' ('EOL candidate: ' + $name) 'INFO' $c.Version ($c.Source + ': ' + $c.Evidence) -Kind 'Observation' -Source 'Uninstall registry, service files, file versions'
-    }
-    # A product seen but without a version is a MANUAL finding, not silence.
-    $have = @{}; foreach ($c in $script:Data.EolCandidates) { $have[$c.Product] = $true }
-    $reported = @{}
-    foreach ($f in @($found | Where-Object { -not $_.Version })) {
-        if ($have.ContainsKey($f.Product) -or $reported.ContainsKey($f.Product)) { continue }
-        $reported[$f.Product] = $true
-        $why = 'The version could not be read.'
-        if ($f.PSObject.Properties['Error'] -and $f.Error) { $why = [string]$f.Error }
-        Add-Result 'APPLICATIONS' ('EOL detection: ' + $f.Name) 'MANUAL' ($f.Name + ' found, version not known') ($f.Source + ': ' + $f.Evidence + '. ' + $why) -Recommendation ('Read the version of ' + $f.Name + ' by hand (its file properties or its own documentation) and check its end-of-life date. The assessment never runs a product to ask.') -Kind 'Finding' -Source $f.Source
-    }
-    if ($netfxError) {
-        Add-Result 'APPLICATIONS' 'EOL detection: .NET Framework' 'MANUAL' '.NET Framework version could not be read' $netfxError -Recommendation 'Check the .NET Framework version by hand (Release value under HKLM\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full).' -Kind 'Finding' -Source 'Registry'
-    }
-}
-
-Register-Check -Id 'eolsnapshot' -Name 'End-of-life snapshot' -Script {
-    $scriptFolder = ''
-    if ($script:ScriptFolder) { $scriptFolder = $script:ScriptFolder }
-    $searched = @(Get-EolSnapshotSearchPath $EolSnapshotPath $scriptFolder $ReportDirectory)
-    $found = ''; $asOf = ''; $readError = ''; $snap = $null
-    foreach ($candidate in $searched) {
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) { $found = $candidate; break }
-    }
-    if ($found) {
-        try {
-            $snap = Get-Content -LiteralPath $found -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-            $asOf = $snap.asOf
-            if ($asOf -is [datetime]) { $asOf = $asOf.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) }
-            $asOf = [string]$asOf
-        } catch { $readError = $_.Exception.Message }
-    }
-    $today = Get-Date
-    $d = Get-EolSnapshotDecision $searched $found $asOf $readError ([bool]$EolSnapshotPath) $today
-    Add-Result 'APPLICATIONS' 'EOL snapshot' $d.Status $d.Value $d.Details -Recommendation $d.Recommendation -Kind $d.Kind -Source 'eol-snapshot.json'
-    # With a readable snapshot, every product the eolcandidates check found gets a verdict (#275).
-    if (-not $found -or $readError -or -not $snap) { return }
-    foreach ($c in @($script:Data.EolCandidates)) {
-        $v = Get-EolCandidateVerdict $c $snap $today
-        $recommendation = Get-EolRecommendation $v
-        $kind = Get-EolResultKind $v
-        Add-Result 'APPLICATIONS' ('EOL: ' + $v.Name + ' ' + $c.Version) $v.Status $v.Text ($c.Source + ': ' + $c.Evidence) -Recommendation $recommendation -Kind $kind -Source 'eol-snapshot.json'
-    }
-}
-Register-Check -Id 'checklist' -Name 'Standard change checklist' -Script {
-    $isVM = ($script:Data.Platform.Type -eq 'Virtual')
-    $fallback = 'Confirm a tested bare-metal recovery path and a recent successful backup.'
-    if ($isVM) { $fallback = 'Confirm a recent successful backup externally, snapshot eligibility (' + $script:Data.Platform.Hypervisor + ') and the approved snapshot procedure.' }
-    Add-Result 'CHECKLIST' 'Backup and fallback' 'MANUAL' 'Cannot be proven from inside the guest' -Recommendation $fallback -Kind 'Checklist'
-    Add-Result 'CHECKLIST' 'Credentials and console access' 'MANUAL' 'Not provable by an unattended inventory' -Recommendation 'Validate domain logon, PAM checkout and local fallback credentials, plus console (vCenter/iLO/iDRAC) access in case network logon fails.' -Kind 'Checklist'
-    $lic = Get-TargetLicensingDecision ([string]$script:Data.ActivationKind) ([string]$script:Data.KmsEndpoint) $TargetServerVersion
-    Add-Result 'CHECKLIST' 'Target licensing' 'MANUAL' $lic.Value -Recommendation $lic.Text -Kind 'Checklist'
-    $media = $script:Data.RecommendedMedia; if (-not $media) { $media = 'See Upgrade path section' }
-    Add-Result 'CHECKLIST' 'Installation media' 'MANUAL' $media -Recommendation 'Use media with the exact edition, installation type and language listed. Start Setup with /ResizeRecoveryPartition Disable, so Setup does not shrink C: to add a recovery partition after it (#161). Optional pre-flight: setup.exe /auto upgrade /compat scanonly with the same media.' -Kind 'Checklist' -Command (Get-RecommendationCommand 'SetupNoRecoveryPartition').Command -CommandKind 'Change' -Link $script:DocLinks.SetupOptions.Url -LinkTitle $script:DocLinks.SetupOptions.Title
-    Add-Result 'CHECKLIST' 'Application owner sign-off' 'MANUAL' 'Required for every listed workload' -Recommendation 'Get sign-off from each workload owner, including a post-upgrade test plan.' -Kind 'Checklist'
-    Add-Result 'CHECKLIST' 'Monitoring and management agents' 'MANUAL' 'Backend communication cannot be proven locally' -Recommendation 'Confirm SA, UD and Operations agents are reporting in the backend before the change; verify again afterwards.' -Kind 'Checklist'
-}
-
-# ---------------------------------------------------------------------------
-# SLOW CHECKS (time-boxed, run after the checkpoint report is written)
-# ---------------------------------------------------------------------------
-Register-Check -Id 'printbackup' -Name 'Print server backup (PrintBrm)' -Phase 'Slow' -Script {
-    # #148: PrintBrm -B exports printers, ports, drivers and queues into one
-    # file. It only reads the spooler configuration. The file is not redacted
-    # and is never part of the report.
-    if ($AssessmentMode -eq 'Post') { $script:CurrentCheckMessage = 'Not applicable: not needed after the upgrade'; $script:CurrentCheckOutcome = 'Skipped'; return }
-    if (-not $script:Data.PrintServer) { $script:CurrentCheckMessage = 'Not applicable: not a print server'; $script:CurrentCheckOutcome = 'Skipped'; return }
-    $cmd = Get-PrintBackupCommand
-    if (-not $EnablePrintBackup) {
-        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' 'Not taken (EnablePrintBackup is off)' -Recommendation 'Export the print configuration before the change, to a drive with enough free space, and keep the file off the server.' -Kind 'Finding' -Source 'SETTINGS' -Command $cmd -CommandKind 'Check'
-        return
-    }
-    $brm = Join-Path $env:windir 'System32\spool\tools\PrintBrm.exe'
-    if (-not (Test-Path -LiteralPath $brm -PathType Leaf)) {
-        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' 'PrintBrm.exe not found' $brm -Recommendation 'Export the printers with Print Management (Export printers to a file) before the change, and keep the file off the server.' -Kind 'Finding' -Source 'PrintBrm.exe'
-        return
-    }
-    $root = [IO.Path]::GetPathRoot($EvidenceRoot).TrimEnd('\')
-    $disk = @(Get-CimRequired 'Win32_LogicalDisk' ("DeviceID='" + $root + "'")) | Select-Object -First 1
-    if (-not $disk -or $null -eq $disk.FreeSpace) { throw ('Could not read the free space of ' + $root) }
-    $space = Get-PrintBackupSpaceDecision (Get-PrintDriverStoreSize) ([long]$disk.FreeSpace)
-    if (-not $space.Proceed) {
-        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' ('Skipped: not enough free space on ' + $root) $space.Text -Recommendation 'Run the export to a drive or share with enough free space before the change, and keep the file off the server.' -Kind 'Finding' -Source 'spool\drivers, Win32_LogicalDisk' -Command $cmd -CommandKind 'Check'
-        return
-    }
-    $timeout = [math]::Min($PrintBackupTimeoutMinutes * 60, $script:SlowSecondsLeft)
-    $dest = Join-Path (Initialize-EvidenceFolder 'Printers') ($script:SafeComputerName + '-IPU-Print-' + (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture))
-    $null = Initialize-OutputFolder $dest
-    $file = Join-Path $dest ($script:SafeComputerName + '-printers.printerExport')
-    $sw = [Diagnostics.Stopwatch]::StartNew()
-    $r = Invoke-NativeCapture $brm @('-B', '-F', $file) $timeout
-    $sw.Stop()
-    $duration = 'Duration=' + (Format-Duration $sw.Elapsed)
-    if ($r.TimedOut) {
-        # A cut-off export is not a backup; remove this run's partial file.
-        if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
-        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' ('Stopped after ' + [math]::Round($timeout / 60) + ' minutes') @($duration, $space.Text, (Get-StopFailureText $r.StillRunning)) -Recommendation 'Run the export by hand outside the SA job, before the change, and keep the file off the server.' -Kind 'Finding' -Source 'PrintBrm.exe -B' -Command $cmd -CommandKind 'Check'
-        $script:CurrentCheckOutcome = 'TimedOut'; return
-    }
-    if ($r.Error) { throw $r.Error }
-    if ($r.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $file -PathType Leaf)) {
-        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' ('PrintBrm failed (exit code ' + $r.ExitCode + ')') @($duration, (@($r.Lines | Select-Object -Last 3) -join ' | ')) -Recommendation 'Read the PrintBrm output and the PrintBrm event log (Applications and Services Logs > Microsoft > Windows > PrintBRM), then export by hand before the change.' -Kind 'Finding' -Source 'PrintBrm.exe -B' -Command $cmd -CommandKind 'Check'
-        return
-    }
-    $size = [math]::Round(([double](Get-Item -LiteralPath $file).Length / 1MB), 1)
-    Add-Result 'PRINTING' 'PrintBackup' 'OK' $file @(('SizeMB=' + $size), $duration, $space.Text) -Recommendation 'Copy the file off the server before the change: a backup on C: does not survive a failed upgrade that needs a rebuild. It holds the full print configuration and is not redacted. Restore: PrintBrm -R -F <file> (see the user guide).' -Source 'PrintBrm.exe -B (reads the spooler configuration)'
-}
-
-Register-Check -Id 'dism' -Name 'DISM component store scan' -Phase 'Slow' -Script {
-    if (-not $RunDISMScanHealth) {
-        Add-Result 'WINDOWS_HEALTH' 'DISM ScanHealth' 'MANUAL' 'Skipped by configuration' -Recommendation 'Run the read-only scan before final IPU approval.'
-        $script:CurrentCheckMessage = 'Not configured: switched off with -RunDISMScanHealth $false'
-        $script:CurrentCheckOutcome = 'Skipped'; return
-    }
-    $timeout = [math]::Min($DISMTimeoutMinutes * 60, $script:SlowSecondsLeft)
-    $sw = [Diagnostics.Stopwatch]::StartNew()
-    $r = Invoke-NativeCapture (Join-Path $env:windir 'System32\dism.exe') @('/English','/Online','/Cleanup-Image','/ScanHealth') $timeout
-    $sw.Stop()
-    $duration = 'Duration=' + (Format-Duration $sw.Elapsed)
-    if ($r.TimedOut) {
-        Add-Result 'WINDOWS_HEALTH' 'DISM ScanHealth' 'MANUAL' ('Stopped after ' + [math]::Round($timeout/60) + ' minutes') @($duration, (Get-StopFailureText $r.StillRunning)) -Recommendation 'Run "DISM /Online /Cleanup-Image /ScanHealth" manually outside the SA job.' -Source 'dism.exe'
-        $script:CurrentCheckOutcome = 'TimedOut'; return
-    }
-    if ($r.Error) { throw $r.Error }
-    $verdict = Get-DismVerdict $r.Output $r.ExitCode
-    $summary = @($r.Lines | Where-Object { $_ -notmatch '^\[=*' -and $_ -notmatch '%' } | Select-Object -Last 3) -join ' | '
-    Add-Result 'WINDOWS_HEALTH' 'DISM ScanHealth' $verdict.Status ('ExitCode=' + $r.ExitCode) @($duration,$summary,('Basis=' + $verdict.Basis)) -Recommendation $verdict.Recommendation -Source 'dism.exe /English /Online /Cleanup-Image /ScanHealth'
-}
-
-Register-Check -Id 'sfc' -Name 'SFC protected file verification' -Phase 'Slow' -Script {
-    if (-not $RunSFCVerifyOnly) {
-        Add-Result 'WINDOWS_HEALTH' 'SFC VerifyOnly' 'MANUAL' 'Skipped by configuration' -Recommendation 'Run the read-only verification before final IPU approval.'
-        $script:CurrentCheckMessage = 'Not configured: switched off with -RunSFCVerifyOnly $false'
-        $script:CurrentCheckOutcome = 'Skipped'; return
-    }
-    $timeout = [math]::Min($SFCTimeoutMinutes * 60, $script:SlowSecondsLeft)
-    $started = Get-Date
-    $sw = [Diagnostics.Stopwatch]::StartNew()
-    $r = Invoke-NativeCapture (Join-Path $env:windir 'System32\sfc.exe') @('/verifyonly') $timeout
-    $sw.Stop()
-    $duration = 'Duration=' + (Format-Duration $sw.Elapsed)
-    if ($r.TimedOut) {
-        Add-Result 'WINDOWS_HEALTH' 'SFC VerifyOnly' 'MANUAL' ('Stopped after ' + [math]::Round($timeout/60) + ' minutes') @($duration, (Get-StopFailureText $r.StillRunning)) -Recommendation 'Run "sfc /verifyonly" manually outside the SA job.' -Source 'sfc.exe'
-        $script:CurrentCheckOutcome = 'TimedOut'; return
-    }
-    if ($r.Error) { throw $r.Error }
-    $cbs = @()
-    $stamp = $started.AddMinutes(-1).ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)
-    foreach ($line in (Read-FileTail (Join-Path $env:windir 'Logs\CBS\CBS.log'))) {
-        if ($line.Length -ge 16 -and $line.Substring(0,16) -ge $stamp) { $cbs += $line }
-    }
-    $verdict = Get-SfcVerdict $r.Output $cbs
-    $summary = @($r.Lines | Where-Object { $_ -notmatch '\d{1,3}\s*%' } | Select-Object -Last 2) -join ' | '
-    $rec = @{ OK=''; ACTION='Resolve protected-file integrity violations (DISM /RestoreHealth, then sfc /scannow in a change) and re-run before IPU.'; WARNING='SFC did not check anything: a Windows repair is waiting for a reboot (see the pending-reboot row). Reboot, then re-run the assessment. This is not evidence of damaged files.'; MANUAL='Result could not be classified; review the output and CBS.log.' }[$verdict.Status]
-    Add-Result 'WINDOWS_HEALTH' 'SFC VerifyOnly' $verdict.Status ('ExitCode=' + $r.ExitCode + ', Basis=' + $verdict.Basis) @($duration,$summary) -Recommendation $rec -Source 'sfc.exe /verifyonly, CBS.log'
-}
-
-Register-Check -Id 'compatscan' -Name 'Setup compatibility scan' -Phase 'Slow' -Script {
-    if ($AssessmentMode -eq 'Post') { $script:CurrentCheckMessage = 'Not applicable after the upgrade'; $script:CurrentCheckOutcome = 'Skipped'; return }
-    if (-not $TargetMediaPath) {
-        Add-Result 'COMPAT_SCAN' 'SetupCompatibilityScan' 'INFO' 'Not run - no installation media given' ('Optional. To let Windows Setup check this server with Microsoft''s own compatibility rules, run again with -TargetMediaPath set to the ' + (Get-ReleaseDisplayName $TargetServerVersion) + ' ISO, or a folder or share with the installation files.') -Source 'SETTINGS' -Link $script:DocLinks.SetupOptions.Url -LinkTitle $script:DocLinks.SetupOptions.Title
-        $script:CurrentCheckMessage = 'Not configured: no installation media given (-TargetMediaPath)'
-        $script:CurrentCheckOutcome = 'Skipped'; return
-    }
-    $timeout = [math]::Min($CompatScanTimeoutMinutes * 60, $script:SlowSecondsLeft)
-    $mountedIso = $null
-    try {
-        $mediaRoot = $TargetMediaPath
-        if ($TargetMediaPath -match '\.iso$') {
-            if (-not (Test-Path -LiteralPath $TargetMediaPath)) { throw ('ISO not found: ' + $TargetMediaPath) }
-            $mountedIso = Mount-DiskImage -ImagePath $TargetMediaPath -PassThru -ErrorAction Stop
-            $letter = ($mountedIso | Get-Volume -ErrorAction Stop).DriveLetter
-            if (-not $letter) { throw 'The mounted ISO received no drive letter.' }
-            $mediaRoot = $letter + ':\'
-        }
-        $setupExe = Join-Path $mediaRoot 'setup.exe'
-        if (-not (Test-Path -LiteralPath $setupExe)) { throw ('setup.exe not found in ' + $mediaRoot) }
-
-        # Pick the image that matches this server's edition and installation
-        # type; a mismatch is itself a finding (wrong media).
-        $imageFile = @('sources\install.wim','sources\install.esd') | ForEach-Object { Join-Path $mediaRoot $_ } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-        if (-not $imageFile) { throw 'No install.wim or install.esd found in the media.' }
-        $wantEdition = ([string]$script:Data.CV.EditionID -replace '(Core|Cor)$','')
-        $wantType = [string]$script:Data.CV.InstallationType
-        $index = 0; $imageNames = @(); $imageLanguages = ''
-        foreach ($img in @(Get-WindowsImage -ImagePath $imageFile -ErrorAction Stop)) {
-            $detail = Get-WindowsImage -ImagePath $imageFile -Index $img.ImageIndex -ErrorAction Stop
-            $imageNames += ('[' + $img.ImageIndex + '] ' + $img.ImageName)
-            if (-not $index -and [string]$detail.EditionId -eq $wantEdition -and [string]$detail.InstallationType -eq $wantType) {
-                $index = [int]$img.ImageIndex; $imageLanguages = (@($detail.Languages) -join ',')
-            }
-        }
-        if (-not $index) {
-            Add-Result 'COMPAT_SCAN' 'MatchingImage' 'ACTION' ('No image for ' + $wantEdition + ' / ' + $wantType + ' in the media') $imageNames -Recommendation 'The media does not contain an image matching this server''s edition and installation type. Use the correct media; IPU cannot switch edition down or between Core and Desktop Experience.' -Source $imageFile
-            return
-        }
-        Add-Result 'COMPAT_SCAN' 'MatchingImage' 'OK' ('Index ' + $index) @(('Languages=' + $imageLanguages),($imageNames -join ' | ')) -Source $imageFile
-        if ($script:Data.InstallLanguage -and $imageLanguages -and -not (Test-MediaLanguageMatch @($imageLanguages -split ',') $script:Data.InstallLanguage)) {
-            Add-Result 'COMPAT_SCAN' 'MediaLanguage' 'BLOCKER' ('Media=' + $imageLanguages + ', Installed=' + $script:Data.InstallLanguage) '' -Recommendation 'Changing language during IPU is not supported. Use media in the installed language.' -Source $imageFile
-        }
-
-        $arguments = @('/auto','upgrade','/quiet','/compat','scanonly','/imageindex',[string]$index,'/dynamicupdate','disable')
-        if ($TargetServerVersion -eq '2025') { $arguments += @('/eula','accept') }
-        $sw = [Diagnostics.Stopwatch]::StartNew()
-        $r = Invoke-NativeCapture $setupExe $arguments $timeout
-        $sw.Stop()
-        if ($r.TimedOut) {
-            Add-Result 'COMPAT_SCAN' 'SetupCompatibilityScan' 'MANUAL' ('Stopped after ' + [math]::Round($timeout/60) + ' minutes') @(('Duration=' + (Format-Duration $sw.Elapsed)), (Get-StopFailureText $r.StillRunning)) -Recommendation 'Run the scan manually: setup.exe /auto upgrade /quiet /compat scanonly /imageindex <n>.' -Source 'setup.exe'
-            $script:CurrentCheckOutcome = 'TimedOut'; return
-        }
-        if ($r.Error) { throw $r.Error }
-        $decision = Get-CompatScanDecision $r.ExitCode
-
-        # Keep Setup's CompatData XML and list the hard blocks it names.
-        $evidence = Join-Path $ReportDirectory ($script:SafeComputerName + '-CompatData')
-        $blocks = @()
-        $panther = 'C:\$WINDOWS.~BT\Sources\Panther'
-        # SilentlyContinue: Setup writes no CompatData file when it finds nothing; the verdict comes from the exit code.
-        $xmlFiles = @(Get-ChildItem -LiteralPath $panther -Filter 'CompatData*.xml' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge (Get-Date).AddSeconds(-1 * ($sw.Elapsed.TotalSeconds + 60)) })
-        if ($xmlFiles.Count -gt 0) {
-            $null = Initialize-OutputFolder $evidence
-            foreach ($x in $xmlFiles) {
-                Copy-Item -LiteralPath $x.FullName -Destination $evidence -Force
-                try {
-                    [xml]$doc = Get-Content -LiteralPath $x.FullName -Raw
-                    foreach ($node in @($doc.SelectNodes('//*[@BlockingType="Hard"]'))) {
-                        $owner = $node.ParentNode
-                        $label = @($owner.Attributes['Name'],$owner.Attributes['Title'],$owner.Attributes['Id'] | Where-Object { $_ } | ForEach-Object { $_.Value }) | Select-Object -First 1
-                        if (-not $label) { $label = $owner.LocalName }
-                        $blocks += $label
-                    }
-                } catch { Write-Swallowed $_ }
-            }
-        }
-        $details = @(('Duration=' + (Format-Duration $sw.Elapsed)),('ImageIndex=' + $index))
-        if ($blocks.Count -gt 0) { $details += ('Hard blocks: ' + (@($blocks | Sort-Object -Unique) -join ', ')) }
-        if ($xmlFiles.Count -gt 0) { $details += ('CompatData copied to ' + $evidence) }
-        Add-Result 'COMPAT_SCAN' 'SetupCompatibilityScan' $decision.Status ($decision.Code + ' - ' + $decision.Text) $details -Recommendation $(if ($decision.Status -eq 'OK') { '' } else { 'Read the CompatData XML (and Panther setuperr.log) to see exactly what Setup objects to, fix it, and re-run the scan.' }) -Source ('setup.exe /compat scanonly from ' + $TargetMediaPath)
-    } finally {
-        if ($mountedIso) { try { Dismount-DiskImage -ImagePath $TargetMediaPath -ErrorAction Stop | Out-Null } catch { Write-Swallowed $_ } }
-    }
-}
-
-} # end Register-AssessmentCheck
-
 
 # ---------------------------------------------------------------------------
 # RDP access / policy evidence (called by the 'rdp' check)
@@ -6476,6 +6402,90 @@ function Invoke-RdpPolicyAssessment {
         }
         Add-Result 'POLICY_EVIDENCE' 'EvidenceLocation' 'INFO' $script:Data.PolicyEvidence $root -Source 'Local filesystem'
     }
+}
+# Chapter: Backup, services and checklist (docs/checks.md).
+# Each check is one function; Register-AssessmentCheck (50-checks.ps1) lists them in run order.
+
+function Invoke-BackupCheck {
+    $backup = Find-DetectionMatch $script:DetectionPatterns.Backup $script:Data.Apps $script:Data.Services
+    foreach ($m in $backup) {
+        Add-Result 'BACKUP' $m.Label 'INFO' ('Applications=' + @($m.Apps).Count + ', Services=' + @($m.Services).Count) (Get-DetectionEvidence $m) -Source 'Uninstall registry, Win32_Service'
+    }
+    if ($backup.Count -eq 0) {
+        Add-Result 'BACKUP' 'GuestBackupAgent' 'INFO' 'No recognized in-guest backup agent' 'VM-level backup is invisible from inside the guest; this does not mean the server is unprotected.' -Source 'Uninstall registry, Win32_Service'
+    }
+
+    $vss = Invoke-NativeCapture (Join-Path $env:windir 'System32\vssadmin.exe') @('list','writers') 120
+    $writers = ConvertFrom-VssWriterOutput $vss.Lines
+    if ($vss.TimedOut -or $writers.Count -eq 0) {
+        Add-Result 'BACKUP' 'VSSWriters' 'MANUAL' 'VSS writer state could not be read' @(('TimedOut=' + $vss.TimedOut),$vss.Error) -Recommendation 'Run "vssadmin list writers" manually; failed writers break application-consistent backups and snapshots.' -Kind 'Finding' -Source 'vssadmin list writers'
+    }
+    $failed = 0
+    $noError = Get-VssNoErrorText $writers
+    foreach ($w in $writers) {
+        $st = Get-VssWriterStatus $w $noError
+        if ($st -eq 'ACTION') { $failed++ }
+        Add-Result 'BACKUP' ('VSS writer: ' + $w.Name) $st ('[' + $w.StateCode + '] ' + $w.StateText) $w.LastError -Kind 'Evidence' -Source 'vssadmin list writers'
+    }
+    if ($failed -gt 0) {
+        Add-Result 'BACKUP' 'VSSWriters' 'ACTION' ('FailedWriters=' + $failed) -Recommendation 'Resolve VSS writer errors (often fixed by restarting the owning service) so the pre-change backup/snapshot is application-consistent.' -Source 'vssadmin list writers'
+    }
+    foreach ($prov in @(Get-CimSafe 'Win32_ShadowProvider')) {
+        $st = 'OK'; $rec = ''
+        if ($prov.Name -notmatch '^Microsoft (Software|File Share) Shadow Copy provider') { $st = 'WARNING'; $rec = 'Third-party VSS provider: confirm it supports the target OS.' }
+        Add-Result 'BACKUP' ('VSS provider: ' + $prov.Name) $st ('Version=' + $prov.Version) -Recommendation $rec -Kind 'Observation' -Source 'Win32_ShadowProvider'
+    }
+}
+
+function Invoke-ServicesCheck {
+    $auto = @($script:Data.Services | Where-Object { $_.StartMode -eq 'Auto' })
+    $autoStopped = @($auto | Where-Object { $_.State -ne 'Running' })
+    Add-Result 'SERVICES' 'AutomaticServices' 'INFO' ('Total=' + $auto.Count) ('NotRunning=' + $autoStopped.Count) -Recommendation 'Save this list. After IPU, compare which Automatic services are running to spot what did not come back.' -Source 'Win32_Service'
+    foreach ($s in @($script:Data.Services | Where-Object { $_.StartName })) { Add-RedactionLiteral ([string]$s.StartName) 'ACCOUNT' }
+    foreach ($s in @($script:Data.Services | Where-Object { $_.StartMode -in @('Auto','Manual') } | Sort-Object StartMode,DisplayName)) {
+        Add-Result 'SERVICES' $s.Name 'INFO' $s.DisplayName @(('State=' + $s.State),('StartMode=' + $s.StartMode),('LogOnAs=' + $s.StartName)) -Source 'Win32_Service'
+    }
+}
+
+function Invoke-TasksCheck {
+    if (-not (Test-CommandAvailable 'Get-ScheduledTask')) {
+        Add-Result 'TASKS' 'ScheduledTasks' 'INFO' 'Get-ScheduledTask unavailable' -Source 'ScheduledTasks module'
+        return
+    }
+    $named = @(); $perUser = 0
+    foreach ($t in @(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.TaskPath -notlike '\Microsoft\*' } | Sort-Object TaskPath,TaskName)) {
+        $user = [string]$t.Principal.UserId
+        if (-not $user) { $user = [string]$t.Principal.GroupId }
+        $actions = @($t.Actions | ForEach-Object { (([string]$_.Execute) + ' ' + ([string]$_.Arguments)).Trim() } | Where-Object { $_ }) -join '; '
+        $fullName = $t.TaskPath + $t.TaskName
+        $isBuiltIn = Test-BuiltInTaskAccount $user ([string]$t.Principal.LogonType)
+        if ($user -and -not $isBuiltIn) { Add-RedactionLiteral $user 'ACCOUNT' }
+        $script:Data.Snapshot.Tasks += $fullName
+        # Windows' own per-user feed tasks: one line for all of them (#214).
+        if (Test-WindowsPerUserTask $fullName) { $perUser++; continue }
+        Add-Result 'TASKS' $fullName 'INFO' ('RunAs=' + $user) @(('State=' + $t.State),('Action=' + $actions)) -Source 'Get-ScheduledTask'
+        if ($user -and -not $isBuiltIn) { $named += ($fullName + ' (' + $user + ')') }
+    }
+    if ($perUser -gt 0) {
+        Add-Result 'TASKS' 'WindowsPerUserTasks' 'INFO' ('Count=' + $perUser) 'User_Feed_Synchronization-{GUID}: created by Windows for each user who signed in; they run as that user.' -Recommendation 'Not relevant for the upgrade.' -Source 'Get-ScheduledTask'
+    }
+    if ($named.Count -gt 0) {
+        Add-Result 'TASKS' 'TasksWithNamedAccounts' 'WARNING' ('Count=' + $named.Count) $named -Recommendation 'These tasks run as named accounts with stored credentials. Confirm the passwords are known/managed and test the tasks after IPU.' -Kind 'Observation' -Source 'Get-ScheduledTask'
+    }
+}
+
+function Invoke-ChecklistCheck {
+    $isVM = ($script:Data.Platform.Type -eq 'Virtual')
+    $fallback = 'Confirm a tested bare-metal recovery path and a recent successful backup.'
+    if ($isVM) { $fallback = 'Confirm a recent successful backup externally, snapshot eligibility (' + $script:Data.Platform.Hypervisor + ') and the approved snapshot procedure.' }
+    Add-Result 'CHECKLIST' 'Backup and fallback' 'MANUAL' 'Cannot be proven from inside the guest' -Recommendation $fallback -Kind 'Checklist'
+    Add-Result 'CHECKLIST' 'Credentials and console access' 'MANUAL' 'Not provable by an unattended inventory' -Recommendation 'Validate domain logon, PAM checkout and local fallback credentials, plus console (vCenter/iLO/iDRAC) access in case network logon fails.' -Kind 'Checklist'
+    $lic = Get-TargetLicensingDecision ([string]$script:Data.ActivationKind) ([string]$script:Data.KmsEndpoint) $TargetServerVersion
+    Add-Result 'CHECKLIST' 'Target licensing' 'MANUAL' $lic.Value -Recommendation $lic.Text -Kind 'Checklist'
+    $media = $script:Data.RecommendedMedia; if (-not $media) { $media = 'See Upgrade path section' }
+    Add-Result 'CHECKLIST' 'Installation media' 'MANUAL' $media -Recommendation 'Use media with the exact edition, installation type and language listed. Start Setup with /ResizeRecoveryPartition Disable, so Setup does not shrink C: to add a recovery partition after it (#161). Optional pre-flight: setup.exe /auto upgrade /compat scanonly with the same media.' -Kind 'Checklist' -Command (Get-RecommendationCommand 'SetupNoRecoveryPartition').Command -CommandKind 'Change' -Link $script:DocLinks.SetupOptions.Url -LinkTitle $script:DocLinks.SetupOptions.Title
+    Add-Result 'CHECKLIST' 'Application owner sign-off' 'MANUAL' 'Required for every listed workload' -Recommendation 'Get sign-off from each workload owner, including a post-upgrade test plan.' -Kind 'Checklist'
+    Add-Result 'CHECKLIST' 'Monitoring and management agents' 'MANUAL' 'Backend communication cannot be proven locally' -Recommendation 'Confirm SA, UD and Operations agents are reporting in the backend before the change; verify again afterwards.' -Kind 'Checklist'
 }
 # =============================================================================
 # 6. HTML/JSON REPORT

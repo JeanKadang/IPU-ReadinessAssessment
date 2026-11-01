@@ -13,6 +13,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Fleet overview: **Teams needed** (#323). Per server, which other teams the upgrade needs (PKI, AD, Cluster / storage, SQL / DBA, Exchange, Backup, Antivirus / EDR, Network, Virtualization, Application owner), read from its result rows by one rule table (`src/merge/15-teams.ps1`). The overview has a *Teams needed* column and a summary per team at the top (servers, which, why); `IPU-Fleet-Servers.csv` has a `TeamsNeeded` column. Works with results from earlier versions too.
 
+### Changed
+
+- Each check is its own function (`Invoke-<Name>Check`), in one part per chapter of `docs/checks.md` (`51-checks-health.ps1` to `56-checks-backup-services.ps1`); `Register-AssessmentCheck` is now a short list in run order (#255). No behaviour change: the simulated-server golden output, the tests and the smoke run are the same before and after. The largest function is no longer a check body (it was 1,580 lines).
+
 ### Documentation
 
 - Running through SA (#337): SA escapes `$` in the parameter field, so true/false settings must be `1` or `0` (`-RunDISMScanHealth 0`); `$true`/`$false` only work on a console. The user guide has a section *Passing arguments in SA* with examples, explains SA's harmless `Set-ExecutionPolicy ... overridden by a policy` message, and the troubleshooting table lists both. Examples now use `1`/`0`.

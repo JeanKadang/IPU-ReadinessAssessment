@@ -20,7 +20,8 @@ through SA, as before.
 | `30-core.ps1` | Shared helpers: results, logging, CIM/registry access, redaction |
 | `35-check-data.ps1` | The owner of each key of `$script:Data` and each list of its `Snapshot` (see *Check data* below) |
 | `40-decision-rules.ps1` | Pure decision functions (unit-tested) |
-| `50-checks.ps1` | The checks that collect data |
+| `50-checks.ps1` | `Register-AssessmentCheck`: the list of checks in run order (id, name, phase, the function that runs it) |
+| `51-checks-health.ps1` ... `56-checks-backup-services.ps1` | One function per check (`Invoke-<Name>Check`), one part for each chapter of [checks.md](checks.md): health (with the slow DISM, SFC and compatibility checks), workloads, hardware, storage and network, access and security, backup and services |
 | `60-report.ps1` | HTML and JSON report |
 | `70-main.ps1` | Main flow |
 
@@ -72,8 +73,9 @@ of reading as `$null`.
 `$script:CheckNeeds` says which check a check cannot run without (#360). `Invoke-Check` does not run a check whose
 source stopped with an error or ran out of time; it records it as skipped with a `MANUAL` result naming the source. A
 test derives the checks that read `baseline`'s data from the check bodies (also through the helper functions they call),
-so a new check that reads the inventory must be added to the table. Next: the split of `Register-AssessmentCheck` into
-one function per check (#255).
+so a new check that reads the inventory must be added to the table.
+
+A new check is a function `Invoke-<Name>Check` in the part of its chapter, one `Register-Check` line in `Register-AssessmentCheck` (the order of the lines is the run order), and a row in `docs/checks.md`. The tests find a check body through that line.
 ## Later: a second script
 
 A dedicated cluster assessment (#153) can get its own manifest that lists the shared parts (report, redaction, JSON,
