@@ -27,7 +27,9 @@ concurrency:
   cancel-in-progress: true
 
 # Tool versions are pinned so a new release cannot change results unnoticed.
-# Actions are pinned to commit SHAs; Dependabot proposes updates.
+# Actions are pinned to commit SHAs; Dependabot proposes updates. The two tool
+# versions below have no Dependabot support: the monthly "CI tool versions"
+# workflow compares them with the PowerShell Gallery and opens one issue (#262).
 env:
   PESTER_VERSION: 5.7.1
   PSSA_VERSION: 1.23.0
