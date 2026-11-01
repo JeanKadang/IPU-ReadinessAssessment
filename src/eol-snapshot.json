@@ -1,5 +1,5 @@
 {
-  "asOf": "2026-10-24",
+  "asOf": "2026-11-01",
   "source": "https://endoflife.date",
   "license": "MIT",
   "licenseNotice": "Copyright 2020 endoflife.date contributors\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.",
@@ -10,8 +10,8 @@
         "cycle": "27",
         "releaseDate": "2026-09-17",
         "eol": "2027-04-30",
-        "latest": "27.0.1.0.10",
-        "latestReleaseDate": "2026-10-23",
+        "latest": "27.0.1.0.11",
+        "latestReleaseDate": "2026-10-27",
         "lts": false
       },
       {
@@ -27,8 +27,8 @@
         "lts": true,
         "releaseDate": "2025-09-17",
         "eol": "2032-10-31",
-        "latest": "25.0.5.0.9",
-        "latestReleaseDate": "2026-10-23"
+        "latest": "25.0.5.0.10",
+        "latestReleaseDate": "2026-10-27"
       },
       {
         "cycle": "24",
@@ -59,8 +59,8 @@
         "lts": true,
         "releaseDate": "2023-08-21",
         "eol": "2030-10-31",
-        "latest": "21.0.13.0.10",
-        "latestReleaseDate": "2026-10-23"
+        "latest": "21.0.13.0.11",
+        "latestReleaseDate": "2026-10-27"
       },
       {
         "cycle": "20",
@@ -91,8 +91,8 @@
         "lts": true,
         "releaseDate": "2021-08-24",
         "eol": "2029-10-31",
-        "latest": "17.0.21.0.10",
-        "latestReleaseDate": "2026-10-23"
+        "latest": "17.0.21.0.11",
+        "latestReleaseDate": "2026-10-27"
       },
       {
         "cycle": "16",
@@ -117,16 +117,16 @@
         "lts": true,
         "releaseDate": "2019-02-18",
         "eol": "2032-01-31",
-        "latest": "11.0.33.0.9",
-        "latestReleaseDate": "2026-10-23"
+        "latest": "11.0.33.0.10",
+        "latestReleaseDate": "2026-10-26"
       },
       {
         "cycle": "8",
         "lts": true,
         "releaseDate": "2019-01-31",
         "eol": "2030-12-31",
-        "latest": "8.512.08.1",
-        "latestReleaseDate": "2026-10-23"
+        "latest": "8.512.09.1",
+        "latestReleaseDate": "2026-10-26"
       }
     ],
     "apache-http-server": [
@@ -369,8 +369,8 @@
         "cycle": "27",
         "releaseDate": "2026-09-22",
         "eol": "2027-03-23",
-        "latest": "27+35",
-        "latestReleaseDate": "2026-09-21",
+        "latest": "27.0.1.0.2+1",
+        "latestReleaseDate": "2026-10-24",
         "lts": false
       },
       {
@@ -840,24 +840,24 @@
         "lts": true,
         "releaseDate": "2025-09-16",
         "eol": "2030-09-30",
-        "latest": "25.0.5.0.2",
-        "latestReleaseDate": "2026-10-22"
+        "latest": "25.0.5.0.3",
+        "latestReleaseDate": "2026-10-27"
       },
       {
         "cycle": "21",
         "lts": true,
         "releaseDate": "2023-09-19",
         "eol": "2028-09-30",
-        "latest": "21.0.13.0.2",
-        "latestReleaseDate": "2026-10-22"
+        "latest": "21.0.13.0.3",
+        "latestReleaseDate": "2026-10-27"
       },
       {
         "cycle": "17",
         "lts": true,
         "releaseDate": "2021-09-14",
         "eol": "2027-09-30",
-        "latest": "17.0.21.0.2",
-        "latestReleaseDate": "2026-10-22"
+        "latest": "17.0.21.0.3",
+        "latestReleaseDate": "2026-10-27"
       },
       {
         "cycle": "11",
@@ -1684,14 +1684,24 @@
     ],
     "mysql": [
       {
-        "cycle": "26.7",
-        "releaseDate": "2026-07-28",
+        "cycle": "26.10",
+        "releaseDate": "2026-10-20",
         "eol": false,
-        "latest": "26.7.0",
-        "latestReleaseDate": "2026-07-28",
-        "link": "https://dev.mysql.com/doc/relnotes/mysql/26.7/en/news-26-7-0.html",
+        "latest": "26.10.0",
+        "latestReleaseDate": "2026-10-20",
+        "link": "https://dev.mysql.com/doc/relnotes/mysql/26.10/en/news-26-10-0.html",
         "lts": false,
         "support": true
+      },
+      {
+        "cycle": "26.7",
+        "releaseDate": "2026-07-28",
+        "eol": "2026-10-20",
+        "latest": "26.7.1",
+        "latestReleaseDate": "2026-08-18",
+        "link": "https://dev.mysql.com/doc/relnotes/mysql/26.7/en/news-26-7-0.html",
+        "lts": false,
+        "support": "2026-10-20"
       },
       {
         "cycle": "9.7",
@@ -1845,6 +1855,56 @@
         "link": null,
         "lts": false,
         "support": "2015-12-31"
+      },
+      {
+        "cycle": "5.1",
+        "releaseDate": "2008-12-08",
+        "eol": "2013-12-31",
+        "latest": "5.1.73",
+        "latestReleaseDate": "2013-11-01",
+        "link": null,
+        "lts": false,
+        "support": "2013-12-31"
+      },
+      {
+        "cycle": "5.0",
+        "releaseDate": "2005-10-24",
+        "eol": "2011-12-31",
+        "latest": "5.0.96",
+        "latestReleaseDate": "2012-03-02",
+        "link": null,
+        "lts": false,
+        "support": "2011-12-31"
+      },
+      {
+        "cycle": "4.1",
+        "releaseDate": "2004-10-23",
+        "eol": "2009-12-31",
+        "latest": "4.1.24",
+        "latestReleaseDate": "2008-03-17",
+        "link": null,
+        "lts": false,
+        "support": "2006-12-31"
+      },
+      {
+        "cycle": "4.0",
+        "releaseDate": "2003-03-15",
+        "eol": "2008-09-30",
+        "latest": "4.0.30",
+        "latestReleaseDate": "2007-02-16",
+        "link": null,
+        "lts": false,
+        "support": "2006-09-30"
+      },
+      {
+        "cycle": "3.23",
+        "releaseDate": "2001-01-17",
+        "eol": "2006-12-31",
+        "latest": "3.23.58",
+        "latestReleaseDate": "2003-09-11",
+        "link": null,
+        "lts": false,
+        "support": "2006-07-31"
       }
     ],
     "nginx": [
@@ -2127,8 +2187,8 @@
         "releaseDate": "2026-05-05",
         "lts": "2026-10-28",
         "eol": "2029-04-30",
-        "latest": "26.12.1",
-        "latestReleaseDate": "2026-10-21",
+        "latest": "26.13.0",
+        "latestReleaseDate": "2026-10-28",
         "support": "2027-10-27",
         "extendedSupport": false
       },
@@ -2147,8 +2207,8 @@
         "releaseDate": "2025-05-06",
         "lts": "2025-10-28",
         "eol": "2028-04-30",
-        "latest": "24.22.1",
-        "latestReleaseDate": "2026-10-21",
+        "latest": "24.22.2",
+        "latestReleaseDate": "2026-10-28",
         "support": "2026-10-20",
         "extendedSupport": false
       },
@@ -2387,6 +2447,16 @@
       }
     ],
     "openssl": [
+      {
+        "cycle": "4.1",
+        "releaseDate": "2026-10-23",
+        "eol": "2027-11-23",
+        "latest": "4.1.0",
+        "latestReleaseDate": "2026-10-23",
+        "link": "https://github.com/openssl/openssl/blob/master/CHANGES.md#openssl-41",
+        "lts": false,
+        "extendedSupport": false
+      },
       {
         "cycle": "4.0",
         "releaseDate": "2026-04-14",
@@ -2637,8 +2707,8 @@
         "cycle": "27",
         "releaseDate": "2026-09-15",
         "eol": "2027-03-31",
-        "latest": "27.0.1.0.2",
-        "latestReleaseDate": "2026-10-21",
+        "latest": "27.0.1.0.3",
+        "latestReleaseDate": "2026-10-24",
         "link": "https://www.oracle.com/java/technologies/javase/27all-relnotes.html",
         "lts": false,
         "extendedSupport": false
@@ -2658,8 +2728,8 @@
         "lts": true,
         "releaseDate": "2025-09-16",
         "eol": "2030-09-30",
-        "latest": "25.0.5.0.2",
-        "latestReleaseDate": "2026-10-21",
+        "latest": "25.0.5.0.3",
+        "latestReleaseDate": "2026-10-24",
         "link": "https://www.oracle.com/java/technologies/javase/25all-relnotes.html",
         "extendedSupport": "2033-09-30"
       },
@@ -2697,8 +2767,8 @@
         "lts": true,
         "releaseDate": "2023-09-19",
         "eol": "2028-09-30",
-        "latest": "21.0.13.0.2",
-        "latestReleaseDate": "2026-10-21",
+        "latest": "21.0.13.0.3",
+        "latestReleaseDate": "2026-10-24",
         "extendedSupport": "2031-09-30"
       },
       {
@@ -2733,8 +2803,8 @@
         "lts": true,
         "releaseDate": "2021-09-14",
         "eol": "2026-09-30",
-        "latest": "17.0.21.0.2",
-        "latestReleaseDate": "2026-10-21",
+        "latest": "17.0.21.0.3",
+        "latestReleaseDate": "2026-10-24",
         "extendedSupport": "2029-09-30"
       },
       {
@@ -2787,8 +2857,8 @@
         "lts": true,
         "releaseDate": "2018-09-25",
         "eol": "2023-09-30",
-        "latest": "11.0.33.0.2",
-        "latestReleaseDate": "2026-10-21",
+        "latest": "11.0.33.0.3",
+        "latestReleaseDate": "2026-10-24",
         "extendedSupport": "2032-01-31"
       },
       {
@@ -2814,8 +2884,8 @@
         "lts": true,
         "releaseDate": "2014-03-18",
         "eol": "2022-03-31",
-        "latest": "8u511",
-        "latestReleaseDate": "2026-10-20",
+        "latest": "8u511b33",
+        "latestReleaseDate": "2026-10-24",
         "extendedSupport": "2030-12-31"
       },
       {
@@ -3054,6 +3124,15 @@
         "support": "2006-08-24"
       },
       {
+        "cycle": "4.4",
+        "releaseDate": "2005-07-11",
+        "eol": "2008-08-07",
+        "latest": "4.4.9",
+        "latestReleaseDate": "2008-08-07",
+        "lts": false,
+        "support": "2007-12-31"
+      },
+      {
         "cycle": "5.0",
         "releaseDate": "2004-07-13",
         "eol": "2005-09-05",
@@ -3061,6 +3140,42 @@
         "latestReleaseDate": "2005-09-05",
         "lts": false,
         "support": "2005-09-05"
+      },
+      {
+        "cycle": "4.3",
+        "releaseDate": "2002-12-27",
+        "eol": "2005-03-31",
+        "latest": "4.3.11",
+        "latestReleaseDate": "2005-03-31",
+        "lts": false,
+        "support": "2005-03-31"
+      },
+      {
+        "cycle": "4.2",
+        "releaseDate": "2002-04-22",
+        "eol": "2002-09-06",
+        "latest": "4.2.3",
+        "latestReleaseDate": "2002-09-06",
+        "lts": false,
+        "support": "2002-09-06"
+      },
+      {
+        "cycle": "4.1",
+        "releaseDate": "2001-12-10",
+        "eol": "2002-03-12",
+        "latest": "4.1.2",
+        "latestReleaseDate": "2002-03-12",
+        "lts": false,
+        "support": "2002-03-12"
+      },
+      {
+        "cycle": "4.0",
+        "releaseDate": "2000-05-22",
+        "eol": "2001-06-23",
+        "latest": "4.0.6",
+        "latestReleaseDate": "2001-06-23",
+        "lts": false,
+        "support": "2001-06-23"
       }
     ],
     "postgresql": [
@@ -3295,6 +3410,30 @@
         "latest": "6.3.2",
         "latestReleaseDate": "1998-04-18",
         "lts": false
+      },
+      {
+        "cycle": "6.2",
+        "releaseDate": "1997-10-02",
+        "eol": true,
+        "latest": "6.2.1",
+        "latestReleaseDate": "1997-10-18",
+        "lts": false
+      },
+      {
+        "cycle": "6.1",
+        "releaseDate": "1997-06-08",
+        "eol": true,
+        "latest": "6.1.1",
+        "latestReleaseDate": "1997-07-21",
+        "lts": false
+      },
+      {
+        "cycle": "6.0",
+        "releaseDate": "1997-01-29",
+        "eol": true,
+        "latest": "6.0",
+        "latestReleaseDate": "1997-01-29",
+        "lts": false
       }
     ],
     "powershell": [
@@ -3303,8 +3442,8 @@
         "lts": true,
         "releaseDate": "2026-03-18",
         "eol": "2028-11-14",
-        "latest": "7.6.8",
-        "latestReleaseDate": "2026-10-22",
+        "latest": "7.6.9",
+        "latestReleaseDate": "2026-10-25",
         "dotnetVersion": ".NET 10.0"
       },
       {
@@ -3312,8 +3451,8 @@
         "lts": false,
         "releaseDate": "2025-01-23",
         "eol": "2026-11-10",
-        "latest": "7.5.12",
-        "latestReleaseDate": "2026-10-13",
+        "latest": "7.5.13",
+        "latestReleaseDate": "2026-10-25",
         "dotnetVersion": ".NET 9.0"
       },
       {
@@ -3321,8 +3460,8 @@
         "lts": true,
         "releaseDate": "2023-11-16",
         "eol": "2026-11-10",
-        "latest": "7.4.21",
-        "latestReleaseDate": "2026-10-13",
+        "latest": "7.4.22",
+        "latestReleaseDate": "2026-10-25",
         "dotnetVersion": ".NET 8.0"
       },
       {
@@ -3394,8 +3533,8 @@
         "cycle": "3.15",
         "releaseDate": "2026-10-09",
         "eol": "2031-10-31",
-        "latest": "3.15.1",
-        "latestReleaseDate": "2026-10-21",
+        "latest": "3.15.2",
+        "latestReleaseDate": "2026-10-25",
         "pep": "PEP-0790",
         "lts": false,
         "support": "2028-10-09"
@@ -3404,8 +3543,8 @@
         "cycle": "3.14",
         "releaseDate": "2025-10-07",
         "eol": "2030-10-31",
-        "latest": "3.14.9",
-        "latestReleaseDate": "2026-10-21",
+        "latest": "3.14.10",
+        "latestReleaseDate": "2026-10-25",
         "pep": "PEP-0745",
         "lts": false,
         "support": "2027-10-01"
@@ -3414,8 +3553,8 @@
         "cycle": "3.13",
         "releaseDate": "2024-10-07",
         "eol": "2029-10-31",
-        "latest": "3.13.17",
-        "latestReleaseDate": "2026-10-21",
+        "latest": "3.13.18",
+        "latestReleaseDate": "2026-10-25",
         "pep": "PEP-0719",
         "lts": false,
         "support": "2026-10-01"
@@ -3424,8 +3563,8 @@
         "cycle": "3.12",
         "releaseDate": "2023-10-02",
         "eol": "2028-10-31",
-        "latest": "3.12.15",
-        "latestReleaseDate": "2026-10-01",
+        "latest": "3.12.16",
+        "latestReleaseDate": "2026-10-25",
         "pep": "PEP-0693",
         "lts": false,
         "support": "2025-04-02"
@@ -3434,8 +3573,8 @@
         "cycle": "3.11",
         "releaseDate": "2022-10-24",
         "eol": "2027-10-31",
-        "latest": "3.11.17",
-        "latestReleaseDate": "2026-10-01",
+        "latest": "3.11.18",
+        "latestReleaseDate": "2026-10-25",
         "pep": "PEP-0664",
         "lts": false,
         "support": "2024-04-01"
@@ -3576,8 +3715,8 @@
         "cycle": "8.10",
         "releaseDate": "2026-07-29",
         "eol": false,
-        "latest": "8.10.2",
-        "latestReleaseDate": "2026-09-17",
+        "latest": "8.10.3",
+        "latestReleaseDate": "2026-10-26",
         "lts": false,
         "support": true
       },
@@ -3585,8 +3724,8 @@
         "cycle": "8.8",
         "releaseDate": "2026-05-25",
         "eol": false,
-        "latest": "8.8.3",
-        "latestReleaseDate": "2026-09-17",
+        "latest": "8.8.4",
+        "latestReleaseDate": "2026-10-26",
         "lts": false,
         "support": "2026-07-29"
       },
@@ -3594,8 +3733,8 @@
         "cycle": "8.6",
         "releaseDate": "2026-02-11",
         "eol": false,
-        "latest": "8.6.7",
-        "latestReleaseDate": "2026-09-17",
+        "latest": "8.6.8",
+        "latestReleaseDate": "2026-10-26",
         "lts": false,
         "support": "2026-05-25"
       },
@@ -3603,8 +3742,8 @@
         "cycle": "8.4",
         "releaseDate": "2025-11-18",
         "eol": false,
-        "latest": "8.4.7",
-        "latestReleaseDate": "2026-09-17",
+        "latest": "8.4.8",
+        "latestReleaseDate": "2026-10-26",
         "lts": false,
         "support": "2026-02-11"
       },
@@ -3612,8 +3751,8 @@
         "cycle": "8.2",
         "releaseDate": "2025-08-04",
         "eol": "2030-09-01",
-        "latest": "8.2.10",
-        "latestReleaseDate": "2026-09-17",
+        "latest": "8.2.11",
+        "latestReleaseDate": "2026-10-26",
         "lts": false,
         "support": "2025-11-18"
       },
@@ -3630,8 +3769,8 @@
         "cycle": "7.4",
         "releaseDate": "2024-07-29",
         "eol": "2029-12-01",
-        "latest": "7.4.11",
-        "latestReleaseDate": "2026-08-17",
+        "latest": "7.4.12",
+        "latestReleaseDate": "2026-10-26",
         "lts": false,
         "support": "2025-05-02"
       },
@@ -3639,8 +3778,8 @@
         "cycle": "7.2",
         "releaseDate": "2023-08-15",
         "eol": "2029-12-01",
-        "latest": "7.2.16",
-        "latestReleaseDate": "2026-08-17",
+        "latest": "7.2.17",
+        "latestReleaseDate": "2026-10-26",
         "lts": false,
         "support": "2024-07-29"
       },
