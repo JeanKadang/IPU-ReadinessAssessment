@@ -52,8 +52,8 @@ Describe 'Products for end-of-life checks (#286)' {
             }
         }
         It 'the check never starts a product' {
-            $src = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\..\src\assessment\50-checks.ps1'))
-            $i = $src.IndexOf("Register-Check -Id 'eolcandidates'"); $j = $src.IndexOf("Register-Check -Id 'checklist'")
+            $src = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\..\src\assessment\52-checks-workloads.ps1'))
+            $i = $src.IndexOf('function Invoke-EolCandidatesCheck'); $j = $src.IndexOf('function Invoke-PrintBackupCheck')
             $i | Should -BeGreaterThan 0; $j | Should -BeGreaterThan $i
             $body = $src.Substring($i, $j - $i)
             $body | Should -Not -Match 'Invoke-NativeCapture|Start-Process|Invoke-Expression|Invoke-Command|\bInvoke-Item\b'

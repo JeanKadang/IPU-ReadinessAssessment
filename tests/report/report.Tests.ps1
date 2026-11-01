@@ -118,7 +118,7 @@ Describe 'A MANUAL row counts towards the overall status (#240)' {
         { Add-Result 'CHECKLIST' 'Backup and fallback' 'MANUAL' 'x' -Recommendation 'r' -Kind 'Checklist' } | Should -Not -Throw
     }
     It 'no MANUAL call in the checks hides a failure as an Observation or Evidence row' {
-        $src = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\..\src\assessment\50-checks.ps1') -Raw
+        $src = (@(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot '..\..\src\assessment') -Filter '5*-checks*.ps1') | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }) -join "`n"
         $bad = @([regex]::Matches($src, "Add-Result '(\w+)'[^\r\n]*'MANUAL'[^\r\n]*-Kind '(Observation|Evidence)'") | Where-Object { -not $script:ManualNotCounted.ContainsKey($_.Groups[1].Value) })
         $bad.Count | Should -Be 0 -Because (($bad | ForEach-Object { $_.Value.Substring(0, [math]::Min(80, $_.Value.Length)) }) -join '; ')
     }

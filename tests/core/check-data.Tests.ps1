@@ -1,5 +1,5 @@
 # Pester 5 tests for the check data owners (#360): src/assessment/35-check-data.ps1.
-# The check bodies in src/assessment/50-checks.ps1 are READ (parsed), not run:
+# The check bodies (one function each in src/assessment/5?-checks-*.ps1, registered in 50-checks.ps1) are READ (parsed), not run:
 # the test fails when a check writes a key of $script:Data that it does not own,
 # when an owner no longer writes its key, or when a key declared unused is read.
 
@@ -68,20 +68,40 @@ BeforeAll {
     # The writes of every check body, by check id. Invoke-RdpPolicyAssessment is
     # the body of the rdp check, kept as a function of its own.
     $script:FileAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $script:Parts '50-checks.ps1'), [ref]$null, [ref]$null)
+    # Every function of the check parts: the registry (50-checks.ps1) and one function per check.
+    $script:CheckPartFiles = @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $script:Parts -Filter '5*-checks*.ps1')
+    $script:CheckPartFunctions = @{}
+    foreach ($file in $script:CheckPartFiles) {
+        $partAst = [Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$null)
+        foreach ($fn in $partAst.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] }, $false)) { $script:CheckPartFunctions[$fn.Name] = $fn }
+    }
+    function Get-CheckBody {
+        # The code of a registered check: the function its script block calls,
+        # or the script block itself when it calls a helper (rdp).
+        param($Register)
+        $block = $null
+        foreach ($el in @($Register.CommandElements)) { if ($el -is [Management.Automation.Language.ScriptBlockExpressionAst]) { $block = $el } }
+        $called = @($block.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] }, $true))
+        if ($called.Count -eq 1 -and $script:CheckPartFunctions.ContainsKey($called[0].GetCommandName()) -and $called[0].GetCommandName() -like 'Invoke-*Check') { return $script:CheckPartFunctions[$called[0].GetCommandName()] }
+        return $block
+    }
+    function Get-CheckId {
+        param($Register)
+        $els = @($Register.CommandElements)
+        for ($i = 0; $i -lt $els.Count; $i++) { if ($els[$i] -is [Management.Automation.Language.CommandParameterAst] -and $els[$i].ParameterName -eq 'Id') { return [string]$els[$i + 1].Value } }
+    }
     $script:Writes = @{}
+    $script:CheckBodyFunction = @{}
     $registers = $script:FileAst.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Register-Check' }, $true)
     foreach ($r in $registers) {
-        $elements = @($r.CommandElements)
-        $id = $null; $body = $null
-        for ($i = 0; $i -lt $elements.Count; $i++) {
-            if ($elements[$i] -is [Management.Automation.Language.CommandParameterAst] -and $elements[$i].ParameterName -eq 'Id') { $id = [string]$elements[$i + 1].Value }
-            if ($elements[$i] -is [Management.Automation.Language.ScriptBlockExpressionAst]) { $body = $elements[$i] }
-        }
+        $id = Get-CheckId $r
+        $body = Get-CheckBody $r
+        if ($body -is [Management.Automation.Language.FunctionDefinitionAst]) { $script:CheckBodyFunction[$body.Name] = $id }
         $script:Writes[$id] = Get-DataWrite $body
     }
     $script:CheckIds = @($script:Writes.Keys)
     $script:FunctionOwner = @{ 'Invoke-RdpPolicyAssessment' = 'rdp' }
-    $script:OtherFunctions = @($script:FileAst.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] }, $false) | Where-Object { $_.Name -ne 'Register-AssessmentCheck' })
+    $script:OtherFunctions = @($script:CheckPartFunctions.Values | Where-Object { $_.Name -ne 'Register-AssessmentCheck' -and -not $script:CheckBodyFunction.ContainsKey($_.Name) })
     foreach ($f in $script:OtherFunctions) {
         if ($script:FunctionOwner.ContainsKey($f.Name)) {
             $w = Get-DataWrite $f
@@ -102,7 +122,7 @@ Describe 'Check data owners: keys of $script:Data (#360)' {
         $script:Writes['rdp'].Keys | Should -Contain 'NlaState' -Because 'Invoke-RdpPolicyAssessment counts as the rdp check'
         $script:Writes['network'].Lists | Should -Contain 'Routes'
     }
-    It 'every function in 50-checks.ps1 other than the registry is attributed to a check' {
+    It 'every function of the check parts other than the registry and the check functions is attributed to a check' {
         $unmapped = @($script:OtherFunctions | Where-Object { -not $script:FunctionOwner.ContainsKey($_.Name) } | ForEach-Object { $_.Name })
         $unmapped | Should -BeNullOrEmpty -Because ('functions whose writes are not attributed: ' + ($unmapped -join ', '))
     }
@@ -252,9 +272,12 @@ Describe 'Check data owners: every read is of a declared key (#360)' {
         $script:UndeclaredReads | Should -BeNullOrEmpty -Because ($script:UndeclaredReads -join '; ')
     }
     It 'the scan sees reads (it is not vacuous)' {
-        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $script:Parts '50-checks.ps1'), [ref]$null, [ref]$null)
-        $members = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.MemberExpressionAst] -and $n -isnot [Management.Automation.Language.InvokeMemberExpressionAst] }, $true) | Where-Object { $null -ne (Get-DataPath $_) })
-        $members.Count | Should -BeGreaterThan 100
+        $count = 0
+        foreach ($file in $script:CheckPartFiles) {
+            $ast = [Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$null)
+            $count += @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.MemberExpressionAst] -and $n -isnot [Management.Automation.Language.InvokeMemberExpressionAst] }, $true) | Where-Object { $null -ne (Get-DataPath $_) }).Count
+        }
+        $count | Should -BeGreaterThan 100
     }
 }
 
@@ -301,11 +324,8 @@ Describe 'Check needs: what a check cannot run without (#360, step 3)' {
         # The keys each check reads, in registration order.
         $script:CheckReads = [ordered]@{}
         foreach ($r in $script:FileAst.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Register-Check' }, $true)) {
-            $els = @($r.CommandElements); $id = $null; $body = $null
-            for ($i = 0; $i -lt $els.Count; $i++) {
-                if ($els[$i] -is [Management.Automation.Language.CommandParameterAst] -and $els[$i].ParameterName -eq 'Id') { $id = [string]$els[$i + 1].Value }
-                if ($els[$i] -is [Management.Automation.Language.ScriptBlockExpressionAst]) { $body = $els[$i] }
-            }
+            $id = Get-CheckId $r
+            $body = Get-CheckBody $r
             $set = New-Object Collections.Generic.HashSet[string]
             foreach ($k in (Get-DataRead $body)) { $null = $set.Add($k) }
             foreach ($c in $body.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] }, $true)) {
