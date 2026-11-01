@@ -137,7 +137,7 @@ SPECIAL section with:
 - the options to evaluate, each with a Microsoft link (for example Cluster OS Rolling Upgrade, one version at a time;
   a new domain controller beside the old one). These are options, not instructions.
 
-The overall result and the SA line say `SPECIAL`, the JSON has `Overall = SPECIAL` and a `Special` object, and the
+The overall status and the SA line say `SPECIAL`, the JSON has `Overall = SPECIAL` and a `Special` object, and the
 fleet overview lists SPECIAL servers first. When the cluster signals disagree (feature, service and registry), the
 report says MANUAL instead of guessing.
 
@@ -157,7 +157,7 @@ ad-hoc job). Override only what you need.
 | Parameter | Default | Meaning |
 |---|---|---|
 | `TargetServerVersion` | `2025` | Destination release: `2025`, `2022` or `2019` (#332) |
-| `AssessmentMode` | `Pre` | `Pre` = before the upgrade. `Post` = verify and compare with the Pre result |
+| `AssessmentMode` | `Pre` | `Pre` = before the upgrade. `Post` = verify and compare with the baseline (the Pre run's result JSON) |
 | `TargetMediaPath` | blank | Folder/drive with `setup.exe`, UNC share, or `.iso`. Blank skips the Setup compatibility scan |
 | `TargetMediaLanguage` | blank | Language of the target ISO, for example `en-US`. Blank = the report tells you |
 | `BlockDomainControllerIPU` | `$true` | Site policy: a domain controller is reported as **SPECIAL** with a short report (not a standard IPU). `$false` gives the full report with a WARNING instead |
@@ -406,7 +406,7 @@ What changes with redaction:
   `.log`, and the same placeholders as the report (`HOST-1` in the log is `HOST-1` in the report). Lines logged after
   the final report are not in the copy. `-RedactExisting` does the same for a log next to an existing report.
   Share the `REDACTED-*.log`, never the original.
-- The JSON has `"Redacted": true`. A redacted result **cannot** be the post-upgrade baseline: placeholders cannot
+- The JSON has `"Redacted": true`. A redacted result JSON **cannot** be the post-upgrade baseline: placeholders cannot
   be compared with the real server, and the post-upgrade run says so. Keep a normal (unredacted) pre-upgrade run
   for the comparison and redact a second run, or only the copies you share.
 - The key to the placeholders is written next to the redacted copies (see below), and nowhere else.
@@ -773,7 +773,7 @@ process).
 |---|---|---|
 | `InputFolder` | required | Folder with the `*-IPU-Assessment.json` and `*-IPU-PostUpgrade.json` files |
 | `OutputFolder` | the input folder | Where the three output files are written. A folder the merge creates gets access for SYSTEM, Administrators and you only; an existing folder is not changed, but you get a warning when Everyone, Authenticated Users or Users can read it (#128) |
-| `Mode` | `All` | `Pre`, `Post` or `All`: which kind of result to include |
+| `Mode` | `All` | `Pre`, `Post` or `All`: which kind of result JSON to include |
 | `IncludeRedacted` | off | Redacted copies (`REDACTED-...`) have placeholder names, so they cannot be matched to their originals and would show the same server twice. When the folder also holds original results, the redacted copies are skipped and the console says how many; this switch keeps them. A folder with only redacted results is used as it is |
 | `Delimiter` | `;` | CSV separator. `;` opens in columns in Excel where the list separator is `;` (common in European regional settings); use `,` where it is `,` |
 
@@ -839,8 +839,8 @@ one shared source part is built into all three scripts.
   `-EolSnapshotPath`, then next to the script, then in `-ReportDirectory` (a file read, no network call) and shows one
   row, *EOL snapshot*, under *Installed applications*: the snapshot date, or, when none is found, where it looked. A
   snapshot older than six months, or one that cannot be read, is MANUAL. With a snapshot, every product it found gets
-  its own row, *EOL: <product> <version>*: past end of life is a WARNING, ending within 180 days or security fixes only
-  is INFO, supported is OK, and a product the snapshot cannot place is MANUAL, never "supported". When SA deploys only
+  its own row, *EOL: <product> <version>*: past end of life is a WARNING, ending soon (within 180 days) or security-only
+  is INFO, supported is OK, and a product the snapshot cannot place is unknown, shown as MANUAL, never "supported". When SA deploys only
   the `.ps1`, copy `eol-snapshot.json` to the server next to it.
 - **The fleet overview.** `Merge-IPUAssessments.ps1` reads the EOL snapshot next to itself (or in the input folder, or
   `-EolSnapshot <file>`), compares the products of all servers (`EolCandidates` in the results) and adds a section
@@ -850,7 +850,7 @@ one shared source part is built into all three scripts.
   product list.
 - **Which products.** The assessment records the products it finds in the result JSON as `EolCandidates` (check `eolcandidates`): SQL Server, MySQL, MariaDB, PostgreSQL, MongoDB, Oracle Database, Db2, Redis, Apache HTTP Server, Tomcat, nginx, PHP, .NET, .NET Framework, PowerShell, Python, Node.js, OpenSSL and the Java builds endoflife.date tracks. It reads uninstall entries, service executables, file version resources, the usual folders for PHP, Apache, nginx and OpenSSL, and the .NET Framework registry value. It never runs a product to ask for its version. A product in an unusual folder with no service and no uninstall entry is not found: an empty list means none found, not none installed.
 - **How old it may be.** A tool release is only published when the EOL snapshot is at most six months old. A snapshot older than
-  `-MaxAgeMonths` (default 6) cannot confirm that a release is still supported: that verdict becomes MANUAL, while
+  `-MaxAgeMonths` (default 6) cannot confirm that a release is still supported: that verdict becomes unconfirmed (MANUAL), while
   end-of-life verdicts still show.
 - **Use it.** `.\Get-IPUEolStatus.ps1 -Product php -Version 8.2.12 -SnapshotPath .\eol-snapshot.json`
 - **Refresh it by hand.** On a machine with internet access: `.\Get-IPUEolStatus.ps1 -Update -SnapshotPath .\eol-snapshot.json`.
@@ -927,7 +927,7 @@ access to the output folder.
 | SA output starts with `Set-ExecutionPolicy ... overridden by a policy defined at a more specific scope` | SA's wrapper, with a Group Policy that sets the execution policy | Nothing: harmless; read the result line that follows |
 | `... is not digitally signed` | Machine enforces signed scripts | Sign the script, or `powershell -ExecutionPolicy Bypass -File` for that process only |
 | Fleet overview: `No ... files found` | Wrong `InputFolder`, or the files were renamed | Files must end in `-IPU-Assessment.json` or `-IPU-PostUpgrade.json` |
-| Fleet overview lists a file under "Files not read" | Corrupt JSON, or not an `IPU-Assessment/1` result | Re-collect the file from the server; check the assessment script version is 4.0.1 or later |
+| Fleet overview lists a file under "Files not read" | Corrupt JSON, or not an `IPU-Assessment/1` result JSON | Re-collect the file from the server; check the assessment script version is 4.0.1 or later |
 | Fleet CSV opens as one column in Excel | Regional list separator differs from `;` | Re-run with `-Delimiter ','` |
 | Report says `PARTIAL REPORT` | Slow checks had not finished (job stopped or timed out) | Raise the SA job timeout above the budget (section 10) and re-run |
 | `Not fully assessed: <check> stopped with an error` | A check hit an unexpected error | See `.log` for the message and line number; review that area manually |
