@@ -334,76 +334,55 @@ function Invoke-AntivirusCheck {
 # ---------------------------------------------------------------------------
 # RDP access / policy evidence (called by the 'rdp' check)
 # ---------------------------------------------------------------------------
-function Invoke-RdpPolicyAssessment {
-    if (-not $EnableRDPPolicyEvidence) {
-        Add-Result 'RDP' 'RDPAccessReadiness' 'MANUAL' 'REVIEW' 'Policy evidence disabled in SETTINGS' -Recommendation 'Test RDP end-to-end before relying on it during the change.'
-        $script:Data.RdpSummary = 'REVIEW (not assessed)'; $script:Data.DriveRedirection = 'Not assessed'
-        return
-    }
-    $hard = New-Object System.Collections.Generic.List[string]
-    $review = New-Object System.Collections.Generic.List[string]
-    $driveBlock = New-Object System.Collections.Generic.List[string]
-
-    $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture)
-    $root = Join-Path (Get-EvidenceFolderPath $EvidenceRoot 'Policy' $PolicyEvidenceRoot) ($script:SafeComputerName + '-IPU-Policy-' + $stamp)
-    $lgpoRoot = Join-Path $root 'LGPO-Backup'
-    $zip = $root + '.zip'
-    $script:Data.PolicyEvidence = $root
-    $folderOk = $true
-    try {
-        $null = Initialize-EvidenceFolder 'Policy'
-        $null = Initialize-OutputFolder $root
-        New-Item -ItemType Directory -Path $lgpoRoot -Force | Out-Null
-    }
-    catch { $folderOk = $false; $review.Add('Evidence folder could not be created'); Add-Result 'POLICY_EVIDENCE' 'EvidenceFolder' 'MANUAL' $root $_.Exception.Message -Recommendation 'Make the evidence folder writable and re-run.' -Kind 'Finding' }
-
-    if ($folderOk) {
-        # LGPO backup (local policy only; never imports).
-        # An empty -LgpoExe skips LGPO on purpose (#150). Windows PowerShell
-        # rejects Test-Path with an empty path, so test for it first.
-        if (-not $LgpoExe) {
-            Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'INFO' 'LGPO disabled (-LgpoExe is empty) - local policy backup skipped' -Source 'Parameter'
-        } elseif (Test-Path -LiteralPath $LgpoExe -PathType Leaf) {
-            $r = Invoke-NativeCapture $LgpoExe @('/b',$lgpoRoot,'/n',('Pre-IPU-' + $stamp)) 120
-            $r.Output | Out-File -LiteralPath (Join-Path $root 'LGPO-Backup-Output.txt') -Encoding UTF8
-            if ($r.ExitCode -eq 0) { Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'OK' $lgpoRoot -Source 'LGPO.exe /b' }
-            else { Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'MANUAL' ('ExitCode=' + $r.ExitCode) $r.Error -Recommendation 'Review the LGPO output if a restorable local-policy copy is required.' -Kind 'Finding' -Source 'LGPO.exe /b' }
-            foreach ($pol in @(
-                @{ Scope='Machine'; Mode='/m'; Path=(Join-Path $env:windir 'System32\GroupPolicy\Machine\Registry.pol') },
-                @{ Scope='User'; Mode='/u'; Path=(Join-Path $env:windir 'System32\GroupPolicy\User\Registry.pol') })) {
-                if (Test-Path -LiteralPath $pol.Path) {
-                    $parsed = Join-Path $root ('Local-Policy-' + $pol.Scope + '-RegistryPol.txt')
-                    (Invoke-NativeCapture $LgpoExe @('/parse',$pol.Mode,$pol.Path) 60).Output | Out-File -LiteralPath $parsed -Encoding UTF8
-                    Add-Result 'POLICY_EVIDENCE' ('LocalRegistryPolicy-' + $pol.Scope) 'INFO' $parsed -Source 'LGPO.exe /parse'
-                }
+# Local policy backup (LGPO /b and /parse only, never an import) and the computer RSoP, into the evidence folder.
+function Save-RdpPolicyEvidence {
+    param($root, $lgpoRoot, $stamp, $review)
+    # LGPO backup (local policy only; never imports).
+    # An empty -LgpoExe skips LGPO on purpose (#150). Windows PowerShell
+    # rejects Test-Path with an empty path, so test for it first.
+    if (-not $LgpoExe) {
+        Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'INFO' 'LGPO disabled (-LgpoExe is empty) - local policy backup skipped' -Source 'Parameter'
+    } elseif (Test-Path -LiteralPath $LgpoExe -PathType Leaf) {
+        $r = Invoke-NativeCapture $LgpoExe @('/b',$lgpoRoot,'/n',('Pre-IPU-' + $stamp)) 120
+        $r.Output | Out-File -LiteralPath (Join-Path $root 'LGPO-Backup-Output.txt') -Encoding UTF8
+        if ($r.ExitCode -eq 0) { Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'OK' $lgpoRoot -Source 'LGPO.exe /b' }
+        else { Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'MANUAL' ('ExitCode=' + $r.ExitCode) $r.Error -Recommendation 'Review the LGPO output if a restorable local-policy copy is required.' -Kind 'Finding' -Source 'LGPO.exe /b' }
+        foreach ($pol in @(
+            @{ Scope='Machine'; Mode='/m'; Path=(Join-Path $env:windir 'System32\GroupPolicy\Machine\Registry.pol') },
+            @{ Scope='User'; Mode='/u'; Path=(Join-Path $env:windir 'System32\GroupPolicy\User\Registry.pol') })) {
+            if (Test-Path -LiteralPath $pol.Path) {
+                $parsed = Join-Path $root ('Local-Policy-' + $pol.Scope + '-RegistryPol.txt')
+                (Invoke-NativeCapture $LgpoExe @('/parse',$pol.Mode,$pol.Path) 60).Output | Out-File -LiteralPath $parsed -Encoding UTF8
+                Add-Result 'POLICY_EVIDENCE' ('LocalRegistryPolicy-' + $pol.Scope) 'INFO' $parsed -Source 'LGPO.exe /parse'
             }
-        } else {
-            Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'INFO' 'LGPO.exe not present - local policy backup skipped' $LgpoExe -Recommendation 'Optional: place LGPO.exe at this path to keep a restorable local-policy backup.' -Source 'File check'
         }
-
-        # Resultant Set of Policy.
-        $gpresult = Join-Path $env:windir 'System32\gpresult.exe'
-        $gpText = Invoke-NativeCapture $gpresult @('/Scope','Computer','/Z') 180
-        $gpText.Output | Out-File -LiteralPath (Join-Path $root 'GPResult-Computer.txt') -Encoding UTF8
-        $gpHtml = Invoke-NativeCapture $gpresult @('/Scope','Computer','/H',(Join-Path $root 'GPResult-Computer.html'),'/F') 180
-        if ($gpText.ExitCode -eq 0 -or $gpHtml.ExitCode -eq 0) { Add-Result 'POLICY_EVIDENCE' 'ComputerRSoP' 'OK' (Join-Path $root 'GPResult-Computer.html') -Source 'gpresult' }
-        else { $review.Add('gpresult did not return computer policy'); Add-Result 'POLICY_EVIDENCE' 'ComputerRSoP' 'MANUAL' ('Exit=' + $gpText.ExitCode + '/' + $gpHtml.ExitCode) -Recommendation 'Collect RSoP manually.' -Kind 'Finding' -Source 'gpresult' }
+    } else {
+        Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'INFO' 'LGPO.exe not present - local policy backup skipped' $LgpoExe -Recommendation 'Optional: place LGPO.exe at this path to keep a restorable local-policy backup.' -Source 'File check'
     }
 
-    $policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
-    $tsPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'
-    $tcpPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
+    # Resultant Set of Policy.
+    $gpresult = Join-Path $env:windir 'System32\gpresult.exe'
+    $gpText = Invoke-NativeCapture $gpresult @('/Scope','Computer','/Z') 180
+    $gpText.Output | Out-File -LiteralPath (Join-Path $root 'GPResult-Computer.txt') -Encoding UTF8
+    $gpHtml = Invoke-NativeCapture $gpresult @('/Scope','Computer','/H',(Join-Path $root 'GPResult-Computer.html'),'/F') 180
+    if ($gpText.ExitCode -eq 0 -or $gpHtml.ExitCode -eq 0) { Add-Result 'POLICY_EVIDENCE' 'ComputerRSoP' 'OK' (Join-Path $root 'GPResult-Computer.html') -Source 'gpresult' }
+    else { $review.Add('gpresult did not return computer policy'); Add-Result 'POLICY_EVIDENCE' 'ComputerRSoP' 'MANUAL' ('Exit=' + $gpText.ExitCode + '/' + $gpHtml.ExitCode) -Recommendation 'Collect RSoP manually.' -Kind 'Finding' -Source 'gpresult' }
+}
 
+# Is incoming RDP enabled, by policy and in effect.
+function Invoke-RdpEnablementAssessment {
+    param($hard, $review, $policyPath, $tsPath)
     $polDeny = Get-RegistryValueSafe $policyPath 'fDenyTSConnections'
     $effDeny = Get-RegistryValueSafe $tsPath 'fDenyTSConnections'
     if ($polDeny.Exists -and [int]$polDeny.Value -eq 1) { $hard.Add('Group Policy disables incoming RDP') }
     if ($effDeny.Exists -and [int]$effDeny.Value -ne 0) { $hard.Add('Incoming RDP is disabled (fDenyTSConnections)') }
     if (-not $effDeny.Exists) { $review.Add('RDP enablement value not found') }
     Add-Result 'RDP' 'RemoteConnections' 'INFO' ('Policy=' + $(if ($polDeny.Exists) { $polDeny.Value } else { 'NotConfigured' })) ('Effective=' + $(if ($effDeny.Exists) { $effDeny.Value } else { 'Unknown' })) -Source 'Terminal Services registry'
+}
 
-    $port = 3389
-    $portValue = Get-RegistryValueSafe $tcpPath 'PortNumber'
-    if ($portValue.Exists) { $port = [int]$portValue.Value }
+# Listener port and Network Level Authentication (a security observation, not an IPU blocker).
+function Invoke-RdpNlaAssessment {
+    param($port, $policyPath, $tcpPath)
     $nla = Get-RegistryValueSafe $tcpPath 'UserAuthentication'
     $script:Data.NlaState = 'Unknown'
     if ($nla.Exists) { $script:Data.NlaState = $(if ([int]$nla.Value -eq 0) { 'Off' } else { 'On' }) }
@@ -417,7 +396,11 @@ function Invoke-RdpPolicyAssessment {
             Add-Result 'RDP' 'NetworkLevelAuthentication' 'WARNING' 'Disabled' 'Not an IPU blocker - a security observation.' -Recommendation 'RDP accepts connections before the user is authenticated. Enable NLA unless a documented client requirement prevents it.' -Kind 'Observation' -Source 'RDP-Tcp UserAuthentication' -Command (Get-RecommendationCommand 'EnableNla').Command -CommandKind 'Change'
         }
     }
+}
 
+# TermService, the TCP listener and the firewall rule.
+function Invoke-RdpListenerAssessment {
+    param($hard, $review, $port)
     $svc = @($script:Data.Services | Where-Object { $_.Name -eq 'TermService' }) | Select-Object -First 1
     if (-not $svc) { $hard.Add('TermService not found') }
     elseif ($svc.StartMode -eq 'Disabled') { $hard.Add('TermService is disabled') }
@@ -446,7 +429,11 @@ function Invoke-RdpPolicyAssessment {
             }
         } catch { $review.Add('Firewall rules could not be read') }
     }
+}
 
+# User rights and Remote Desktop Users.
+function Invoke-RdpUserRightAssessment {
+    param($hard, $review, $root, $folderOk)
     # User rights. A populated Deny right is normal hardening and is recorded
     # as evidence only; an empty Allow right is a real problem.
     if ($folderOk) {
@@ -466,8 +453,11 @@ function Invoke-RdpPolicyAssessment {
     }
     $rdu = Get-LocalGroupMembersBySid 'S-1-5-32-555'
     Add-Result 'RDP' 'RemoteDesktopUsersGroup' 'INFO' $(if ($rdu.Count -gt 0) { $rdu -join ' | ' } else { 'No members' }) -Source 'Local group S-1-5-32-555'
+}
 
-    # Drive redirection (machine policy, listener, loaded user policies).
+# Drive redirection (machine policy, listener, loaded user policies): adds the reasons it is blocked to $driveBlock.
+function Find-RdpDriveBlock {
+    param($driveBlock, $policyPath, $tcpPath)
     $polCdm = Get-RegistryValueSafe $policyPath 'fDisableCdm'
     $tcpCdm = Get-RegistryValueSafe $tcpPath 'fDisableCdm'
     if ($polCdm.Exists -and [int]$polCdm.Value -eq 1) { $driveBlock.Add('Machine policy fDisableCdm=1') }
@@ -477,7 +467,11 @@ function Invoke-RdpPolicyAssessment {
         $u = Get-RegistryValueSafe ('Registry::HKEY_USERS\' + $sid + '\Software\Policies\Microsoft\Windows NT\Terminal Services') 'fDisableCdm'
         if ($u.Exists -and [int]$u.Value -eq 1) { $driveBlock.Add('User ' + (Resolve-PolicyAccountName $sid) + ' fDisableCdm=1') }
     }
+}
 
+# The RDP verdict (GO, REVIEW, NO-GO) and the drive redirection row.
+function Add-RdpVerdictResult {
+    param($hard, $review, $driveBlock)
     if ($hard.Count -gt 0) {
         $script:Data.RdpSummary = 'NO-GO: ' + ($hard -join '; ')
         Add-Result 'RDP' 'RDPAccessReadiness' 'ACTION' 'NO-GO' @(($hard -join ' | '),($review -join ' | ')) -Recommendation 'Fix the local RDP block and test an end-to-end logon, or plan console-only access for the change.' -Source 'Registry, service, listener, user rights'
@@ -495,18 +489,62 @@ function Invoke-RdpPolicyAssessment {
         $script:Data.DriveRedirection = 'Allowed locally'
         Add-Result 'RDP' 'DriveRedirection' 'OK' 'ALLOWED LOCALLY' 'Destination/client policy not tested' -Source 'Terminal Services policy'
     }
+}
 
-    if ($folderOk) {
+# The CSV of the RDP rows, the optional zip and the evidence location row.
+function Close-RdpPolicyEvidence {
+    param($root, $zip)
+    try {
+        @($script:Results | Where-Object { $_.Area -in @('RDP','POLICY_EVIDENCE') }) | Export-Csv -LiteralPath (Join-Path $root 'RDP-Policy-Assessment.csv') -Delimiter ';' -NoTypeInformation -Encoding UTF8
+    } catch { Write-Swallowed $_ }
+    if ($CreatePolicyEvidenceZip) {
         try {
-            @($script:Results | Where-Object { $_.Area -in @('RDP','POLICY_EVIDENCE') }) | Export-Csv -LiteralPath (Join-Path $root 'RDP-Policy-Assessment.csv') -Delimiter ';' -NoTypeInformation -Encoding UTF8
-        } catch { Write-Swallowed $_ }
-        if ($CreatePolicyEvidenceZip) {
-            try {
-                if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
-                New-ZipFromFolder $root $zip
-                $script:Data.PolicyEvidence = $zip
-            } catch { Add-Result 'POLICY_EVIDENCE' 'EvidenceArchive' 'MANUAL' 'ZIP creation failed' $_.Exception.Message -Recommendation 'Retrieve the folder directly.' -Kind 'Finding' }
-        }
-        Add-Result 'POLICY_EVIDENCE' 'EvidenceLocation' 'INFO' $script:Data.PolicyEvidence $root -Source 'Local filesystem'
+            if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+            New-ZipFromFolder $root $zip
+            $script:Data.PolicyEvidence = $zip
+        } catch { Add-Result 'POLICY_EVIDENCE' 'EvidenceArchive' 'MANUAL' 'ZIP creation failed' $_.Exception.Message -Recommendation 'Retrieve the folder directly.' -Kind 'Finding' }
     }
+    Add-Result 'POLICY_EVIDENCE' 'EvidenceLocation' 'INFO' $script:Data.PolicyEvidence $root -Source 'Local filesystem'
+}
+
+function Invoke-RdpPolicyAssessment {
+    if (-not $EnableRDPPolicyEvidence) {
+        Add-Result 'RDP' 'RDPAccessReadiness' 'MANUAL' 'REVIEW' 'Policy evidence disabled in SETTINGS' -Recommendation 'Test RDP end-to-end before relying on it during the change.'
+        $script:Data.RdpSummary = 'REVIEW (not assessed)'; $script:Data.DriveRedirection = 'Not assessed'
+        return
+    }
+    $hard = New-Object System.Collections.Generic.List[string]
+    $review = New-Object System.Collections.Generic.List[string]
+    $driveBlock = New-Object System.Collections.Generic.List[string]
+
+    $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture)
+    $root = Join-Path (Get-EvidenceFolderPath $EvidenceRoot 'Policy' $PolicyEvidenceRoot) ($script:SafeComputerName + '-IPU-Policy-' + $stamp)
+    $lgpoRoot = Join-Path $root 'LGPO-Backup'
+    $zip = $root + '.zip'
+    $script:Data.PolicyEvidence = $root
+    $folderOk = $true
+    try {
+        $null = Initialize-EvidenceFolder 'Policy'
+        $null = Initialize-OutputFolder $root
+        New-Item -ItemType Directory -Path $lgpoRoot -Force | Out-Null
+    }
+    catch { $folderOk = $false; $review.Add('Evidence folder could not be created'); Add-Result 'POLICY_EVIDENCE' 'EvidenceFolder' 'MANUAL' $root $_.Exception.Message -Recommendation 'Make the evidence folder writable and re-run.' -Kind 'Finding' }
+
+    if ($folderOk) { Save-RdpPolicyEvidence $root $lgpoRoot $stamp $review }
+
+    $policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+    $tsPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'
+    $tcpPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
+
+    Invoke-RdpEnablementAssessment $hard $review $policyPath $tsPath
+
+    $port = 3389
+    $portValue = Get-RegistryValueSafe $tcpPath 'PortNumber'
+    if ($portValue.Exists) { $port = [int]$portValue.Value }
+    Invoke-RdpNlaAssessment $port $policyPath $tcpPath
+    Invoke-RdpListenerAssessment $hard $review $port
+    Invoke-RdpUserRightAssessment $hard $review $root $folderOk
+    Find-RdpDriveBlock $driveBlock $policyPath $tcpPath
+    Add-RdpVerdictResult $hard $review $driveBlock
+    if ($folderOk) { Close-RdpPolicyEvidence $root $zip }
 }

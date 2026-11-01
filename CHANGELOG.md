@@ -15,6 +15,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The report builder and the RDP evidence check are split into steps (#137). `New-IPUReportHtml` (233 lines) calls one function per part of the report (head, header, counter cards, summary, SPECIAL section, decision and planning tables, chapters, footer) and `Invoke-RdpPolicyAssessment` (176 lines) calls one function per step (evidence backup, enablement, NLA, listener, user rights, drive redirection, verdict, evidence zip). No function in either area is over 60 lines. No behaviour change: `docs/samples` is byte-identical before and after.
+
 - Each check is its own function (`Invoke-<Name>Check`), in one part per chapter of `docs/checks.md` (`51-checks-health.ps1` to `56-checks-backup-services.ps1`); `Register-AssessmentCheck` is now a short list in run order (#255). No behaviour change: the simulated-server golden output, the tests and the smoke run are the same before and after. The largest function is no longer a check body (it was 1,580 lines).
 
 ### Documentation
