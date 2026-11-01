@@ -6227,76 +6227,55 @@ function Invoke-AntivirusCheck {
 # ---------------------------------------------------------------------------
 # RDP access / policy evidence (called by the 'rdp' check)
 # ---------------------------------------------------------------------------
-function Invoke-RdpPolicyAssessment {
-    if (-not $EnableRDPPolicyEvidence) {
-        Add-Result 'RDP' 'RDPAccessReadiness' 'MANUAL' 'REVIEW' 'Policy evidence disabled in SETTINGS' -Recommendation 'Test RDP end-to-end before relying on it during the change.'
-        $script:Data.RdpSummary = 'REVIEW (not assessed)'; $script:Data.DriveRedirection = 'Not assessed'
-        return
-    }
-    $hard = New-Object System.Collections.Generic.List[string]
-    $review = New-Object System.Collections.Generic.List[string]
-    $driveBlock = New-Object System.Collections.Generic.List[string]
-
-    $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture)
-    $root = Join-Path (Get-EvidenceFolderPath $EvidenceRoot 'Policy' $PolicyEvidenceRoot) ($script:SafeComputerName + '-IPU-Policy-' + $stamp)
-    $lgpoRoot = Join-Path $root 'LGPO-Backup'
-    $zip = $root + '.zip'
-    $script:Data.PolicyEvidence = $root
-    $folderOk = $true
-    try {
-        $null = Initialize-EvidenceFolder 'Policy'
-        $null = Initialize-OutputFolder $root
-        New-Item -ItemType Directory -Path $lgpoRoot -Force | Out-Null
-    }
-    catch { $folderOk = $false; $review.Add('Evidence folder could not be created'); Add-Result 'POLICY_EVIDENCE' 'EvidenceFolder' 'MANUAL' $root $_.Exception.Message -Recommendation 'Make the evidence folder writable and re-run.' -Kind 'Finding' }
-
-    if ($folderOk) {
-        # LGPO backup (local policy only; never imports).
-        # An empty -LgpoExe skips LGPO on purpose (#150). Windows PowerShell
-        # rejects Test-Path with an empty path, so test for it first.
-        if (-not $LgpoExe) {
-            Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'INFO' 'LGPO disabled (-LgpoExe is empty) - local policy backup skipped' -Source 'Parameter'
-        } elseif (Test-Path -LiteralPath $LgpoExe -PathType Leaf) {
-            $r = Invoke-NativeCapture $LgpoExe @('/b',$lgpoRoot,'/n',('Pre-IPU-' + $stamp)) 120
-            $r.Output | Out-File -LiteralPath (Join-Path $root 'LGPO-Backup-Output.txt') -Encoding UTF8
-            if ($r.ExitCode -eq 0) { Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'OK' $lgpoRoot -Source 'LGPO.exe /b' }
-            else { Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'MANUAL' ('ExitCode=' + $r.ExitCode) $r.Error -Recommendation 'Review the LGPO output if a restorable local-policy copy is required.' -Kind 'Finding' -Source 'LGPO.exe /b' }
-            foreach ($pol in @(
-                @{ Scope='Machine'; Mode='/m'; Path=(Join-Path $env:windir 'System32\GroupPolicy\Machine\Registry.pol') },
-                @{ Scope='User'; Mode='/u'; Path=(Join-Path $env:windir 'System32\GroupPolicy\User\Registry.pol') })) {
-                if (Test-Path -LiteralPath $pol.Path) {
-                    $parsed = Join-Path $root ('Local-Policy-' + $pol.Scope + '-RegistryPol.txt')
-                    (Invoke-NativeCapture $LgpoExe @('/parse',$pol.Mode,$pol.Path) 60).Output | Out-File -LiteralPath $parsed -Encoding UTF8
-                    Add-Result 'POLICY_EVIDENCE' ('LocalRegistryPolicy-' + $pol.Scope) 'INFO' $parsed -Source 'LGPO.exe /parse'
-                }
+# Local policy backup (LGPO /b and /parse only, never an import) and the computer RSoP, into the evidence folder.
+function Save-RdpPolicyEvidence {
+    param($root, $lgpoRoot, $stamp, $review)
+    # LGPO backup (local policy only; never imports).
+    # An empty -LgpoExe skips LGPO on purpose (#150). Windows PowerShell
+    # rejects Test-Path with an empty path, so test for it first.
+    if (-not $LgpoExe) {
+        Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'INFO' 'LGPO disabled (-LgpoExe is empty) - local policy backup skipped' -Source 'Parameter'
+    } elseif (Test-Path -LiteralPath $LgpoExe -PathType Leaf) {
+        $r = Invoke-NativeCapture $LgpoExe @('/b',$lgpoRoot,'/n',('Pre-IPU-' + $stamp)) 120
+        $r.Output | Out-File -LiteralPath (Join-Path $root 'LGPO-Backup-Output.txt') -Encoding UTF8
+        if ($r.ExitCode -eq 0) { Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'OK' $lgpoRoot -Source 'LGPO.exe /b' }
+        else { Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'MANUAL' ('ExitCode=' + $r.ExitCode) $r.Error -Recommendation 'Review the LGPO output if a restorable local-policy copy is required.' -Kind 'Finding' -Source 'LGPO.exe /b' }
+        foreach ($pol in @(
+            @{ Scope='Machine'; Mode='/m'; Path=(Join-Path $env:windir 'System32\GroupPolicy\Machine\Registry.pol') },
+            @{ Scope='User'; Mode='/u'; Path=(Join-Path $env:windir 'System32\GroupPolicy\User\Registry.pol') })) {
+            if (Test-Path -LiteralPath $pol.Path) {
+                $parsed = Join-Path $root ('Local-Policy-' + $pol.Scope + '-RegistryPol.txt')
+                (Invoke-NativeCapture $LgpoExe @('/parse',$pol.Mode,$pol.Path) 60).Output | Out-File -LiteralPath $parsed -Encoding UTF8
+                Add-Result 'POLICY_EVIDENCE' ('LocalRegistryPolicy-' + $pol.Scope) 'INFO' $parsed -Source 'LGPO.exe /parse'
             }
-        } else {
-            Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'INFO' 'LGPO.exe not present - local policy backup skipped' $LgpoExe -Recommendation 'Optional: place LGPO.exe at this path to keep a restorable local-policy backup.' -Source 'File check'
         }
-
-        # Resultant Set of Policy.
-        $gpresult = Join-Path $env:windir 'System32\gpresult.exe'
-        $gpText = Invoke-NativeCapture $gpresult @('/Scope','Computer','/Z') 180
-        $gpText.Output | Out-File -LiteralPath (Join-Path $root 'GPResult-Computer.txt') -Encoding UTF8
-        $gpHtml = Invoke-NativeCapture $gpresult @('/Scope','Computer','/H',(Join-Path $root 'GPResult-Computer.html'),'/F') 180
-        if ($gpText.ExitCode -eq 0 -or $gpHtml.ExitCode -eq 0) { Add-Result 'POLICY_EVIDENCE' 'ComputerRSoP' 'OK' (Join-Path $root 'GPResult-Computer.html') -Source 'gpresult' }
-        else { $review.Add('gpresult did not return computer policy'); Add-Result 'POLICY_EVIDENCE' 'ComputerRSoP' 'MANUAL' ('Exit=' + $gpText.ExitCode + '/' + $gpHtml.ExitCode) -Recommendation 'Collect RSoP manually.' -Kind 'Finding' -Source 'gpresult' }
+    } else {
+        Add-Result 'POLICY_EVIDENCE' 'LocalGroupPolicyBackup' 'INFO' 'LGPO.exe not present - local policy backup skipped' $LgpoExe -Recommendation 'Optional: place LGPO.exe at this path to keep a restorable local-policy backup.' -Source 'File check'
     }
 
-    $policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
-    $tsPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'
-    $tcpPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
+    # Resultant Set of Policy.
+    $gpresult = Join-Path $env:windir 'System32\gpresult.exe'
+    $gpText = Invoke-NativeCapture $gpresult @('/Scope','Computer','/Z') 180
+    $gpText.Output | Out-File -LiteralPath (Join-Path $root 'GPResult-Computer.txt') -Encoding UTF8
+    $gpHtml = Invoke-NativeCapture $gpresult @('/Scope','Computer','/H',(Join-Path $root 'GPResult-Computer.html'),'/F') 180
+    if ($gpText.ExitCode -eq 0 -or $gpHtml.ExitCode -eq 0) { Add-Result 'POLICY_EVIDENCE' 'ComputerRSoP' 'OK' (Join-Path $root 'GPResult-Computer.html') -Source 'gpresult' }
+    else { $review.Add('gpresult did not return computer policy'); Add-Result 'POLICY_EVIDENCE' 'ComputerRSoP' 'MANUAL' ('Exit=' + $gpText.ExitCode + '/' + $gpHtml.ExitCode) -Recommendation 'Collect RSoP manually.' -Kind 'Finding' -Source 'gpresult' }
+}
 
+# Is incoming RDP enabled, by policy and in effect.
+function Invoke-RdpEnablementAssessment {
+    param($hard, $review, $policyPath, $tsPath)
     $polDeny = Get-RegistryValueSafe $policyPath 'fDenyTSConnections'
     $effDeny = Get-RegistryValueSafe $tsPath 'fDenyTSConnections'
     if ($polDeny.Exists -and [int]$polDeny.Value -eq 1) { $hard.Add('Group Policy disables incoming RDP') }
     if ($effDeny.Exists -and [int]$effDeny.Value -ne 0) { $hard.Add('Incoming RDP is disabled (fDenyTSConnections)') }
     if (-not $effDeny.Exists) { $review.Add('RDP enablement value not found') }
     Add-Result 'RDP' 'RemoteConnections' 'INFO' ('Policy=' + $(if ($polDeny.Exists) { $polDeny.Value } else { 'NotConfigured' })) ('Effective=' + $(if ($effDeny.Exists) { $effDeny.Value } else { 'Unknown' })) -Source 'Terminal Services registry'
+}
 
-    $port = 3389
-    $portValue = Get-RegistryValueSafe $tcpPath 'PortNumber'
-    if ($portValue.Exists) { $port = [int]$portValue.Value }
+# Listener port and Network Level Authentication (a security observation, not an IPU blocker).
+function Invoke-RdpNlaAssessment {
+    param($port, $policyPath, $tcpPath)
     $nla = Get-RegistryValueSafe $tcpPath 'UserAuthentication'
     $script:Data.NlaState = 'Unknown'
     if ($nla.Exists) { $script:Data.NlaState = $(if ([int]$nla.Value -eq 0) { 'Off' } else { 'On' }) }
@@ -6310,7 +6289,11 @@ function Invoke-RdpPolicyAssessment {
             Add-Result 'RDP' 'NetworkLevelAuthentication' 'WARNING' 'Disabled' 'Not an IPU blocker - a security observation.' -Recommendation 'RDP accepts connections before the user is authenticated. Enable NLA unless a documented client requirement prevents it.' -Kind 'Observation' -Source 'RDP-Tcp UserAuthentication' -Command (Get-RecommendationCommand 'EnableNla').Command -CommandKind 'Change'
         }
     }
+}
 
+# TermService, the TCP listener and the firewall rule.
+function Invoke-RdpListenerAssessment {
+    param($hard, $review, $port)
     $svc = @($script:Data.Services | Where-Object { $_.Name -eq 'TermService' }) | Select-Object -First 1
     if (-not $svc) { $hard.Add('TermService not found') }
     elseif ($svc.StartMode -eq 'Disabled') { $hard.Add('TermService is disabled') }
@@ -6339,7 +6322,11 @@ function Invoke-RdpPolicyAssessment {
             }
         } catch { $review.Add('Firewall rules could not be read') }
     }
+}
 
+# User rights and Remote Desktop Users.
+function Invoke-RdpUserRightAssessment {
+    param($hard, $review, $root, $folderOk)
     # User rights. A populated Deny right is normal hardening and is recorded
     # as evidence only; an empty Allow right is a real problem.
     if ($folderOk) {
@@ -6359,8 +6346,11 @@ function Invoke-RdpPolicyAssessment {
     }
     $rdu = Get-LocalGroupMembersBySid 'S-1-5-32-555'
     Add-Result 'RDP' 'RemoteDesktopUsersGroup' 'INFO' $(if ($rdu.Count -gt 0) { $rdu -join ' | ' } else { 'No members' }) -Source 'Local group S-1-5-32-555'
+}
 
-    # Drive redirection (machine policy, listener, loaded user policies).
+# Drive redirection (machine policy, listener, loaded user policies): adds the reasons it is blocked to $driveBlock.
+function Find-RdpDriveBlock {
+    param($driveBlock, $policyPath, $tcpPath)
     $polCdm = Get-RegistryValueSafe $policyPath 'fDisableCdm'
     $tcpCdm = Get-RegistryValueSafe $tcpPath 'fDisableCdm'
     if ($polCdm.Exists -and [int]$polCdm.Value -eq 1) { $driveBlock.Add('Machine policy fDisableCdm=1') }
@@ -6370,7 +6360,11 @@ function Invoke-RdpPolicyAssessment {
         $u = Get-RegistryValueSafe ('Registry::HKEY_USERS\' + $sid + '\Software\Policies\Microsoft\Windows NT\Terminal Services') 'fDisableCdm'
         if ($u.Exists -and [int]$u.Value -eq 1) { $driveBlock.Add('User ' + (Resolve-PolicyAccountName $sid) + ' fDisableCdm=1') }
     }
+}
 
+# The RDP verdict (GO, REVIEW, NO-GO) and the drive redirection row.
+function Add-RdpVerdictResult {
+    param($hard, $review, $driveBlock)
     if ($hard.Count -gt 0) {
         $script:Data.RdpSummary = 'NO-GO: ' + ($hard -join '; ')
         Add-Result 'RDP' 'RDPAccessReadiness' 'ACTION' 'NO-GO' @(($hard -join ' | '),($review -join ' | ')) -Recommendation 'Fix the local RDP block and test an end-to-end logon, or plan console-only access for the change.' -Source 'Registry, service, listener, user rights'
@@ -6388,20 +6382,64 @@ function Invoke-RdpPolicyAssessment {
         $script:Data.DriveRedirection = 'Allowed locally'
         Add-Result 'RDP' 'DriveRedirection' 'OK' 'ALLOWED LOCALLY' 'Destination/client policy not tested' -Source 'Terminal Services policy'
     }
+}
 
-    if ($folderOk) {
+# The CSV of the RDP rows, the optional zip and the evidence location row.
+function Close-RdpPolicyEvidence {
+    param($root, $zip)
+    try {
+        @($script:Results | Where-Object { $_.Area -in @('RDP','POLICY_EVIDENCE') }) | Export-Csv -LiteralPath (Join-Path $root 'RDP-Policy-Assessment.csv') -Delimiter ';' -NoTypeInformation -Encoding UTF8
+    } catch { Write-Swallowed $_ }
+    if ($CreatePolicyEvidenceZip) {
         try {
-            @($script:Results | Where-Object { $_.Area -in @('RDP','POLICY_EVIDENCE') }) | Export-Csv -LiteralPath (Join-Path $root 'RDP-Policy-Assessment.csv') -Delimiter ';' -NoTypeInformation -Encoding UTF8
-        } catch { Write-Swallowed $_ }
-        if ($CreatePolicyEvidenceZip) {
-            try {
-                if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
-                New-ZipFromFolder $root $zip
-                $script:Data.PolicyEvidence = $zip
-            } catch { Add-Result 'POLICY_EVIDENCE' 'EvidenceArchive' 'MANUAL' 'ZIP creation failed' $_.Exception.Message -Recommendation 'Retrieve the folder directly.' -Kind 'Finding' }
-        }
-        Add-Result 'POLICY_EVIDENCE' 'EvidenceLocation' 'INFO' $script:Data.PolicyEvidence $root -Source 'Local filesystem'
+            if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+            New-ZipFromFolder $root $zip
+            $script:Data.PolicyEvidence = $zip
+        } catch { Add-Result 'POLICY_EVIDENCE' 'EvidenceArchive' 'MANUAL' 'ZIP creation failed' $_.Exception.Message -Recommendation 'Retrieve the folder directly.' -Kind 'Finding' }
     }
+    Add-Result 'POLICY_EVIDENCE' 'EvidenceLocation' 'INFO' $script:Data.PolicyEvidence $root -Source 'Local filesystem'
+}
+
+function Invoke-RdpPolicyAssessment {
+    if (-not $EnableRDPPolicyEvidence) {
+        Add-Result 'RDP' 'RDPAccessReadiness' 'MANUAL' 'REVIEW' 'Policy evidence disabled in SETTINGS' -Recommendation 'Test RDP end-to-end before relying on it during the change.'
+        $script:Data.RdpSummary = 'REVIEW (not assessed)'; $script:Data.DriveRedirection = 'Not assessed'
+        return
+    }
+    $hard = New-Object System.Collections.Generic.List[string]
+    $review = New-Object System.Collections.Generic.List[string]
+    $driveBlock = New-Object System.Collections.Generic.List[string]
+
+    $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture)
+    $root = Join-Path (Get-EvidenceFolderPath $EvidenceRoot 'Policy' $PolicyEvidenceRoot) ($script:SafeComputerName + '-IPU-Policy-' + $stamp)
+    $lgpoRoot = Join-Path $root 'LGPO-Backup'
+    $zip = $root + '.zip'
+    $script:Data.PolicyEvidence = $root
+    $folderOk = $true
+    try {
+        $null = Initialize-EvidenceFolder 'Policy'
+        $null = Initialize-OutputFolder $root
+        New-Item -ItemType Directory -Path $lgpoRoot -Force | Out-Null
+    }
+    catch { $folderOk = $false; $review.Add('Evidence folder could not be created'); Add-Result 'POLICY_EVIDENCE' 'EvidenceFolder' 'MANUAL' $root $_.Exception.Message -Recommendation 'Make the evidence folder writable and re-run.' -Kind 'Finding' }
+
+    if ($folderOk) { Save-RdpPolicyEvidence $root $lgpoRoot $stamp $review }
+
+    $policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+    $tsPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'
+    $tcpPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
+
+    Invoke-RdpEnablementAssessment $hard $review $policyPath $tsPath
+
+    $port = 3389
+    $portValue = Get-RegistryValueSafe $tcpPath 'PortNumber'
+    if ($portValue.Exists) { $port = [int]$portValue.Value }
+    Invoke-RdpNlaAssessment $port $policyPath $tcpPath
+    Invoke-RdpListenerAssessment $hard $review $port
+    Invoke-RdpUserRightAssessment $hard $review $root $folderOk
+    Find-RdpDriveBlock $driveBlock $policyPath $tcpPath
+    Add-RdpVerdictResult $hard $review $driveBlock
+    if ($folderOk) { Close-RdpPolicyEvidence $root $zip }
 }
 # Chapter: Backup, services and checklist (docs/checks.md).
 # Each check is one function; Register-AssessmentCheck (50-checks.ps1) lists them in run order.
@@ -6610,28 +6648,9 @@ function New-FindingTable {
     return $sb.ToString()
 }
 
-function New-IPUReportHtml {
-    param(
-        [object[]]$Results,
-        [object[]]$CheckRuns,
-        [string]$OverallStatus,
-        [datetime]$CompletedTime,
-        [switch]$Partial
-    )
-    $ErrorActionPreference = 'Stop'
-    $e = ${function:ConvertTo-HtmlText}
-    $findings = @($Results | Where-Object { $_.Kind -eq 'Finding' })
-    $counts = @{}
-    foreach ($s in $script:FindingStatuses) { $counts[$s] = @($findings | Where-Object { $_.Status -eq $s }).Count }
-    $decision = @($findings | Where-Object { $_.Status -in @('SPECIAL','BLOCKER','ACTION') } | Sort-Object @{Expression={Get-StatusRank $_.Status}},Area,Item)
-    $planning = @($findings | Where-Object { $_.Status -in @('WARNING','MANUAL') } | Sort-Object @{Expression={Get-StatusRank $_.Status}},Area,Item)
-    $checklist = @($Results | Where-Object { $_.Kind -eq 'Checklist' })
-    $coverage = Get-CoverageNotice $CheckRuns (Get-ReleaseDisplayName $TargetServerVersion)
-    $duration = Format-Duration ($CompletedTime - $script:CollectionStarted)
-    $target = Get-ReleaseDisplayName $TargetServerVersion
-    $isPost = ($AssessmentMode -eq 'Post')
-    $title = 'Windows Server IPU Readiness Assessment'
-    if ($isPost) { $title = 'Windows Server Post-Upgrade Verification' }
+function Get-ReportFact {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'CheckRuns', Justification = 'Used inside the factValue script block, which the analyzer does not follow.')]
+    param([object[]]$Results, [object[]]$CheckRuns, [string]$Target, [bool]$isPost)
     # A fact a check sets: 'None detected' when the check completed without
     # finding anything, 'Not assessed' when the check did not complete.
     $factValue = {
@@ -6682,8 +6701,12 @@ function New-IPUReportHtml {
             @('Endpoint protection', (& $factValue $epp 'antivirus'))
         )
     }
+    return $facts
+}
 
-    $sb = New-Object System.Text.StringBuilder
+function Add-ReportHead {
+    param($sb, [bool]$isPost)
+    $e = ${function:ConvertTo-HtmlText}
     [void]$sb.AppendLine('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">')
     [void]$sb.AppendLine('<title>' + (& $e $(if ($isPost) { 'IPU Post-Upgrade' } else { 'IPU Assessment' })) + ' - ' + (& $e $script:ComputerName) + '</title>')
     [void]$sb.AppendLine(@'
@@ -6721,6 +6744,11 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
 @media print{.copy{display:none!important}a.ext::after{content:" (" attr(href) ")";font-size:9px;overflow-wrap:anywhere}:root{--ink:#16202e;--muted:#5d6a79;--line:#dde3ea;--bg:#ffffff;--panel:#ffffff;--heading:#16365f;--th-bg:#eef2f7;--th-ink:#30475f;--partial-bg:#fff4d6;--partial-ink:#5c4400;--partial-line:#e6c46a}body{background:#fff;color:#16202e}.wrap{max-width:none;padding:0}details{break-inside:avoid}.scroll{overflow:visible}table{min-width:0;font-size:10px}}
 </style></head><body><div class="wrap">
 '@)
+}
+
+function Add-ReportHero {
+    param($sb, [string]$Title, [string]$Target, [string]$Duration, [string]$OverallStatus, [datetime]$CompletedTime, [bool]$isPost, [bool]$Partial, $Coverage)
+    $e = ${function:ConvertTo-HtmlText}
     [void]$sb.AppendLine('<div class="hero"><h1>' + (& $e $title) + '</h1>')
     [void]$sb.AppendLine('<p><strong>' + (& $e $script:ComputerName) + '</strong> &nbsp;&rarr;&nbsp; ' + (& $e $target) + '</p>')
     [void]$sb.AppendLine('<p>Started ' + (& $e $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)) + ' &nbsp;|&nbsp; Completed ' + (& $e $CompletedTime.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)) + ' &nbsp;|&nbsp; Runtime ' + (& $e $duration) + ' &nbsp;|&nbsp; Collector ' + (& $e $script:CollectorVersion) + '</p>')
@@ -6735,7 +6763,11 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
         [void]$sb.AppendLine('<div class="partial">Not fully assessed: ' + (& $e (@($coverage.Problems) -join '; ')) + '. The results for these areas may be incomplete - absence of findings there is not evidence of readiness. Details: <a href="#coverage">Collector coverage</a>.</div>')
     }
     foreach ($note in @($coverage.ByChoice)) { [void]$sb.AppendLine('<div class="note"><strong>Not run by choice:</strong> ' + (& $e $note) + '</div>') }
+}
 
+function Add-ReportCardRow {
+    param($sb, $Counts, $Checklist, [object[]]$CheckRuns)
+    $e = ${function:ConvertTo-HtmlText}
     # Counter cards link to the rows behind them (#77); a zero is not a link.
     $cardTarget = @{ SPECIAL = 'special'; BLOCKER = 'decision'; ACTION = 'decision'; WARNING = 'planning'; MANUAL = 'planning' }
     $card = {
@@ -6751,7 +6783,11 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
     foreach ($s in $script:FindingStatuses) { if ($s -eq 'SPECIAL' -and $counts[$s] -eq 0) { continue }; [void]$sb.AppendLine((& $card $s $counts[$s] $cardTarget[$s] ($s + ' findings'))) }
     [void]$sb.AppendLine((& $card 'Checklist items' $checklist.Count 'checklist' 'checklist items'))
     [void]$sb.AppendLine((& $card 'Checks run' (([string]@($CheckRuns | Where-Object { $_.Outcome -eq 'Completed' }).Count) + ' / ' + @($CheckRuns).Count) 'coverage' 'checks completed') + '</div>')
+}
 
+function Add-ReportSummary {
+    param($sb, $Facts)
+    $e = ${function:ConvertTo-HtmlText}
     [void]$sb.AppendLine('<section><h2>Summary</h2><div class="facts">')
     foreach ($f in $facts) {
         $v = [string]$f[1]; if (-not $v) { $v = 'Not reported' }
@@ -6767,10 +6803,11 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
     [void]$sb.AppendLine('<p>' + (New-StatusBadge 'WARNING') + ' Planning risk.</p>')
     [void]$sb.AppendLine('<p>' + (New-StatusBadge 'MANUAL') + ' Needs human or external verification, or the check could not complete.</p>')
     [void]$sb.AppendLine('<p>' + (New-StatusBadge 'OK') + ' Check passed. ' + (New-StatusBadge 'INFO') + ' Documentation only. Rows marked <em>Observation</em> in the sections below have a status for visibility but do not affect the overall result.</p></section>')
+}
 
-    # SPECIAL server (#152): plain words for the project and the customer,
-    # the facts to choose a plan, the risks, then the options to evaluate.
-    $special = $script:Data.Special
+function Add-ReportSpecial {
+    param($sb, $Special)
+    $e = ${function:ConvertTo-HtmlText}
     if ($special) {
         [void]$sb.AppendLine('<section id="special" class="special"><h2>' + (New-StatusBadge 'SPECIAL') + ' ' + (& $e $special.Title) + ' - not a standard in-place upgrade</h2>')
         [void]$sb.AppendLine('<p class="special-banner"><strong>' + (& $e $special.Banner) + '</strong></p>')
@@ -6785,7 +6822,10 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
         }
         [void]$sb.AppendLine('</ul><p class="lead">This report is short on purpose: the standard checks were not run, because the standard procedure does not apply. Plan this server separately.</p></section>')
     }
+}
 
+function Add-ReportFindingSection {
+    param($sb, [bool]$isPost, $Decision, $Planning, $Checklist)
     if ($isPost) { [void]$sb.AppendLine('<section id="decision"><h2>Must be resolved</h2><p class="lead">Problems found after the upgrade, including what changed compared with the pre-upgrade snapshot.</p>') }
     else { [void]$sb.AppendLine('<section id="decision"><h2>IPU decision - must be resolved</h2><p class="lead">BLOCKER: this server cannot follow the standard IPU path as configured. ACTION: must be fixed or investigated before the change.</p>') }
     if ($decision.Count -eq 0) { [void]$sb.AppendLine('<p>No BLOCKER or ACTION findings.</p>') } else { [void]$sb.AppendLine((New-FindingTable $decision -WithCheckbox -Caption 'Findings that must be resolved')) }
@@ -6801,8 +6841,11 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
         [void]$sb.AppendLine((New-FindingTable $checklist -WithCheckbox -Caption 'Standard change checklist'))
         [void]$sb.AppendLine('</section>')
     }
+}
 
-
+function Add-ReportChapterSection {
+    param($sb, [object[]]$Results, [object[]]$CheckRuns, $Coverage)
+    $e = ${function:ConvertTo-HtmlText}
     [void]$sb.AppendLine('<p class="chapters-note">Chapters with findings to act on are open; the others hold inventory and evidence - open them as needed. Printing includes every chapter.<span class="js-only"> <button type="button" class="tgl" data-open="1">Expand all</button> <button type="button" class="tgl" data-open="0">Collapse all</button></span></p>')
     foreach ($chapter in $script:ChapterOrder) {
         $areas = @($script:AreaMap.Keys | Where-Object { $script:AreaMap[$_].Chapter -eq $chapter })
@@ -6836,11 +6879,53 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
         }
         [void]$sb.AppendLine('</div></details>')
     }
+}
+
+function Add-ReportFooter {
+    param($sb, [object[]]$Results)
+    $e = ${function:ConvertTo-HtmlText}
     [void]$sb.AppendLine('<footer>Collector ' + (& $e $script:CollectorVersion) + ' | ' + @($Results).Count + ' records | Read-only local assessment. It does not prove backups, credentials, licensing or application/vendor support. Commands are shown, never run, by this script.</footer></div>')
     # Copy buttons (#79). Without JavaScript the buttons stay hidden and the
     # command text can be selected as usual.
     [void]$sb.AppendLine('<script type="text/javascript">document.documentElement.className+=" js";document.addEventListener("click",function(e){var b=e.target;if(!b||!b.classList||!b.classList.contains("copy"))return;var t=b.getAttribute("data-cmd");var done=function(){b.textContent="Copied";setTimeout(function(){b.textContent="Copy"},1500)};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,function(){})}else{var a=document.createElement("textarea");a.value=t;document.body.appendChild(a);a.select();try{document.execCommand("copy");done()}catch(x){}document.body.removeChild(a)}});document.addEventListener("click",function(e){var b=e.target;if(!b||!b.classList||!b.classList.contains("tgl"))return;var o=b.getAttribute("data-open")==="1";var d=document.querySelectorAll("details");for(var i=0;i<d.length;i++){d[i].open=o}});var closedForPrint=[];window.addEventListener("beforeprint",function(){closedForPrint=[];var d=document.querySelectorAll("details:not([open])");for(var i=0;i<d.length;i++){d[i].open=true;closedForPrint.push(d[i])}});window.addEventListener("afterprint",function(){for(var i=0;i<closedForPrint.length;i++){closedForPrint[i].open=false}closedForPrint=[]});</script>')
     [void]$sb.AppendLine('</body></html>')
+}
+
+function New-IPUReportHtml {
+    param(
+        [object[]]$Results,
+        [object[]]$CheckRuns,
+        [string]$OverallStatus,
+        [datetime]$CompletedTime,
+        [switch]$Partial
+    )
+    $ErrorActionPreference = 'Stop'
+    $findings = @($Results | Where-Object { $_.Kind -eq 'Finding' })
+    $counts = @{}
+    foreach ($s in $script:FindingStatuses) { $counts[$s] = @($findings | Where-Object { $_.Status -eq $s }).Count }
+    $decision = @($findings | Where-Object { $_.Status -in @('SPECIAL','BLOCKER','ACTION') } | Sort-Object @{Expression={Get-StatusRank $_.Status}},Area,Item)
+    $planning = @($findings | Where-Object { $_.Status -in @('WARNING','MANUAL') } | Sort-Object @{Expression={Get-StatusRank $_.Status}},Area,Item)
+    $checklist = @($Results | Where-Object { $_.Kind -eq 'Checklist' })
+    $coverage = Get-CoverageNotice $CheckRuns (Get-ReleaseDisplayName $TargetServerVersion)
+    $duration = Format-Duration ($CompletedTime - $script:CollectionStarted)
+    $target = Get-ReleaseDisplayName $TargetServerVersion
+    $isPost = ($AssessmentMode -eq 'Post')
+    $title = 'Windows Server IPU Readiness Assessment'
+    if ($isPost) { $title = 'Windows Server Post-Upgrade Verification' }
+
+    $facts = Get-ReportFact $Results $CheckRuns $target $isPost
+
+    $sb = New-Object System.Text.StringBuilder
+    Add-ReportHead $sb $isPost
+    Add-ReportHero $sb $title $target $duration $OverallStatus $CompletedTime $isPost $Partial.IsPresent $coverage
+    Add-ReportCardRow $sb $counts $checklist $CheckRuns
+    Add-ReportSummary $sb $facts
+    # SPECIAL server (#152): plain words for the project and the customer,
+    # the facts to choose a plan, the risks, then the options to evaluate.
+    Add-ReportSpecial $sb $script:Data.Special
+    Add-ReportFindingSection $sb $isPost $decision $planning $checklist
+    Add-ReportChapterSection $sb $Results $CheckRuns $coverage
+    Add-ReportFooter $sb $Results
     return $sb.ToString()
 }
 

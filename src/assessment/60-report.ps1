@@ -121,28 +121,9 @@ function New-FindingTable {
     return $sb.ToString()
 }
 
-function New-IPUReportHtml {
-    param(
-        [object[]]$Results,
-        [object[]]$CheckRuns,
-        [string]$OverallStatus,
-        [datetime]$CompletedTime,
-        [switch]$Partial
-    )
-    $ErrorActionPreference = 'Stop'
-    $e = ${function:ConvertTo-HtmlText}
-    $findings = @($Results | Where-Object { $_.Kind -eq 'Finding' })
-    $counts = @{}
-    foreach ($s in $script:FindingStatuses) { $counts[$s] = @($findings | Where-Object { $_.Status -eq $s }).Count }
-    $decision = @($findings | Where-Object { $_.Status -in @('SPECIAL','BLOCKER','ACTION') } | Sort-Object @{Expression={Get-StatusRank $_.Status}},Area,Item)
-    $planning = @($findings | Where-Object { $_.Status -in @('WARNING','MANUAL') } | Sort-Object @{Expression={Get-StatusRank $_.Status}},Area,Item)
-    $checklist = @($Results | Where-Object { $_.Kind -eq 'Checklist' })
-    $coverage = Get-CoverageNotice $CheckRuns (Get-ReleaseDisplayName $TargetServerVersion)
-    $duration = Format-Duration ($CompletedTime - $script:CollectionStarted)
-    $target = Get-ReleaseDisplayName $TargetServerVersion
-    $isPost = ($AssessmentMode -eq 'Post')
-    $title = 'Windows Server IPU Readiness Assessment'
-    if ($isPost) { $title = 'Windows Server Post-Upgrade Verification' }
+function Get-ReportFact {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'CheckRuns', Justification = 'Used inside the factValue script block, which the analyzer does not follow.')]
+    param([object[]]$Results, [object[]]$CheckRuns, [string]$Target, [bool]$isPost)
     # A fact a check sets: 'None detected' when the check completed without
     # finding anything, 'Not assessed' when the check did not complete.
     $factValue = {
@@ -193,8 +174,12 @@ function New-IPUReportHtml {
             @('Endpoint protection', (& $factValue $epp 'antivirus'))
         )
     }
+    return $facts
+}
 
-    $sb = New-Object System.Text.StringBuilder
+function Add-ReportHead {
+    param($sb, [bool]$isPost)
+    $e = ${function:ConvertTo-HtmlText}
     [void]$sb.AppendLine('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">')
     [void]$sb.AppendLine('<title>' + (& $e $(if ($isPost) { 'IPU Post-Upgrade' } else { 'IPU Assessment' })) + ' - ' + (& $e $script:ComputerName) + '</title>')
     [void]$sb.AppendLine(@'
@@ -232,6 +217,11 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
 @media print{.copy{display:none!important}a.ext::after{content:" (" attr(href) ")";font-size:9px;overflow-wrap:anywhere}:root{--ink:#16202e;--muted:#5d6a79;--line:#dde3ea;--bg:#ffffff;--panel:#ffffff;--heading:#16365f;--th-bg:#eef2f7;--th-ink:#30475f;--partial-bg:#fff4d6;--partial-ink:#5c4400;--partial-line:#e6c46a}body{background:#fff;color:#16202e}.wrap{max-width:none;padding:0}details{break-inside:avoid}.scroll{overflow:visible}table{min-width:0;font-size:10px}}
 </style></head><body><div class="wrap">
 '@)
+}
+
+function Add-ReportHero {
+    param($sb, [string]$Title, [string]$Target, [string]$Duration, [string]$OverallStatus, [datetime]$CompletedTime, [bool]$isPost, [bool]$Partial, $Coverage)
+    $e = ${function:ConvertTo-HtmlText}
     [void]$sb.AppendLine('<div class="hero"><h1>' + (& $e $title) + '</h1>')
     [void]$sb.AppendLine('<p><strong>' + (& $e $script:ComputerName) + '</strong> &nbsp;&rarr;&nbsp; ' + (& $e $target) + '</p>')
     [void]$sb.AppendLine('<p>Started ' + (& $e $script:CollectionStarted.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)) + ' &nbsp;|&nbsp; Completed ' + (& $e $CompletedTime.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)) + ' &nbsp;|&nbsp; Runtime ' + (& $e $duration) + ' &nbsp;|&nbsp; Collector ' + (& $e $script:CollectorVersion) + '</p>')
@@ -246,7 +236,11 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
         [void]$sb.AppendLine('<div class="partial">Not fully assessed: ' + (& $e (@($coverage.Problems) -join '; ')) + '. The results for these areas may be incomplete - absence of findings there is not evidence of readiness. Details: <a href="#coverage">Collector coverage</a>.</div>')
     }
     foreach ($note in @($coverage.ByChoice)) { [void]$sb.AppendLine('<div class="note"><strong>Not run by choice:</strong> ' + (& $e $note) + '</div>') }
+}
 
+function Add-ReportCardRow {
+    param($sb, $Counts, $Checklist, [object[]]$CheckRuns)
+    $e = ${function:ConvertTo-HtmlText}
     # Counter cards link to the rows behind them (#77); a zero is not a link.
     $cardTarget = @{ SPECIAL = 'special'; BLOCKER = 'decision'; ACTION = 'decision'; WARNING = 'planning'; MANUAL = 'planning' }
     $card = {
@@ -262,7 +256,11 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
     foreach ($s in $script:FindingStatuses) { if ($s -eq 'SPECIAL' -and $counts[$s] -eq 0) { continue }; [void]$sb.AppendLine((& $card $s $counts[$s] $cardTarget[$s] ($s + ' findings'))) }
     [void]$sb.AppendLine((& $card 'Checklist items' $checklist.Count 'checklist' 'checklist items'))
     [void]$sb.AppendLine((& $card 'Checks run' (([string]@($CheckRuns | Where-Object { $_.Outcome -eq 'Completed' }).Count) + ' / ' + @($CheckRuns).Count) 'coverage' 'checks completed') + '</div>')
+}
 
+function Add-ReportSummary {
+    param($sb, $Facts)
+    $e = ${function:ConvertTo-HtmlText}
     [void]$sb.AppendLine('<section><h2>Summary</h2><div class="facts">')
     foreach ($f in $facts) {
         $v = [string]$f[1]; if (-not $v) { $v = 'Not reported' }
@@ -278,10 +276,11 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
     [void]$sb.AppendLine('<p>' + (New-StatusBadge 'WARNING') + ' Planning risk.</p>')
     [void]$sb.AppendLine('<p>' + (New-StatusBadge 'MANUAL') + ' Needs human or external verification, or the check could not complete.</p>')
     [void]$sb.AppendLine('<p>' + (New-StatusBadge 'OK') + ' Check passed. ' + (New-StatusBadge 'INFO') + ' Documentation only. Rows marked <em>Observation</em> in the sections below have a status for visibility but do not affect the overall result.</p></section>')
+}
 
-    # SPECIAL server (#152): plain words for the project and the customer,
-    # the facts to choose a plan, the risks, then the options to evaluate.
-    $special = $script:Data.Special
+function Add-ReportSpecial {
+    param($sb, $Special)
+    $e = ${function:ConvertTo-HtmlText}
     if ($special) {
         [void]$sb.AppendLine('<section id="special" class="special"><h2>' + (New-StatusBadge 'SPECIAL') + ' ' + (& $e $special.Title) + ' - not a standard in-place upgrade</h2>')
         [void]$sb.AppendLine('<p class="special-banner"><strong>' + (& $e $special.Banner) + '</strong></p>')
@@ -296,7 +295,10 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
         }
         [void]$sb.AppendLine('</ul><p class="lead">This report is short on purpose: the standard checks were not run, because the standard procedure does not apply. Plan this server separately.</p></section>')
     }
+}
 
+function Add-ReportFindingSection {
+    param($sb, [bool]$isPost, $Decision, $Planning, $Checklist)
     if ($isPost) { [void]$sb.AppendLine('<section id="decision"><h2>Must be resolved</h2><p class="lead">Problems found after the upgrade, including what changed compared with the pre-upgrade snapshot.</p>') }
     else { [void]$sb.AppendLine('<section id="decision"><h2>IPU decision - must be resolved</h2><p class="lead">BLOCKER: this server cannot follow the standard IPU path as configured. ACTION: must be fixed or investigated before the change.</p>') }
     if ($decision.Count -eq 0) { [void]$sb.AppendLine('<p>No BLOCKER or ACTION findings.</p>') } else { [void]$sb.AppendLine((New-FindingTable $decision -WithCheckbox -Caption 'Findings that must be resolved')) }
@@ -312,8 +314,11 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
         [void]$sb.AppendLine((New-FindingTable $checklist -WithCheckbox -Caption 'Standard change checklist'))
         [void]$sb.AppendLine('</section>')
     }
+}
 
-
+function Add-ReportChapterSection {
+    param($sb, [object[]]$Results, [object[]]$CheckRuns, $Coverage)
+    $e = ${function:ConvertTo-HtmlText}
     [void]$sb.AppendLine('<p class="chapters-note">Chapters with findings to act on are open; the others hold inventory and evidence - open them as needed. Printing includes every chapter.<span class="js-only"> <button type="button" class="tgl" data-open="1">Expand all</button> <button type="button" class="tgl" data-open="0">Collapse all</button></span></p>')
     foreach ($chapter in $script:ChapterOrder) {
         $areas = @($script:AreaMap.Keys | Where-Object { $script:AreaMap[$_].Chapter -eq $chapter })
@@ -347,11 +352,53 @@ th{background:var(--th-bg);color:var(--th-ink);font-size:11px;text-transform:upp
         }
         [void]$sb.AppendLine('</div></details>')
     }
+}
+
+function Add-ReportFooter {
+    param($sb, [object[]]$Results)
+    $e = ${function:ConvertTo-HtmlText}
     [void]$sb.AppendLine('<footer>Collector ' + (& $e $script:CollectorVersion) + ' | ' + @($Results).Count + ' records | Read-only local assessment. It does not prove backups, credentials, licensing or application/vendor support. Commands are shown, never run, by this script.</footer></div>')
     # Copy buttons (#79). Without JavaScript the buttons stay hidden and the
     # command text can be selected as usual.
     [void]$sb.AppendLine('<script type="text/javascript">document.documentElement.className+=" js";document.addEventListener("click",function(e){var b=e.target;if(!b||!b.classList||!b.classList.contains("copy"))return;var t=b.getAttribute("data-cmd");var done=function(){b.textContent="Copied";setTimeout(function(){b.textContent="Copy"},1500)};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,function(){})}else{var a=document.createElement("textarea");a.value=t;document.body.appendChild(a);a.select();try{document.execCommand("copy");done()}catch(x){}document.body.removeChild(a)}});document.addEventListener("click",function(e){var b=e.target;if(!b||!b.classList||!b.classList.contains("tgl"))return;var o=b.getAttribute("data-open")==="1";var d=document.querySelectorAll("details");for(var i=0;i<d.length;i++){d[i].open=o}});var closedForPrint=[];window.addEventListener("beforeprint",function(){closedForPrint=[];var d=document.querySelectorAll("details:not([open])");for(var i=0;i<d.length;i++){d[i].open=true;closedForPrint.push(d[i])}});window.addEventListener("afterprint",function(){for(var i=0;i<closedForPrint.length;i++){closedForPrint[i].open=false}closedForPrint=[]});</script>')
     [void]$sb.AppendLine('</body></html>')
+}
+
+function New-IPUReportHtml {
+    param(
+        [object[]]$Results,
+        [object[]]$CheckRuns,
+        [string]$OverallStatus,
+        [datetime]$CompletedTime,
+        [switch]$Partial
+    )
+    $ErrorActionPreference = 'Stop'
+    $findings = @($Results | Where-Object { $_.Kind -eq 'Finding' })
+    $counts = @{}
+    foreach ($s in $script:FindingStatuses) { $counts[$s] = @($findings | Where-Object { $_.Status -eq $s }).Count }
+    $decision = @($findings | Where-Object { $_.Status -in @('SPECIAL','BLOCKER','ACTION') } | Sort-Object @{Expression={Get-StatusRank $_.Status}},Area,Item)
+    $planning = @($findings | Where-Object { $_.Status -in @('WARNING','MANUAL') } | Sort-Object @{Expression={Get-StatusRank $_.Status}},Area,Item)
+    $checklist = @($Results | Where-Object { $_.Kind -eq 'Checklist' })
+    $coverage = Get-CoverageNotice $CheckRuns (Get-ReleaseDisplayName $TargetServerVersion)
+    $duration = Format-Duration ($CompletedTime - $script:CollectionStarted)
+    $target = Get-ReleaseDisplayName $TargetServerVersion
+    $isPost = ($AssessmentMode -eq 'Post')
+    $title = 'Windows Server IPU Readiness Assessment'
+    if ($isPost) { $title = 'Windows Server Post-Upgrade Verification' }
+
+    $facts = Get-ReportFact $Results $CheckRuns $target $isPost
+
+    $sb = New-Object System.Text.StringBuilder
+    Add-ReportHead $sb $isPost
+    Add-ReportHero $sb $title $target $duration $OverallStatus $CompletedTime $isPost $Partial.IsPresent $coverage
+    Add-ReportCardRow $sb $counts $checklist $CheckRuns
+    Add-ReportSummary $sb $facts
+    # SPECIAL server (#152): plain words for the project and the customer,
+    # the facts to choose a plan, the risks, then the options to evaluate.
+    Add-ReportSpecial $sb $script:Data.Special
+    Add-ReportFindingSection $sb $isPost $decision $planning $checklist
+    Add-ReportChapterSection $sb $Results $CheckRuns $coverage
+    Add-ReportFooter $sb $Results
     return $sb.ToString()
 }
 

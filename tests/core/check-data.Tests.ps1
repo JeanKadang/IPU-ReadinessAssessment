@@ -66,7 +66,7 @@ BeforeAll {
     }
 
     # The writes of every check body, by check id. Invoke-RdpPolicyAssessment is
-    # the body of the rdp check, kept as a function of its own.
+    # the body of the rdp check, in steps (Invoke-Rdp*, Save-Rdp*, Find-Rdp*).
     $script:FileAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $script:Parts '50-checks.ps1'), [ref]$null, [ref]$null)
     # Every function of the check parts: the registry (50-checks.ps1) and one function per check.
     $script:CheckPartFiles = @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $script:Parts -Filter '5*-checks*.ps1')
@@ -100,7 +100,8 @@ BeforeAll {
         $script:Writes[$id] = Get-DataWrite $body
     }
     $script:CheckIds = @($script:Writes.Keys)
-    $script:FunctionOwner = @{ 'Invoke-RdpPolicyAssessment' = 'rdp' }
+    $script:FunctionOwner = @{}
+    foreach ($name in 'Invoke-RdpPolicyAssessment', 'Save-RdpPolicyEvidence', 'Invoke-RdpEnablementAssessment', 'Invoke-RdpNlaAssessment', 'Invoke-RdpListenerAssessment', 'Invoke-RdpUserRightAssessment', 'Find-RdpDriveBlock', 'Add-RdpVerdictResult', 'Close-RdpPolicyEvidence') { $script:FunctionOwner[$name] = 'rdp' }
     $script:OtherFunctions = @($script:CheckPartFunctions.Values | Where-Object { $_.Name -ne 'Register-AssessmentCheck' -and -not $script:CheckBodyFunction.ContainsKey($_.Name) })
     foreach ($f in $script:OtherFunctions) {
         if ($script:FunctionOwner.ContainsKey($f.Name)) {
