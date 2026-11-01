@@ -1,0 +1,47 @@
+name: CI tool versions
+
+# Monthly check of the pinned CI tool versions (Pester, PSScriptAnalyzer)
+# against the PowerShell Gallery (#262). Keeps ONE issue, "CI tool versions
+# behind the PowerShell Gallery", up to date: it opens (or is rewritten) when a
+# pin is behind and closes itself when every pin is current. When the Gallery
+# cannot be read the run changes nothing. No third-party action: gh and
+# PowerShell only.
+on:
+  schedule:
+    - cron: '17 6 3 * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  versions:
+    name: versions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Compare the pins with the Gallery
+        id: scan
+        shell: pwsh
+        run: |
+          ./build/Find-OutdatedCiTool.ps1 -ReportPath (Join-Path $env:RUNNER_TEMP 'versions.md') | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+      - name: Update the tracking issue
+        if: steps.scan.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COUNT: ${{ steps.scan.outputs.count }}
+          REPORT: ${{ runner.temp }}/versions.md
+        run: |
+          title='CI tool versions behind the PowerShell Gallery'
+          existing=$(gh issue list --state open --search "\"$title\" in:title" --json number,title --jq "[.[] | select(.title == \"$title\")][0].number // empty")
+          if [ "$COUNT" -gt 0 ]; then
+            if [ -n "$existing" ]; then
+              gh issue edit "$existing" --body-file "$REPORT"
+            else
+              gh issue create --title "$title" --label tooling --label P3 --body-file "$REPORT"
+            fi
+          elif [ -n "$existing" ]; then
+            gh issue close "$existing" --reason completed --comment "Every pinned CI tool is at the newest release now."
+          fi
