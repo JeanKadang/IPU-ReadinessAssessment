@@ -31,7 +31,7 @@ concurrency:
 # versions below have no Dependabot support: the monthly "CI tool versions"
 # workflow compares them with the PowerShell Gallery and opens one issue (#262).
 env:
-  PESTER_VERSION: 5.7.1
+  PESTER_VERSION: 6.2.0
   PSSA_VERSION: 1.25.0
 
 jobs:
