@@ -32,7 +32,7 @@ concurrency:
 # workflow compares them with the PowerShell Gallery and opens one issue (#262).
 env:
   PESTER_VERSION: 5.7.1
-  PSSA_VERSION: 1.23.0
+  PSSA_VERSION: 1.25.0
 
 jobs:
   pester:
