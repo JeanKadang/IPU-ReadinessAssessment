@@ -2,8 +2,8 @@
 
 How to run the Windows IPU readiness assessment, read its results, and troubleshoot it.
 
-**Scripts:** `src/Windows-IPU-Readiness-Assessment.ps1` (the assessment script, version 4.6.0; runs on each server) and
-`src/Merge-IPUAssessments.ps1` (version 1.3.0, combines many servers' results, runs on an admin workstation)
+**Scripts:** `src/Windows-IPU-Readiness-Assessment.ps1` (the assessment script, version 4.7.0; runs on each server) and
+`src/Merge-IPUAssessments.ps1` (version 1.4.0, combines many servers' results, runs on an admin workstation)
 **Audience:** server and change engineers preparing or verifying a Windows Server in-place upgrade.
 
 ## Contents
@@ -741,7 +741,7 @@ The script itself only reads the partition layout and `reagentc /info`; it never
 
 ## 9. Combining many servers: fleet overview
 
-`src/Merge-IPUAssessments.ps1` (version 1.3.0, for assessment 4.0.1 and later) reads the result JSON of every
+`src/Merge-IPUAssessments.ps1` (version 1.4.0, for assessment 4.0.1 and later) reads the result JSON of every
 server in a folder and writes **one overview** for the whole estate. It is read-only for the input files.
 
 ```mermaid

@@ -1,8 +1,8 @@
 <#
 ===============================================================================
  SCRIPT NAME : Windows-IPU-Readiness-Assessment.ps1
- VERSION     : 4.6.0
- RELEASE DATE: 2026-10-29
+ VERSION     : 4.7.0
+ RELEASE DATE: 2026-11-03
  PURPOSE     : Windows Server in-place upgrade (IPU) readiness assessment and
                post-upgrade verification, with a self-contained HTML report
                and a JSON result file written on the assessed server.
@@ -88,6 +88,12 @@
     load, nothing is collected. The Pester tests use this.
 
 .VERSION HISTORY
+    4.7.0 - Fleet overview names the other teams a server needs. VDI
+            hosts (Citrix VDA, Horizon Agent) are a BLOCKER under the
+            site policy BlockVdiIPU. PKI policy allows 2019 and 2022.
+            Redaction covers the run log. NotCompleted counts only real
+            gaps; skips are Skipped. Each check is its own function and
+            check data has one owner each (no behaviour change).
     4.6.0 - Windows Server 2019 as a target. PKI servers follow the
             site policy PkiAllowedTargets (default 2022). End-of-life
             verdicts from a dated snapshot. Failed reads are MANUAL, not
