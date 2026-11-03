@@ -1,31 +1,25 @@
 # Roadmap
 
-Snapshot of the open issues by milestone, written 2026-10-31. The live view, with status, is the
+Snapshot of the open issues by milestone, written 2026-11-03. The live view, with status, is the
 [Roadmap project board](https://github.com/users/JeanKadang/projects/4). Priorities: P0 critical bug or
 security risk, P1 important quality, reliability or user-facing improvement, P2 valuable enhancement, cleanup or testing,
 P3 nice-to-have. Refresh this page when milestones change.
 
-Latest release: [4.6.0](https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.6.0) (2026-10-29). What it
+Latest release: [4.7.0](https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.7.0) (2026-11-03). What it
 contains is in the [changelog](../CHANGELOG.md).
 
-## 4.7.0
+## 4.8.0
 
-Next minor: larger refactors, the cluster node script, VMware Tools and patch-level detail, and the rest of the end-of-life work.
+Next minor: the remaining bug fixes from the 4.5.3 evaluation, Windows Server 2008 as a source, VMware Tools detail, the cluster node script, and the end-of-life check on a real SQL Server.
 
 | Issue | Priority | Owner | Title |
 |---|---|---|---|
-| [#255](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/255) | P2 | Micker71 | Split Register-AssessmentCheck into one function per check |
-| [#137](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/137) | P3 | Micker71 | Report builder and RDP evidence functions are too large |
-| [#140](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/140) | P3 | JeanKadang | No single command to run CI checks locally |
-| [#141](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/141) | P3 | JeanKadang | CI module install has no retry; a truncated Gallery download fails the job |
+| [#349](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/349) | P3 | Micker71 | Confirm the EOL candidates and verdicts on a real Windows Server |
 | [#153](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/153) | P3 | Micker71 | Dedicated cluster node assessment script |
 | [#257](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/257) | P3 | Micker71 | Patch level uses the newest update of any kind |
 | [#258](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/258) | P3 | Micker71 | Storage and platform: hard-coded C:, firmware type guess, PnP drivers enumerated repeatedly |
 | [#259](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/259) | P3 | Micker71 | Group Policy and AD: a lookup failure drops groups already read; OS-dependent WMI filters; future dates |
 | [#260](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/260) | P3 | Micker71 | SQL Server: an unknown future major version is a BLOCKER; PrintBrm edge cases |
-| [#262](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/262) | P3 | JeanKadang | Pinned CI tool versions have no update path |
-| [#263](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/263) | P3 | JeanKadang | Issues closed as completed with unchecked criteria go unnoticed |
-| [#266](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/266) | P3 | JeanKadang | End-of-life dates for installed applications and runtimes, looked up off the server |
 | [#276](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/276) | P3 | Micker71 | Recognise Windows Server 2008 and 2008 R2 as a source release |
 | [#279](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/279) | P3 | Micker71 | VMware Tools: show how far behind the installed version is |
 

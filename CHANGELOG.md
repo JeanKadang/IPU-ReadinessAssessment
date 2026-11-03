@@ -4,6 +4,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [4.7.0] - 2026-11-03
+
 ### Added
 
 - VDI hosts are not upgraded in place (#376). A Citrix Virtual Delivery Agent or a VMware / Omnissa Horizon Agent gives a BLOCKER *VDI: <agent>*: the server belongs to the VDI / Endpoint Team and goes out of the IPU plan. Site policy `-BlockVdiIPU` (on by default, also in a profile file); switched off, a WARNING that names the team. The fleet overview lists the **VDI / Endpoint Team** for these servers. A Citrix Workspace app, Receiver or Horizon Client alone is not a VDI host.
@@ -311,7 +313,8 @@ Restructure of the 3.x script (released as a script file only).
 
 Local Group Policy backup and RDP readiness. Superseded by 4.0.0.
 
-[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.6.0...HEAD
+[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.7.0...HEAD
+[4.7.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.7.0
 [4.6.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.6.0
 [4.5.4]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.5.4
 [4.5.3]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.5.3
