@@ -485,11 +485,11 @@ Describe 'End-of-life verdicts in the fleet overview (#275)' {
     }
 }
 
-Describe 'Teams needed in the fleet overview (#323)' {
+Describe 'Teams needed in the fleet overview (#323, #374)' {
     BeforeAll {
         # The pure functions live in a part of the merge script: load it as it is built in.
         . (Join-Path $PSScriptRoot '..\src\merge\15-teams.ps1')
-        function New-Row([string]$Area, [string]$Item, [string]$Status, [string]$Value = '') { [pscustomobject]@{ Area = $Area; Item = $Item; Status = $Status; Value = $Value } }
+        function New-Row([string]$Area, [string]$Item, [string]$Status, [string]$Value = '', [string]$Details = '') { [pscustomobject]@{ Area = $Area; Item = $Item; Status = $Status; Value = $Value; Details = $Details } }
     }
     Context 'pure functions' {
         It 'a server that needs no other team gives an empty list' {
@@ -497,56 +497,67 @@ Describe 'Teams needed in the fleet overview (#323)' {
             @(Get-TeamsNeeded $rows).Count | Should -Be 0
             @(Get-TeamsNeeded @()).Count | Should -Be 0
         }
-        It '<Case> needs <Team>' -TestCases @(
-            @{ Case = 'a certification authority';     Row = @{ Area = 'PKI'; Item = 'CertificationAuthority'; Status = 'ACTION' };       Team = 'PKI' }
-            @{ Case = 'the PKI site policy';           Row = @{ Area = 'PKI'; Item = 'PkiSitePolicy'; Status = 'BLOCKER' };               Team = 'PKI' }
-            @{ Case = 'a domain controller';           Row = @{ Area = 'DOMAIN_CONTROLLER'; Item = 'DomainController'; Status = 'INFO' }; Team = 'AD' }
-            @{ Case = 'a SPECIAL domain controller';   Row = @{ Area = 'SPECIAL'; Item = 'Domain controller'; Status = 'SPECIAL' };       Team = 'AD' }
-            @{ Case = 'a SPECIAL cluster node';        Row = @{ Area = 'SPECIAL'; Item = 'Failover cluster node'; Status = 'SPECIAL' };   Team = 'Cluster / storage' }
-            @{ Case = 'clustering without a cluster';  Row = @{ Area = 'CLUSTER'; Item = 'FailoverClustering'; Status = 'WARNING' };      Team = 'Cluster / storage' }
-            @{ Case = 'a SQL Server instance';         Row = @{ Area = 'SQL'; Item = 'SQL Server: MSSQLSERVER'; Status = 'OK' };          Team = 'SQL / DBA' }
-            @{ Case = 'Exchange';                      Row = @{ Area = 'EXCHANGE'; Item = 'ExchangeServerRole'; Status = 'BLOCKER' };     Team = 'Exchange' }
-            @{ Case = 'failed VSS writers';            Row = @{ Area = 'BACKUP'; Item = 'VSSWriters'; Status = 'ACTION' };                Team = 'Backup' }
-            @{ Case = 'a backup agent';                Row = @{ Area = 'BACKUP'; Item = 'Veeam Agent'; Status = 'INFO' };                 Team = 'Backup' }
-            @{ Case = 'an antivirus agent to check';   Row = @{ Area = 'ANTIVIRUS'; Item = 'Trend Micro Apex One'; Status = 'WARNING' };  Team = 'Antivirus / EDR' }
-            @{ Case = 'a security tool to check';      Row = @{ Area = 'SECURITY'; Item = 'Some DLP agent'; Status = 'WARNING' };         Team = 'Antivirus / EDR' }
-            @{ Case = 'an LBFO team';                  Row = @{ Area = 'NETWORK'; Item = 'LBFO team: Team1'; Status = 'ACTION' };         Team = 'Network' }
-            @{ Case = 'static routes';                 Row = @{ Area = 'NETWORK_DEPENDENCY'; Item = 'StaticRoutes'; Status = 'MANUAL'; Value = 'Routes=2' }; Team = 'Network' }
-            @{ Case = 'old VMware Tools';              Row = @{ Area = 'VMWARE'; Item = 'VMwareTools'; Status = 'ACTION' };               Team = 'Virtualization' }
-            @{ Case = 'IIS';                           Row = @{ Area = 'IIS'; Item = 'Web-Server'; Status = 'WARNING' };                  Team = 'Application owner' }
-            @{ Case = 'a Session Host';                Row = @{ Area = 'RDS'; Item = 'RDSessionHost'; Status = 'ACTION' };                Team = 'Application owner' }
-            @{ Case = 'a product past end of life';    Row = @{ Area = 'APPLICATIONS'; Item = 'EOL: PHP 7.4.33'; Status = 'WARNING' };    Team = 'Application owner' }
+        It '<Case> needs <Label>' -TestCases @(
+            @{ Case = 'a certification authority';     Row = @('PKI', 'CertificationAuthority', 'ACTION', '', '');              Label = 'PKI Team' }
+            @{ Case = 'the PKI site policy';           Row = @('PKI', 'PkiSitePolicy', 'BLOCKER', '', '');                      Label = 'PKI Team' }
+            @{ Case = 'a domain controller';           Row = @('DOMAIN_CONTROLLER', 'DomainController', 'INFO', '', '');        Label = 'AD Projects' }
+            @{ Case = 'a SPECIAL domain controller';   Row = @('SPECIAL', 'Domain controller', 'SPECIAL', '', '');              Label = 'AD Projects' }
+            @{ Case = 'a SPECIAL cluster node';        Row = @('SPECIAL', 'Failover cluster node', 'SPECIAL', '', '');          Label = 'Windows Projects' }
+            @{ Case = 'a SQL Server instance';         Row = @('SQL', 'Database Engine: MSSQLSERVER', 'OK', '', '');            Label = 'DBA Team (SQL Server)' }
+            @{ Case = 'an Oracle database';            Row = @('WORKLOAD', 'Oracle Database', 'WARNING', '', 'Service OracleServiceORCL (Running)'); Label = 'DBA Team (Oracle)' }
+            @{ Case = 'MySQL';                         Row = @('WORKLOAD', 'MySQL', 'WARNING', '', '');                         Label = 'DBA Team (MySQL)' }
+            @{ Case = 'PostgreSQL';                    Row = @('WORKLOAD', 'PostgreSQL', 'WARNING', '', '');                    Label = 'DBA Team (PostgreSQL)' }
+            @{ Case = 'Db2';                           Row = @('WORKLOAD', 'IBM Db2', 'WARNING', '', '');                       Label = 'DBA Team (Db2)' }
+            @{ Case = 'Exchange';                      Row = @('EXCHANGE', 'ExchangeServerRole', 'BLOCKER', '', '');            Label = 'Exchange' }
+            @{ Case = 'a Veeam backup server';         Row = @('BACKUP', 'Veeam', 'INFO', '', 'Veeam Backup & Replication Server version 12.1 | Service VeeamBackupSvc (Running)'); Label = 'Team Backup' }
+            @{ Case = 'a Veeam proxy';                 Row = @('BACKUP', 'Veeam', 'INFO', '', 'Service VeeamTransportSvc (Running)'); Label = 'Team Backup' }
+            @{ Case = 'a Spectrum Protect storage agent'; Row = @('BACKUP', 'IBM Spectrum Protect (TSM)', 'INFO', '', 'Service dsmsta (Running)'); Label = 'Team Backup' }
+            @{ Case = 'an antivirus agent to check';   Row = @('ANTIVIRUS', 'Trend Micro Apex One', 'WARNING', '', '');         Label = 'Security Team (AV)' }
+            @{ Case = 'a security tool to check';      Row = @('SECURITY', 'Some DLP agent', 'WARNING', '', '');                Label = 'Security Team (AV)' }
+            @{ Case = 'an LACP NIC team';              Row = @('NETWORK', 'LBFO team: Team1', 'ACTION', '', 'Mode=Lacp | LoadBalancing=Dynamic'); Label = 'Network Team' }
+            @{ Case = 'a static NIC team';             Row = @('NETWORK', 'LBFO team: Team1', 'ACTION', '', 'Mode=Static | LoadBalancing=Dynamic'); Label = 'Network Team' }
+            @{ Case = 'a product past end of life';    Row = @('APPLICATIONS', 'EOL: PHP 7.4.33', 'WARNING', '', '');           Label = 'Application owner' }
         ) {
-            $value = ''; if ($Row.ContainsKey('Value')) { $value = $Row.Value }
-            $t = @(Get-TeamsNeeded @((New-Row $Row.Area $Row.Item $Row.Status $value)))
+            $t = @(Get-TeamsNeeded @((New-Row $Row[0] $Row[1] $Row[2] $Row[3] $Row[4])))
             $t.Count | Should -Be 1
-            $t[0].Team | Should -Be $Team
-            $t[0].Items | Should -Be @($Row.Item)
+            $t[0].Label | Should -Be $Label
+            $t[0].Items | Should -Be @($Row[1])
         }
-        It 'rows that look related but need no team: <Case>' -TestCases @(
-            @{ Case = 'unreadable static routes'; Row = @{ Area = 'NETWORK_DEPENDENCY'; Item = 'StaticRoutes'; Status = 'MANUAL'; Value = 'Get-NetRoute unavailable' } }
-            @{ Case = 'AppLocker';                Row = @{ Area = 'SECURITY'; Item = 'AppLocker'; Status = 'WARNING'; Value = '' } }
-            @{ Case = 'a current antivirus';      Row = @{ Area = 'ANTIVIRUS'; Item = 'Microsoft Defender'; Status = 'INFO'; Value = '' } }
-            @{ Case = 'a VSS writer row';         Row = @{ Area = 'BACKUP'; Item = 'VSS writer: SqlServerWriter'; Status = 'INFO'; Value = '' } }
-            @{ Case = 'clustering state unknown'; Row = @{ Area = 'CLUSTER'; Item = 'FailoverClustering'; Status = 'MANUAL'; Value = '' } }
+        It 'the Windows Team''s own work needs no other team: <Case>' -TestCases @(
+            @{ Case = 'a plain backup client';           Row = @('BACKUP', 'IBM Spectrum Protect (TSM)', 'INFO', '', 'IBM Spectrum Protect Client version 8.1.19 | Service dsmcad (Running)') }
+            @{ Case = 'a Veeam agent';                   Row = @('BACKUP', 'Veeam', 'INFO', '', 'Veeam Agent for Microsoft Windows version 6.1 | Service VeeamEndpointBackupSvc (Running)') }
+            @{ Case = 'failed VSS writers';              Row = @('BACKUP', 'VSSWriters', 'ACTION', '', '') }
+            @{ Case = 'a switch-independent NIC team';   Row = @('NETWORK', 'LBFO team: Team1', 'ACTION', '', 'Mode=SwitchIndependent | LoadBalancing=Dynamic') }
+            @{ Case = 'static routes';                   Row = @('NETWORK_DEPENDENCY', 'StaticRoutes', 'MANUAL', 'Routes=2', '') }
+            @{ Case = 'old VMware Tools';                Row = @('VMWARE', 'VMwareTools', 'ACTION', '', '') }
+            @{ Case = 'IIS';                             Row = @('IIS', 'Web-Server', 'WARNING', '', '') }
+            @{ Case = 'a Session Host';                  Row = @('RDS', 'RDSessionHost', 'ACTION', '', '') }
+            @{ Case = 'clustering without a cluster';    Row = @('CLUSTER', 'FailoverClustering', 'WARNING', '', '') }
+            @{ Case = 'an Oracle client only';           Row = @('WORKLOAD', 'Oracle Database', 'WARNING', '', 'Oracle Client 19c version 19.3.0') }
+            @{ Case = 'AppLocker';                       Row = @('SECURITY', 'AppLocker', 'WARNING', '', '') }
+            @{ Case = 'a current antivirus';             Row = @('ANTIVIRUS', 'Microsoft Defender', 'INFO', '', '') }
         ) {
-            @(Get-TeamsNeeded @((New-Row $Row.Area $Row.Item $Row.Status $Row.Value))).Count | Should -Be 0
+            @(Get-TeamsNeeded @((New-Row $Row[0] $Row[1] $Row[2] $Row[3] $Row[4]))).Count | Should -Be 0
         }
-        It 'several rows: teams in table order, each item once' {
-            $rows = @((New-Row 'SQL' 'SQL Server: A' 'OK'), (New-Row 'PKI' 'CertificationAuthority' 'ACTION'), (New-Row 'SQL' 'SQL Server: B' 'WARNING'), (New-Row 'SQL' 'SQL Server: A' 'OK'))
+        It 'several database types: one DBA Team with every type' {
+            $rows = @((New-Row 'SQL' 'Database Engine: A' 'OK'), (New-Row 'WORKLOAD' 'Oracle Database' 'WARNING' '' 'Service OracleServiceX (Running)'), (New-Row 'PKI' 'CertificationAuthority' 'ACTION'))
             $t = @(Get-TeamsNeeded $rows)
-            @($t | ForEach-Object Team) | Should -Be @('PKI', 'SQL / DBA')
-            $t[1].Items | Should -Be @('SQL Server: A', 'SQL Server: B')
+            @($t | ForEach-Object Label) | Should -Be @('PKI Team', 'DBA Team (SQL Server/Oracle)')
+            $t[1].Items | Should -Be @('Database Engine: A', 'Oracle Database')
         }
-        It 'Get-TeamsSummary counts servers per team, in table order' {
-            $a = [pscustomobject]@{ ComputerName = 'SRV-B'; Teams = @(Get-TeamsNeeded @((New-Row 'SQL' 'SQL Server: A' 'OK'))) }
-            $b = [pscustomobject]@{ ComputerName = 'SRV-A'; Teams = @(Get-TeamsNeeded @((New-Row 'SQL' 'SQL Server: B' 'OK'), (New-Row 'PKI' 'CertificationAuthority' 'ACTION'))) }
+        It 'details given as an array are read too' {
+            $row = [pscustomobject]@{ Area = 'NETWORK'; Item = 'LBFO team: T'; Status = 'ACTION'; Value = 'Status=Up'; Details = @('Mode=Lacp', 'LoadBalancing=Dynamic') }
+            @(Get-TeamsNeeded @($row))[0].Label | Should -Be 'Network Team'
+        }
+        It 'Get-TeamsSummary counts servers per team, in table order, with the database types' {
+            $a = [pscustomobject]@{ ComputerName = 'SRV-B'; Teams = @(Get-TeamsNeeded @((New-Row 'SQL' 'Database Engine: A' 'OK'))) }
+            $b = [pscustomobject]@{ ComputerName = 'SRV-A'; Teams = @(Get-TeamsNeeded @((New-Row 'WORKLOAD' 'MySQL' 'WARNING'), (New-Row 'PKI' 'CertificationAuthority' 'ACTION'))) }
             $c = [pscustomobject]@{ ComputerName = 'SRV-C'; Teams = @() }
             $rows = @(Get-TeamsSummary @($a, $b, $c))
-            @($rows | ForEach-Object Team) | Should -Be @('PKI', 'SQL / DBA')
+            @($rows | ForEach-Object Team) | Should -Be @('PKI Team', 'DBA Team (SQL Server/MySQL)')
             $rows[1].ServerCount | Should -Be 2
             $rows[1].Servers | Should -Be 'SRV-A, SRV-B'
-            $rows[1].Why | Should -Be 'SQL Server: A | SQL Server: B'
+            $rows[1].Why | Should -Be 'Database Engine: A | MySQL'
             @(Get-TeamsSummary @($c)).Count | Should -Be 0
         }
     }
@@ -556,22 +567,24 @@ Describe 'Teams needed in the fleet overview (#323)' {
             $script:TeamIn = Join-Path $TestDrive 'teams'
             New-Item -ItemType Directory -Path $script:TeamIn | Out-Null
             $ca = [pscustomobject]@{ CheckId = 'pki'; Area = 'PKI'; Item = 'CertificationAuthority'; Status = 'ACTION'; Kind = 'Finding'; Value = 'v'; Details = 'd'; Recommendation = 'r'; Source = 's' }
-            $sql = [pscustomobject]@{ CheckId = 'sql'; Area = 'SQL'; Item = 'SQL Server: MSSQLSERVER'; Status = 'OK'; Kind = 'Observation'; Value = 'v'; Details = 'd'; Recommendation = ''; Source = 's' }
-            Save-Result (New-FakeResult 'SRV-CA' -Overall 'ACTION' -Results @($ca, $sql)) $script:TeamIn 'SRV-CA-IPU-Assessment.json'
+            $sql = [pscustomobject]@{ CheckId = 'sql'; Area = 'SQL'; Item = 'Database Engine: MSSQLSERVER'; Status = 'OK'; Kind = 'Observation'; Value = 'v'; Details = 'd'; Recommendation = ''; Source = 's' }
+            $nic = [pscustomobject]@{ CheckId = 'network'; Area = 'NETWORK'; Item = 'LBFO team: Team1'; Status = 'ACTION'; Kind = 'Finding'; Value = 'Status=Up'; Details = @('Mode=Lacp', 'LoadBalancing=Dynamic', 'Members=NIC1,NIC2'); Recommendation = 'r'; Source = 's' }
+            Save-Result (New-FakeResult 'SRV-CA' -Overall 'ACTION' -Results @($ca, $sql, $nic)) $script:TeamIn 'SRV-CA-IPU-Assessment.json'
             Save-Result (New-FakeResult 'SRV-PLAIN' -Overall 'OK') $script:TeamIn 'SRV-PLAIN-IPU-Assessment.json'
             $null = & $script:MergeScript -InputFolder $script:TeamIn
             $script:TeamServers = @(Import-Csv -LiteralPath (Join-Path $script:TeamIn 'IPU-Fleet-Servers.csv') -Delimiter ';')
             $script:TeamHtml = Get-Content -LiteralPath (Join-Path $script:TeamIn 'IPU-Fleet-Overview.html') -Raw
         }
-        It 'the servers CSV has TeamsNeeded in one field' {
-            ($script:TeamServers | Where-Object { $_.ComputerName -eq 'SRV-CA' }).TeamsNeeded | Should -Be 'PKI, SQL / DBA'
+        It 'the servers CSV has TeamsNeeded in one field, with the database type' {
+            ($script:TeamServers | Where-Object { $_.ComputerName -eq 'SRV-CA' }).TeamsNeeded | Should -Be 'PKI Team, DBA Team (SQL Server), Network Team'
             ($script:TeamServers | Where-Object { $_.ComputerName -eq 'SRV-PLAIN' }).TeamsNeeded | Should -Be ''
         }
         It 'the overview has a Teams needed column and a summary per team' {
             $script:TeamHtml | Should -Match '<th>Teams needed</th>'
             $script:TeamHtml | Should -Match '<h2>Teams needed</h2>'
-            $script:TeamHtml | Should -Match '<td class="nw"><b>PKI</b></td><td>1</td><td>SRV-CA</td>'
-            $script:TeamHtml | Should -Match '<td>PKI, SQL / DBA</td>'
+            $script:TeamHtml | Should -Match '<td class="nw"><b>PKI Team</b></td><td>1</td><td>SRV-CA</td>'
+            $script:TeamHtml | Should -Match '<td class="nw"><b>DBA Team \(SQL Server\)</b></td>'
+            $script:TeamHtml | Should -Match '<td>PKI Team, DBA Team \(SQL Server\), Network Team</td>'
         }
         It 'says so when no server needs another team' {
             $plain = Join-Path $TestDrive 'plain'
@@ -582,7 +595,6 @@ Describe 'Teams needed in the fleet overview (#323)' {
         }
     }
 }
-
 Describe 'Checks that were not assessed in the fleet overview (#360)' {
     BeforeAll {
         function Save-RunsServer([string]$Computer, [object[]]$Runs, [string]$Folder) {

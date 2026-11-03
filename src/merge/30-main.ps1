@@ -127,7 +127,7 @@ foreach ($f in $files) {
     $eolCandidates = @(); if ($r.PSObject.Properties['EolCandidates']) { $eolCandidates = @($r.EolCandidates) }
     $eolBySource[$f.Name] = [pscustomobject]@{ ComputerName = $r.ComputerName; Candidates = $eolCandidates; Items = @($r.Results | Where-Object { [string]$_.Item -like 'EOL: *' } | ForEach-Object { [string]$_.Item }) }
     # The rows the teams needed are read from (#323).
-    $rowsBySource[$f.Name] = @($r.Results | ForEach-Object { [pscustomobject]@{ Area = [string]$_.Area; Item = [string]$_.Item; Status = [string]$_.Status; Value = [string]$_.Value } })
+    $rowsBySource[$f.Name] = @($r.Results | ForEach-Object { [pscustomobject]@{ Area = [string]$_.Area; Item = [string]$_.Item; Status = [string]$_.Status; Value = [string]$_.Value; Details = @($_.Details) } })
     $notCompleted = @(Get-NotAssessedCheck $r.CheckRuns)
     $servers.Add([pscustomobject][ordered]@{
         ComputerName     = $r.ComputerName
@@ -225,7 +225,7 @@ foreach ($s in $latest) {
     $rows = @($rowsBySource[$s.SourceFile]) + @($fleetFindings | Where-Object { $_.SourceFile -eq $s.SourceFile -and [string]$_.Item -like 'EOL: *' })
     $teams = @(Get-TeamsNeeded $rows)
     $teamsBySource[$s.SourceFile] = [pscustomobject]@{ ComputerName = $s.ComputerName; Teams = $teams }
-    $s | Add-Member -NotePropertyName TeamsNeeded -NotePropertyValue (@($teams | ForEach-Object { $_.Team }) -join ', ') -Force
+    $s | Add-Member -NotePropertyName TeamsNeeded -NotePropertyValue (@($teams | ForEach-Object { $_.Label }) -join ', ') -Force
 }
 $teamRows = @(Get-TeamsSummary @($latest | ForEach-Object { $teamsBySource[$_.SourceFile] }))
 $fleetFindings = @($fleetFindings | Sort-Object @{Expression={ $rank[[string]$_.Status] }},ComputerName,Item)
