@@ -137,6 +137,12 @@ function Invoke-WorkloadsCheck {
         Add-Result 'WORKLOAD' $m.Label 'WARNING' ('Applications=' + @($m.Apps).Count + ', Services=' + @($m.Services).Count) (Get-DetectionEvidence $m) -Recommendation ('Engage the application owner and confirm ' + $m.Label + ' supports ' + (Get-ReleaseDisplayName $TargetServerVersion) + '.') -Source 'Uninstall registry and Win32_Service names'
     }
 
+    # VDI hosts (#376): owned by the VDI / Endpoint Team; site policy -BlockVdiIPU.
+    foreach ($m in (Find-DetectionMatch $script:DetectionPatterns.Vdi $script:Data.Apps $script:Data.Services)) {
+        $vdi = Get-VdiPolicyDecision $m.Label ([bool]$BlockVdiIPU)
+        Add-Result 'WORKLOAD' ('VDI: ' + $m.Label) $vdi.Status $vdi.Text (Get-DetectionEvidence $m) -Recommendation $vdi.Recommendation -Source 'Uninstall registry, Win32_Service; site policy BlockVdiIPU'
+    }
+
     # Features removed or no longer developed in the target release.
     if ($null -ne $script:Data.Features) {
         $installed = @($script:Data.Features.Keys | Where-Object { $script:Data.Features[$_] })

@@ -24,6 +24,11 @@ param(
     # profile file can switch it off (see the user guide).
     [bool]$BlockDomainControllerIPU = $true,
 
+    # Site policy (#376), on by default: a VDI host (Citrix VDA, Horizon
+    # Agent) belongs to the VDI / Endpoint Team and is not upgraded in place:
+    # a BLOCKER. Off: a WARNING that names the team.
+    [bool]$BlockVdiIPU = $true,
+
     # Site policy (#322): the releases a PKI server (Certification Authority
     # role or CertSvc) may be upgraded to in place, comma-separated. The PKI
     # team allows only 2022 for now; '2019,2022,2025' lifts the rule.

@@ -244,6 +244,17 @@ function Test-PkiServer {
     return (($CaFeatureState -eq $true) -or (@($ServiceNames) -contains 'CertSvc'))
 }
 
+function Get-VdiPolicyDecision {
+    # Pure (#376): a VDI host (Citrix VDA, Horizon Agent) belongs to the VDI /
+    # Endpoint Team, and the site does not upgrade it in place. With the policy
+    # off it is a WARNING that still names the team.
+    param([string]$Agent, [bool]$Block = $true)
+    if ($Block) {
+        return [pscustomobject]@{ Status = 'BLOCKER'; Text = ('Site policy: a VDI host (' + $Agent + ') is not upgraded in place'); Recommendation = 'This server belongs to the VDI / Endpoint Team, which replaces VDI hosts (new image or new server) instead of upgrading them. Take it out of the IPU plan and hand it to that team.' }
+    }
+    return [pscustomobject]@{ Status = 'WARNING'; Text = ('VDI host (' + $Agent + ')'); Recommendation = 'This server belongs to the VDI / Endpoint Team. Agree with them whether and how it is upgraded, and confirm the agent version supports the target.' }
+}
+
 function Get-PkiTargetDecision {
     # Pure (#322, #338): the site policy for PKI servers. The PKI team allows
     # an in-place upgrade only to the releases in $Allowed; another target

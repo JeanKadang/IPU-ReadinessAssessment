@@ -211,6 +211,11 @@ param(
     # profile file can switch it off (see the user guide).
     [bool]$BlockDomainControllerIPU = $true,
 
+    # Site policy (#376), on by default: a VDI host (Citrix VDA, Horizon
+    # Agent) belongs to the VDI / Endpoint Team and is not upgraded in place:
+    # a BLOCKER. Off: a WARNING that names the team.
+    [bool]$BlockVdiIPU = $true,
+
     # Site policy (#322): the releases a PKI server (Certification Authority
     # role or CertSvc) may be upgraded to in place, comma-separated. The PKI
     # team allows only 2022 for now; '2019,2022,2025' lifts the rule.
@@ -349,6 +354,12 @@ $script:DetectionPatterns = @{
         @{ Label='Commvault';                  App='Commvault|ContentStore|Hitachi Data Protection'; Service='^GxCVD|^GxClMgrS|^GXCVD' }
         @{ Label='IBM Spectrum Protect (TSM)'; App='Tivoli Storage Manager|Spectrum Protect|IBM Storage Protect'; Service='^(dsmcad|TSM)' }
         @{ Label='Veeam';                      App='Veeam';                             Service='^Veeam' }
+    )
+    # VDI session hosts (#376): the delivery agent, never the client (Citrix
+    # Workspace app, Receiver, Horizon Client), which can sit on any server.
+    Vdi = @(
+        @{ Label='Citrix Virtual Delivery Agent'; App='^Citrix (Virtual Delivery Agent|Virtual Desktop Agent|XenApp Virtual Delivery Agent)|^Citrix Virtual Apps and Desktops.*(VDA|Delivery Agent)'; Service='^BrokerAgent$'; Display='^Citrix Desktop Service$' }
+        @{ Label='VMware / Omnissa Horizon Agent'; App='^(VMware|Omnissa) Horizon Agent'; Service='^WSNM$'; Display='Horizon View Agent|Horizon Agent' }
     )
     Workloads = @(
         @{ Label='SharePoint';      App='^Microsoft SharePoint (Server|Foundation)'; Service='^(SPTimerV4|SPAdminV4)$' }
@@ -692,7 +703,7 @@ $script:CollectorVersion  = '4.6.0'
 # Settings a profile file (-ProfileFile) may set. Mode, target, media path,
 # report folder and redaction describe one run, so they stay arguments only.
 $script:ProfileSettingNames = @(
-    'TargetMediaLanguage','BlockDomainControllerIPU','PkiAllowedTargets',
+    'TargetMediaLanguage','BlockDomainControllerIPU','BlockVdiIPU','PkiAllowedTargets',
     'MinimumCFreeGB','ExtendBlockGB','MinimumMemoryGB','MaxPatchAgeDays','UptimeWarningDays','GroupPolicyMaxAgeDays','AVMaxAgeDays',
     'CertificateWarningDays','KmsRenewWarnDays','SystemPartitionMinFreeMB','RecoveryPartitionMinFreeMB',
     'RunDISMScanHealth','RunSFCVerifyOnly','DISMTimeoutMinutes','SFCTimeoutMinutes','SlowCheckBudgetMinutes','CompatScanTimeoutMinutes',
@@ -2354,6 +2365,17 @@ function Test-PkiServer {
     # Authority role or the CertSvc service (as the pki check detects it).
     param($CaFeatureState, [string[]]$ServiceNames)
     return (($CaFeatureState -eq $true) -or (@($ServiceNames) -contains 'CertSvc'))
+}
+
+function Get-VdiPolicyDecision {
+    # Pure (#376): a VDI host (Citrix VDA, Horizon Agent) belongs to the VDI /
+    # Endpoint Team, and the site does not upgrade it in place. With the policy
+    # off it is a WARNING that still names the team.
+    param([string]$Agent, [bool]$Block = $true)
+    if ($Block) {
+        return [pscustomobject]@{ Status = 'BLOCKER'; Text = ('Site policy: a VDI host (' + $Agent + ') is not upgraded in place'); Recommendation = 'This server belongs to the VDI / Endpoint Team, which replaces VDI hosts (new image or new server) instead of upgrading them. Take it out of the IPU plan and hand it to that team.' }
+    }
+    return [pscustomobject]@{ Status = 'WARNING'; Text = ('VDI host (' + $Agent + ')'); Recommendation = 'This server belongs to the VDI / Endpoint Team. Agree with them whether and how it is upgraded, and confirm the agent version supports the target.' }
 }
 
 function Get-PkiTargetDecision {
@@ -5125,6 +5147,12 @@ function Invoke-WorkloadsCheck {
     # and service names only - not executable paths - to avoid false positives.
     foreach ($m in (Find-DetectionMatch $script:DetectionPatterns.Workloads $script:Data.Apps $script:Data.Services)) {
         Add-Result 'WORKLOAD' $m.Label 'WARNING' ('Applications=' + @($m.Apps).Count + ', Services=' + @($m.Services).Count) (Get-DetectionEvidence $m) -Recommendation ('Engage the application owner and confirm ' + $m.Label + ' supports ' + (Get-ReleaseDisplayName $TargetServerVersion) + '.') -Source 'Uninstall registry and Win32_Service names'
+    }
+
+    # VDI hosts (#376): owned by the VDI / Endpoint Team; site policy -BlockVdiIPU.
+    foreach ($m in (Find-DetectionMatch $script:DetectionPatterns.Vdi $script:Data.Apps $script:Data.Services)) {
+        $vdi = Get-VdiPolicyDecision $m.Label ([bool]$BlockVdiIPU)
+        Add-Result 'WORKLOAD' ('VDI: ' + $m.Label) $vdi.Status $vdi.Text (Get-DetectionEvidence $m) -Recommendation $vdi.Recommendation -Source 'Uninstall registry, Win32_Service; site policy BlockVdiIPU'
     }
 
     # Features removed or no longer developed in the target release.
