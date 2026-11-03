@@ -225,6 +225,23 @@ Describe 'Checks on a fake server: workloads' -Skip:($env:OS -ne 'Windows_NT') {
             (Get-Row 'ROLES' 'FS-FileServer').Count | Should -Be 1
             (Get-Row 'APPLICATIONS' 'SA Agent').Count | Should -Be 1
         }
+        It 'a VDI host is a BLOCKER under the site policy, a WARNING without it (#376)' {
+            $script:Fake.Apps += [pscustomobject]@{ Name = 'Citrix Virtual Delivery Agent 2402 LTSR'; Version = '2402.0.0'; Publisher = 'Citrix Systems, Inc.'; InstallDate = '' }
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'workloads'
+            $r = (Get-Row 'WORKLOAD' 'VDI: Citrix Virtual Delivery Agent')[0]
+            $r.Status | Should -Be 'BLOCKER'
+            $r.Recommendation | Should -Match 'VDI / Endpoint Team'
+            Reset-FakeServerKeep
+            $BlockVdiIPU = $false
+            $null = Invoke-TestCheck 'workloads'
+            (Get-Row 'WORKLOAD' 'VDI: Citrix Virtual Delivery Agent')[0].Status | Should -Be 'WARNING'
+        }
+        It 'no VDI agent, no VDI row (#376)' {
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'workloads'
+            @($script:Results | Where-Object { $_.Item -like 'VDI: *' }).Count | Should -Be 0
+        }
         It 'without Get-WindowsFeature the role inventory is MANUAL' {
             $script:Fake.MissingCommands += 'Get-WindowsFeature'
             Reset-FakeServerKeep

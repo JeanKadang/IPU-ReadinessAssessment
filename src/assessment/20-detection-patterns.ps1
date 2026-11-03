@@ -42,6 +42,12 @@ $script:DetectionPatterns = @{
         @{ Label='IBM Spectrum Protect (TSM)'; App='Tivoli Storage Manager|Spectrum Protect|IBM Storage Protect'; Service='^(dsmcad|TSM)' }
         @{ Label='Veeam';                      App='Veeam';                             Service='^Veeam' }
     )
+    # VDI session hosts (#376): the delivery agent, never the client (Citrix
+    # Workspace app, Receiver, Horizon Client), which can sit on any server.
+    Vdi = @(
+        @{ Label='Citrix Virtual Delivery Agent'; App='^Citrix (Virtual Delivery Agent|Virtual Desktop Agent|XenApp Virtual Delivery Agent)|^Citrix Virtual Apps and Desktops.*(VDA|Delivery Agent)'; Service='^BrokerAgent$'; Display='^Citrix Desktop Service$' }
+        @{ Label='VMware / Omnissa Horizon Agent'; App='^(VMware|Omnissa) Horizon Agent'; Service='^WSNM$'; Display='Horizon View Agent|Horizon Agent' }
+    )
     Workloads = @(
         @{ Label='SharePoint';      App='^Microsoft SharePoint (Server|Foundation)'; Service='^(SPTimerV4|SPAdminV4)$' }
         @{ Label='Oracle Database'; App='^Oracle (Database|Client)|^Oracle .*Home';  Service='^(OracleService|OracleOraDB)|TNSListener' }

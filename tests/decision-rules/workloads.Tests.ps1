@@ -127,6 +127,8 @@ Describe 'Detection patterns - one fixture per vendor row (#17)' {
             'Oracle Database'                    = @{ Service = 'OracleServiceORCL' }
             'SAP'                                = @{ App = 'SAP Host Agent' }
             'Citrix'                             = @{ App = 'Citrix Virtual Delivery Agent 2203' }
+            'Citrix Virtual Delivery Agent'      = @{ App = 'Citrix Virtual Delivery Agent 2203' }
+            'VMware / Omnissa Horizon Agent'     = @{ Service = 'WSNM' }
             'Boomi'                              = @{ Service = 'Boomi_Atom' }
             'Java runtime'                       = @{ App = 'Eclipse Temurin JRE with Hotspot 17.0.12' }
             'Apache Tomcat'                      = @{ App = 'Apache Tomcat 9.0 Tomcat9' }
@@ -135,7 +137,7 @@ Describe 'Detection patterns - one fixture per vendor row (#17)' {
             'IBM Db2'                            = @{ App = 'IBM Db2 Server Edition' }
         }
         $script:AllRows = @()
-        foreach ($table in 'Agents', 'EndpointProtection', 'SecurityTools', 'Backup', 'Workloads') {
+        foreach ($table in 'Agents', 'EndpointProtection', 'SecurityTools', 'Backup', 'Vdi', 'Workloads') {
             foreach ($row in $script:DetectionPatterns[$table]) { $script:AllRows += [pscustomobject]@{ Table = $table; Row = $row } }
         }
     }
@@ -158,9 +160,48 @@ Describe 'Detection patterns - one fixture per vendor row (#17)' {
     It 'common Windows components match no vendor row' {
         $apps = @('Microsoft Visual C++ 2015-2022 Redistributable (x64)', 'Microsoft Edge', 'VMware Tools', 'Windows Admin Center') | ForEach-Object { [pscustomobject]@{ Name = $_; Version = '1' } }
         $svcs = @('WinRM', 'LanmanServer', 'Spooler', 'W32Time', 'VMTools') | ForEach-Object { [pscustomobject]@{ Name = $_; DisplayName = $_; State = 'Running' } }
-        foreach ($table in 'Agents', 'EndpointProtection', 'SecurityTools', 'Backup', 'Workloads') {
+        foreach ($table in 'Agents', 'EndpointProtection', 'SecurityTools', 'Backup', 'Vdi', 'Workloads') {
             (Find-DetectionMatch $script:DetectionPatterns[$table] $apps $svcs @('WdFilter', 'storqosflt')).Count | Should -Be 0 -Because $table
         }
+    }
+}
+
+Describe 'VDI hosts (#376)' {
+    It 'a <Case> is a VDI host' -TestCases @(
+        @{ Case = 'Citrix VDA (uninstall entry)';      App = 'Citrix Virtual Delivery Agent 2402 LTSR'; Service = '' }
+        @{ Case = 'Citrix VDA (older name)';           App = 'Citrix XenApp Virtual Delivery Agent 7.15'; Service = '' }
+        @{ Case = 'Citrix VDA (Desktop Service)';      App = '';                                         Service = 'BrokerAgent' }
+        @{ Case = 'Horizon Agent (uninstall entry)';   App = 'Omnissa Horizon Agent';                    Service = '' }
+        @{ Case = 'Horizon Agent (service)';           App = '';                                         Service = 'WSNM' }
+    ) {
+        $apps = @(); if ($App) { $apps = @([pscustomobject]@{ Name = $App; Version = '1' }) }
+        $svcs = @(); if ($Service) { $svcs = @([pscustomobject]@{ Name = $Service; DisplayName = $Service; State = 'Running' }) }
+        (Find-DetectionMatch $script:DetectionPatterns.Vdi $apps $svcs).Count | Should -Be 1
+    }
+    It 'a client alone is not a VDI host: <App>' -TestCases @(
+        @{ App = 'Citrix Workspace app 2409' }
+        @{ App = 'Citrix Receiver 4.12' }
+        @{ App = 'VMware Horizon Client' }
+        @{ App = 'Omnissa Horizon Client' }
+    ) {
+        (Find-DetectionMatch $script:DetectionPatterns.Vdi @([pscustomobject]@{ Name = $App; Version = '1' }) @()).Count | Should -Be 0
+    }
+    It 'the site policy makes a VDI host a BLOCKER that names the team' {
+        $d = Get-VdiPolicyDecision 'Citrix Virtual Delivery Agent' $true
+        $d.Status | Should -Be 'BLOCKER'
+        $d.Text | Should -Match 'not upgraded in place'
+        $d.Recommendation | Should -Match 'VDI / Endpoint Team'
+    }
+    It 'with the policy off it is a WARNING that still names the team' {
+        $d = Get-VdiPolicyDecision 'Citrix Virtual Delivery Agent' $false
+        $d.Status | Should -Be 'WARNING'
+        $d.Recommendation | Should -Match 'VDI / Endpoint Team'
+    }
+    It 'the parameter is on by default and a profile file may set it' {
+        $cmd = Get-Command (Join-Path $PSScriptRoot '..\..\src\Windows-IPU-Readiness-Assessment.ps1')
+        $p = $cmd.ScriptBlock.Ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'BlockVdiIPU' }
+        $p.DefaultValue.Extent.Text | Should -Be '$true'
+        $script:ProfileSettingNames | Should -Contain 'BlockVdiIPU'
     }
 }
 

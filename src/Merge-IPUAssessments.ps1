@@ -82,6 +82,8 @@ $script:TeamRules = @(
     @{ Team = 'Security Team (AV)'; Area = '^SECURITY$';          Item = '^(?!AppLocker$|SecureBoot$|TPM$|BitLocker|FileSystemFilterDrivers$)'; Status = @('WARNING') }
     # A switch-dependent team (LACP or Static) needs the switch ports changed before and after.
     @{ Team = 'Network Team';      Area = '^NETWORK$';            Item = '^LBFO team: ';              Status = @('ACTION'); Details = 'Mode=(Lacp|Static)\b' }
+    # VDI hosts (#376): the VDI / Endpoint Team owns them; no IPU.
+    @{ Team = 'VDI / Endpoint Team'; Area = '^WORKLOAD$';         Item = '^VDI: ';                    Status = @() }
     @{ Team = 'Application owner'; Area = '^APPLICATIONS$';       Item = '^EOL: ';                    Status = @('WARNING') }
 )
 

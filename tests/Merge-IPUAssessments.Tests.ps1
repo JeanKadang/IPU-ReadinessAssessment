@@ -516,6 +516,7 @@ Describe 'Teams needed in the fleet overview (#323, #374)' {
             @{ Case = 'a security tool to check';      Row = @('SECURITY', 'Some DLP agent', 'WARNING', '', '');                Label = 'Security Team (AV)' }
             @{ Case = 'an LACP NIC team';              Row = @('NETWORK', 'LBFO team: Team1', 'ACTION', '', 'Mode=Lacp | LoadBalancing=Dynamic'); Label = 'Network Team' }
             @{ Case = 'a static NIC team';             Row = @('NETWORK', 'LBFO team: Team1', 'ACTION', '', 'Mode=Static | LoadBalancing=Dynamic'); Label = 'Network Team' }
+            @{ Case = 'a VDI host';                    Row = @('WORKLOAD', 'VDI: Citrix Virtual Delivery Agent', 'BLOCKER', '', ''); Label = 'VDI / Endpoint Team' }
             @{ Case = 'a product past end of life';    Row = @('APPLICATIONS', 'EOL: PHP 7.4.33', 'WARNING', '', '');           Label = 'Application owner' }
         ) {
             $t = @(Get-TeamsNeeded @((New-Row $Row[0] $Row[1] $Row[2] $Row[3] $Row[4])))

@@ -123,6 +123,11 @@ names the newest allowed release it can reach (2022, or 2019 from 2012 R2) and s
 needs an exception agreed with the PKI team (for example for the last PKI server in the environment). Building a new
 PKI on 2025 is a migration, not an in-place upgrade, and is outside this rule (#338).
 
+**VDI hosts** (a Citrix Virtual Delivery Agent, or a VMware / Omnissa Horizon Agent) belong to the VDI / Endpoint Team,
+and an in-place upgrade never happens on them (#376). With `-BlockVdiIPU` (on by default) such a server gets a
+`BLOCKER` *VDI: <agent>* that says to take it out of the IPU plan and hand it to that team; switched off, it is a
+`WARNING` that still names the team. A Citrix Workspace app, Receiver or Horizon Client on its own is not a VDI host.
+
 ### SPECIAL: cluster nodes and domain controllers
 
 A SPECIAL server is not a standard in-place upgrade: it needs its own plan, extra time and coordination, and carries
@@ -161,6 +166,7 @@ ad-hoc job). Override only what you need.
 | `TargetMediaPath` | blank | Folder/drive with `setup.exe`, UNC share, or `.iso`. Blank skips the Setup compatibility scan |
 | `TargetMediaLanguage` | blank | Language of the target ISO, for example `en-US`. Blank = the report tells you |
 | `BlockDomainControllerIPU` | `$true` | Site policy: a domain controller is reported as **SPECIAL** with a short report (not a standard IPU). `$false` gives the full report with a WARNING instead |
+| `BlockVdiIPU` | `$true` | Site policy (#376): a VDI host (Citrix VDA, Horizon Agent) is a **BLOCKER**, owned by the VDI / Endpoint Team and not upgraded in place. `$false` gives a WARNING that names the team |
 | `PkiAllowedTargets` | `'2019,2022'` | Site policy (#322, #338): the releases a PKI server (Certification Authority role or `CertSvc`) may be upgraded to in place, comma-separated, with or without quotes (`2019,2022` or `'2019,2022'`; in a profile file a string or a JSON array). Another target is a **BLOCKER**, and the upgrade path never suggests it. `'2019,2022,2025'` lifts the rule |
 
 ### Thresholds
@@ -269,7 +275,7 @@ file is applied, an `INFO` row lists what it changed and the file's SHA-256, so 
 was used.
 
 **Pattern file** (`"Schema": "IPU-Patterns/1"`). Top-level keys are the categories `Agents`,
-`EndpointProtection`, `SecurityTools`, `Backup` and `Workloads` (see section 2 of the script for the built-in
+`EndpointProtection`, `SecurityTools`, `Backup`, `Vdi` and `Workloads` (see section 2 of the script for the built-in
 entries). Each category is a list of entries:
 
 | Field | Meaning |
@@ -298,7 +304,7 @@ case-insensitively; keep them specific, because a broad word matches unrelated s
 ```
 
 **Profile file** (`"Schema": "IPU-Profile/1"`). One object `Settings` with any of these parameters:
-`TargetMediaLanguage`, `BlockDomainControllerIPU`, `PkiAllowedTargets`, the thresholds, the slow-check settings, the RDP policy
+`TargetMediaLanguage`, `BlockDomainControllerIPU`, `BlockVdiIPU`, `PkiAllowedTargets`, the thresholds, the slow-check settings, the RDP policy
 evidence settings, `WriteJson`, `RestrictOutputAcl` and `NumberCultureName`. Each value must pass the same
 checks as the parameter (range, type, absolute path). `AssessmentMode`, `TargetServerVersion`,
 `TargetMediaPath`, `ReportDirectory`, `RedactReport` and the two file parameters describe one run and cannot
@@ -320,7 +326,7 @@ reaches the evidence folders only: the report folder is set up before the file i
 Both examples are in [`docs/examples`](examples/). A JSON backslash must be doubled: `"C:\\Tools\\LGPO.exe"`.
 
 **Defaults that come from one site.** A few defaults reflect the site the tool was first built for:
-`NumberCultureName` is `da-DK`, `BlockDomainControllerIPU` is on (a domain controller is SPECIAL, see above),
+`NumberCultureName` is `da-DK`, `BlockDomainControllerIPU` is on (a domain controller is SPECIAL, see above), `BlockVdiIPU` is on (a VDI host is a BLOCKER),
 `PkiAllowedTargets` is `2019,2022` (the PKI team's current rule), and
 `Merge-IPUAssessments.ps1` writes CSV files with `;`. They stay as they are so existing SA jobs that pass no
 arguments behave the same (#131). Another site sets its own values in a profile file, for example
@@ -818,6 +824,7 @@ replace reading the server's own report.
 | Team Backup | Backup infrastructure only: a backup server, proxy, storage agent or media agent (Veeam Backup & Replication, a Veeam proxy, a Spectrum Protect server or storage agent, a Commvault MediaAgent). A plain backup client is the Windows Team's |
 | Security Team (AV) | An antivirus/EDR agent or security tool to check for the target (`ANTIVIRUS` or `SECURITY` WARNING, not AppLocker, Secure Boot, TPM, BitLocker or filter drivers). The Windows Team deploys the agent; the backend and policy are the Security Team's |
 | Network Team | A switch-dependent NIC team (LBFO mode LACP or Static): the switch ports are changed before the upgrade and back after it |
+| VDI / Endpoint Team | A VDI host (Citrix VDA, Horizon Agent): no in-place upgrade, the server goes to that team (#376) |
 | Application owner | An application past end of life (`EOL:` WARNING) |
 
 Not listed, because the Windows Team does it: VMware Tools, Remote Desktop Session Host and Licensing, IIS (the

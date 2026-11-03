@@ -6,7 +6,7 @@ $script:CollectorVersion  = '4.6.0'
 # Settings a profile file (-ProfileFile) may set. Mode, target, media path,
 # report folder and redaction describe one run, so they stay arguments only.
 $script:ProfileSettingNames = @(
-    'TargetMediaLanguage','BlockDomainControllerIPU','PkiAllowedTargets',
+    'TargetMediaLanguage','BlockDomainControllerIPU','BlockVdiIPU','PkiAllowedTargets',
     'MinimumCFreeGB','ExtendBlockGB','MinimumMemoryGB','MaxPatchAgeDays','UptimeWarningDays','GroupPolicyMaxAgeDays','AVMaxAgeDays',
     'CertificateWarningDays','KmsRenewWarnDays','SystemPartitionMinFreeMB','RecoveryPartitionMinFreeMB',
     'RunDISMScanHealth','RunSFCVerifyOnly','DISMTimeoutMinutes','SFCTimeoutMinutes','SlowCheckBudgetMinutes','CompatScanTimeoutMinutes',
