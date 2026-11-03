@@ -13,7 +13,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `build/Invoke-Local.ps1` runs the CI checks on a developer machine with one command (#140): `-Task Lint,Test,Smoke,Sample` (or `All`), `-Coverage` for the coverage floor. It installs Pester and PSScriptAnalyzer at the pinned versions when they are missing, runs each task in its own PowerShell process, warns when the session is not elevated, prints one summary and exits 1 when a task failed. CONTRIBUTING and the README *Development* section point to it.
 
-- Fleet overview: **Teams needed** (#323). Per server, which other teams the upgrade needs (PKI, AD, Cluster / storage, SQL / DBA, Exchange, Backup, Antivirus / EDR, Network, Virtualization, Application owner), read from its result rows by one rule table (`src/merge/15-teams.ps1`). The overview has a *Teams needed* column and a summary per team at the top (servers, which, why); `IPU-Fleet-Servers.csv` has a `TeamsNeeded` column. Works with results from earlier versions too.
+- Fleet overview: **Teams needed** (#323, #374). Per server, which other teams the upgrade needs besides the Windows Team: PKI Team, AD Projects, Windows Projects (cluster), DBA Team with the database type (SQL Server, Oracle, MySQL, PostgreSQL, Db2), Exchange, Team Backup (backup infrastructure only), Security Team (AV), Network Team (switch-dependent NIC teams) and Application owner (applications past end of life). Read from the result rows by one rule table (`src/merge/15-teams.ps1`); names and triggers reviewed by the IPU team. The overview has a *Teams needed* column and a summary per team at the top (servers, which, why); `IPU-Fleet-Servers.csv` has a `TeamsNeeded` column. Works with results from earlier versions too.
 
 ### Changed
 

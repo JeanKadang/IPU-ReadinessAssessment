@@ -784,7 +784,7 @@ The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`
 | File | Contents |
 |---|---|
 | `IPU-Fleet-Overview.html` | Cards with overall counts, a **Teams needed** summary (one row per team with the servers that need it, see below), a **Servers (worst first)** table with a *Teams needed* column, the **most common SPECIAL/BLOCKER/ACTION items** across the fleet with which servers have them, and a list of any files it could not read |
-| `IPU-Fleet-Servers.csv` | One row per server and mode: `ComputerName`, `Mode`, `Overall`, `Special`, `Blocker`, `Action`, `Warning`, `Manual`, `Target`, `CurrentOS`, `UpgradePath`, `InstallationMedia`, `Platform`, `DomainRole`, `SqlServer`, `CompatScan`, `CDrive`, `Activation`, `Nla`, `TopIssues`, `NotAssessed`, `Partial`, `Redacted`, `Completed`, `CollectorVersion`, `SourceFile`, `EndOfLifeProducts`, `TeamsNeeded` (one field, for example `PKI, SQL / DBA`) |
+| `IPU-Fleet-Servers.csv` | One row per server and mode: `ComputerName`, `Mode`, `Overall`, `Special`, `Blocker`, `Action`, `Warning`, `Manual`, `Target`, `CurrentOS`, `UpgradePath`, `InstallationMedia`, `Platform`, `DomainRole`, `SqlServer`, `CompatScan`, `CDrive`, `Activation`, `Nla`, `TopIssues`, `NotAssessed`, `Partial`, `Redacted`, `Completed`, `CollectorVersion`, `SourceFile`, `EndOfLifeProducts`, `TeamsNeeded` (one field, for example `PKI Team, DBA Team (SQL Server)`) |
 | `IPU-Fleet-Findings.csv` | One row per BLOCKER, ACTION, WARNING or MANUAL finding: `ComputerName`, `Mode`, `Status`, `Area`, `Item`, `Value`, `Details`, `Recommendation`, `Command`, `Link`, `SourceFile`. Filter and pivot it in Excel |
 | `IPU-Fleet-Eol.csv` | One row per product and version with an end-of-life date that the servers reported (4.6.0): `Status`, `Product`, `Version`, `Release`, `State`, `EndOfLife`, `DaysLeft`, `ServerCount`, `Servers`, `Text`. Checked against `eol-snapshot.json`; without it every row is MANUAL (not checked) |
 
@@ -802,28 +802,34 @@ The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`
 
 ### Teams needed
 
-Besides the Windows platform team, an upgrade often needs other teams. The overview shows which ones, per server
-(column *Teams needed*, and `TeamsNeeded` in `IPU-Fleet-Servers.csv`, one field such as `PKI, SQL / DBA`) and as a
-summary at the top: one row per team with the number of servers, which servers, and the items that called for it.
-An empty value means no other team was found by these rules; it does not replace reading the server's own report.
+Besides the Windows Team, which does the upgrade, some servers need another team. The overview shows which ones, per
+server (column *Teams needed*, and `TeamsNeeded` in `IPU-Fleet-Servers.csv`, one field such as
+`PKI Team, DBA Team (SQL Server)`) and as a summary at the top: one row per team with the number of servers, which
+servers, and the items that called for it. An empty value means no other team was found by these rules; it does not
+replace reading the server's own report.
 
 | Team | When |
 |---|---|
-| PKI | A Certification Authority (`PKI / CertificationAuthority`, `ADCSRoleServices`), or the PKI site policy row |
-| AD | A domain controller (`DOMAIN_CONTROLLER`, or the SPECIAL *Domain controller* row) |
-| Cluster / storage | A SPECIAL cluster node, or the Failover Clustering feature at ACTION or WARNING |
-| SQL / DBA | Any SQL Server instance (`SQL` rows, whatever their status) |
+| PKI Team | A Certification Authority (`PKI / CertificationAuthority`, `ADCSRoleServices`), or the PKI site policy row |
+| AD Projects | A domain controller (`DOMAIN_CONTROLLER`, or the SPECIAL *Domain controller* row) |
+| Windows Projects | A SPECIAL cluster node: the base cluster. What runs on the cluster (SQL, for example) adds its own team |
+| DBA Team (type) | A database engine, with the type in brackets: SQL Server (`SQL` rows), Oracle (the database service, not a client-only install), MySQL, PostgreSQL, Db2. Several types: `DBA Team (SQL Server/Oracle)` |
 | Exchange | An Exchange BLOCKER or ACTION |
-| Backup | A backup agent found on the server, or failed VSS writers (`BACKUP / VSSWriters` ACTION) |
-| Antivirus / EDR | An antivirus/EDR agent or security tool to check (`ANTIVIRUS` or `SECURITY` WARNING, not AppLocker, Secure Boot, TPM, BitLocker or filter drivers) |
-| Network | An LBFO team (ACTION), or persistent static routes (`StaticRoutes` MANUAL with a route count) |
-| Virtualization | VMware Tools at BLOCKER, ACTION or WARNING |
-| Application owner | IIS installed, a Remote Desktop Session Host or Licensing server, or a product past end of life (`EOL:` WARNING) |
+| Team Backup | Backup infrastructure only: a backup server, proxy, storage agent or media agent (Veeam Backup & Replication, a Veeam proxy, a Spectrum Protect server or storage agent, a Commvault MediaAgent). A plain backup client is the Windows Team's |
+| Security Team (AV) | An antivirus/EDR agent or security tool to check for the target (`ANTIVIRUS` or `SECURITY` WARNING, not AppLocker, Secure Boot, TPM, BitLocker or filter drivers). The Windows Team deploys the agent; the backend and policy are the Security Team's |
+| Network Team | A switch-dependent NIC team (LBFO mode LACP or Static): the switch ports are changed before the upgrade and back after it |
+| Application owner | An application past end of life (`EOL:` WARNING) |
+
+Not listed, because the Windows Team does it: VMware Tools, Remote Desktop Session Host and Licensing, IIS (the
+application team only when it is complex), a switch-independent NIC team, static routes, failed VSS writers, the
+monitoring agent. The customer or application owner who signs off is found in the CMDB or through the Customer
+Solution Architect, not from the server.
 
 The rules are one table, `$script:TeamRules` in `src/merge/15-teams.ps1`. A site with other teams, or other names
 for them, edits that table and rebuilds the script (`build/Build-Script.ps1 -Manifest src/merge/manifest.txt
 -OutputPath src/Merge-IPUAssessments.ps1`, see [docs/build.md](build.md)). Each rule names the team, the result
-`Area` and `Item` (regular expressions), the statuses that count, and optionally a pattern for the value.
+`Area` and `Item` (regular expressions), the statuses that count, and optionally a pattern for the value or the
+details, and a word shown after the team name (the database type).
 
 ### End-of-life data
 
