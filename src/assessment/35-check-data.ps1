@@ -26,6 +26,8 @@ $script:CheckDataOwners = [ordered]@{
     EndpointProducts = 'antivirus'
     # other checks
     PrintServer = 'printers'; Special = 'special'; EolCandidates = 'eolcandidates'
+    # the driver list, read once by whichever of the two runs first (#258)
+    PnpDrivers = 'platform,drivers'
     RdpSummary = 'rdp'; DriveRedirection = 'rdp'; PolicyEvidence = 'rdp'; NlaState = 'rdp'
     # written outside the checks
     SpecialKind = 'main'; NlaBefore = 'report'; RedactLiterals = 'rules'

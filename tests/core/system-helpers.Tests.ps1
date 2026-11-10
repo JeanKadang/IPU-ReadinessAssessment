@@ -46,6 +46,44 @@ Describe 'System access helpers (#33)' {
     }
 }
 
+Describe 'System drive and firmware mode (#258)' {
+    It 'ConvertTo-SystemDrive: <Value> gives <Expected>' -TestCases @(
+        @{ Value = 'C:';   Expected = 'C:' }
+        @{ Value = 'd:';   Expected = 'D:' }
+        @{ Value = 'E:\';  Expected = 'E:' }
+        @{ Value = '';     Expected = 'C:' }
+        @{ Value = 'none'; Expected = 'C:' }
+    ) {
+        ConvertTo-SystemDrive $Value | Should -Be $Expected
+    }
+    It 'Get-SystemDrive follows the SystemDrive variable and falls back to C:' {
+        $before = $env:SystemDrive
+        try {
+            $env:SystemDrive = 'D:'; Get-SystemDrive | Should -Be 'D:'
+            $env:SystemDrive = '';   Get-SystemDrive | Should -Be 'C:'
+        } finally { $env:SystemDrive = $before }
+    }
+    It 'firmware: PEFirmwareType <Type> with the Secure Boot key <Key> is <Mode>' -TestCases @(
+        @{ Type = 2;     Key = $true;  Mode = 'UEFI' }
+        @{ Type = 2;     Key = $false; Mode = 'UEFI' }
+        @{ Type = 1;     Key = $false; Mode = 'BIOS' }
+        # The key can exist on legacy BIOS (SE-29): the firmware type wins.
+        @{ Type = 1;     Key = $true;  Mode = 'BIOS' }
+        @{ Type = '2';   Key = $false; Mode = 'UEFI' }
+        @{ Type = $null; Key = $true;  Mode = 'UEFI' }
+        @{ Type = $null; Key = $false; Mode = 'Unknown' }
+        @{ Type = 0;     Key = $false; Mode = 'Unknown' }
+        @{ Type = 'x';   Key = $false; Mode = 'Unknown' }
+    ) {
+        (Get-FirmwareModeDecision $Type $Key).Mode | Should -Be $Mode
+    }
+    It 'a guess from the Secure Boot key says it is a guess; unknown is not called BIOS' {
+        (Get-FirmwareModeDecision $null $true).Text | Should -Match 'likely'
+        (Get-FirmwareModeDecision $null $false).Text | Should -Match 'Not determined'
+        (Get-FirmwareModeDecision 1 $false).Text | Should -Be 'Legacy BIOS'
+    }
+}
+
 Describe 'Registry and local account helpers (#33)' -Tag 'Integration' {
     It 'Get-RegistryValueSafe reads an existing value' -Skip:($env:OS -ne 'Windows_NT') {
         $r = Get-RegistryValueSafe 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' 'CurrentBuild'

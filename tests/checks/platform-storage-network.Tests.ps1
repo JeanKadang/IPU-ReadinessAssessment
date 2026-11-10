@@ -188,7 +188,59 @@ Describe 'Checks on a fake server: platform storage network' -Skip:($env:OS -ne 
         }
     }
 
+    Context 'platform and drivers (#258)' {
+        BeforeEach {
+            $script:Fake.Cim['Win32_ComputerSystem'].Manufacturer = 'Dell Inc.'
+            $script:Fake.Cim['Win32_ComputerSystem'].Model = 'PowerEdge R740'
+            Reset-FakeServerKeep
+        }
+        It 'the firmware mode comes from PEFirmwareType' {
+            $script:Fake.Registry['HKLM:\SYSTEM\CurrentControlSet\Control|PEFirmwareType'] = 2
+            $null = Invoke-TestCheck 'platform'
+            $r = (Get-Row 'HARDWARE' 'FirmwareMode')[0]
+            $r.Value | Should -Be 'UEFI'
+            $r.Source | Should -Match 'PEFirmwareType'
+        }
+        It 'legacy BIOS is named, and an unreadable type is not called BIOS' {
+            $script:Fake.Registry['HKLM:\SYSTEM\CurrentControlSet\Control|PEFirmwareType'] = 1
+            $null = Invoke-TestCheck 'platform'
+            (Get-Row 'HARDWARE' 'FirmwareMode')[0].Value | Should -Be 'Legacy BIOS'
+            $script:Fake.Registry.Remove('HKLM:\SYSTEM\CurrentControlSet\Control|PEFirmwareType')
+            $script:Results.Clear()
+            $null = Invoke-TestCheck 'platform'
+            (Get-Row 'HARDWARE' 'FirmwareMode')[0].Value | Should -Match 'Not determined'
+        }
+        It 'the driver list is read once and shared by platform and drivers' {
+            $null = Invoke-TestCheck 'platform'
+            $script:Data.ContainsKey('PnpDrivers') | Should -BeTrue
+            # A change after the first read is not seen: the second check uses the shared list.
+            $script:Fake.Cim['Win32_PnPSignedDriver'] = @($script:Fake.Cim['Win32_PnPSignedDriver']) + @([pscustomobject]@{ DeviceName = 'Late Device'; DriverProviderName = 'Contoso'; DriverVersion = '1.0'; DriverDate = (Get-Date); DeviceClass = 'SYSTEM'; IsSigned = $true })
+            $null = Invoke-TestCheck 'drivers'
+            (Get-Row 'DRIVERS' 'Device: Late Device').Count | Should -Be 0
+            (Get-Row 'DRIVERS' 'Device: vmxnet3 Ethernet Adapter').Count | Should -Be 1
+        }
+        It 'a failed driver read is said in both checks, not shown as "no drivers"' {
+            $script:Fake.CimThrow = @('Win32_PnPSignedDriver')
+            $null = Invoke-TestCheck 'platform'
+            (Get-Row 'HARDWARE' 'DeviceDriverList')[0].Status | Should -Be 'MANUAL'
+            $null = Invoke-TestCheck 'drivers'
+            (Get-Row 'DRIVERS' 'DeviceDrivers')[0].Status | Should -Be 'MANUAL'
+        }
+    }
+
     Context 'storage' {
+        It 'a system drive other than C: is the one measured (#258)' {
+            $before = $env:SystemDrive
+            try {
+                $env:SystemDrive = 'D:'
+                $script:Fake.Cim["Win32_LogicalDisk|DeviceID='D:'"] = [pscustomobject]@{ Size = [double]50GB; FreeSpace = [double]5GB }
+                $null = Invoke-TestCheck 'storage'
+                $r = (Get-Row 'STORAGE' 'CFreeSpace')[0]
+                $r.Status | Should -Be 'ACTION'
+                $r.Value | Should -Match 'system drive D:'
+                $r.Recommendation | Should -Match 'Extend D: by'
+            } finally { $env:SystemDrive = $before }
+        }
         It 'enough free space, partitions, mount points and labels' {
             (Invoke-TestCheck 'storage').Outcome | Should -Be 'Completed'
             (Get-Row 'STORAGE' 'CFreeSpace')[0].Status | Should -Be 'OK'
