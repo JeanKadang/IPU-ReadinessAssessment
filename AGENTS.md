@@ -4,8 +4,11 @@ Read by Claude Code (via `CLAUDE.md`), OpenAI Codex and GitHub Copilot. Edit thi
 
 ## What this repo is
 
-A read-only Windows Server in-place upgrade (IPU) readiness assessment: one PowerShell script
-(`src/Windows-IPU-Readiness-Assessment.ps1`) plus Pester tests. See `README.md` and `docs/user-guide.md`.
+A read-only Windows Server in-place upgrade (IPU) readiness assessment. The script that runs on each server is
+`src/Windows-IPU-Readiness-Assessment.ps1`. Two more scripts run on an analysis machine, never on a server:
+`src/Merge-IPUAssessments.ps1` (fleet overview from the result files) and `src/Get-IPUEolStatus.ps1` (end-of-life
+status from the shipped `src/eol-snapshot.json`). All three are built from parts (below). Pester tests are in `tests/`.
+See `README.md` and `docs/user-guide.md`.
 
 ## Commands
 
@@ -14,6 +17,8 @@ A read-only Windows Server in-place upgrade (IPU) readiness assessment: one Powe
 Invoke-Pester .\tests -Output Detailed
 # Skip the tests that start real processes (tagged Integration):
 Invoke-Pester .\tests -Output Detailed -ExcludeTagFilter Integration
+# The CI checks (lint, tests, smoke test) in one command, at the pinned tool versions:
+pwsh ./build/Invoke-Local.ps1 -Task Lint,Test,Smoke
 ```
 
 If the machine enforces signed scripts, start the session with `pwsh -ExecutionPolicy Bypass`
@@ -23,7 +28,7 @@ If the machine enforces signed scripts, start the session with `pwsh -ExecutionP
 
 - **The script must stay non-remediating.** No installs, removals or configuration changes. DISM `/ScanHealth` and SFC `/verifyonly` only; `LGPO.exe` only with `/b` and `/parse`. No `Win32_Product`.
 - **Windows PowerShell 4.0 compatibility.** The target hosts run Windows PowerShell, not PowerShell 7. Avoid newer syntax and cmdlets without a fallback.
-- **One file for SA, source in parts.** Operators run one `.ps1` from OpenText Server Automation. Decided in [ADR 0002](docs/adr/0002-source-in-parts-built-into-one-file.md): edit the parts in `src/assessment/` (order in `manifest.txt`), run `build/Build-Script.ps1`, and commit the parts together with the rebuilt `src/Windows-IPU-Readiness-Assessment.ps1`. Never edit the built file by hand; CI (`Build-Script.ps1 -Check`) fails when it does not match its parts. See `docs/build.md`.
+- **One file for SA, source in parts.** Operators run one `.ps1` from OpenText Server Automation. Decided in [ADR 0002](docs/adr/0002-source-in-parts-built-into-one-file.md) and [ADR 0003](docs/adr/0003-end-of-life-lookup-architecture.md): all three scripts in `src/` are built. Edit the parts (`src/assessment/`, `src/merge/`, `src/eol/`; order in each `manifest.txt`), run `build/Build-Script.ps1` (for the other two scripts with `-Manifest` and `-OutputPath`, see `docs/build.md`), and commit the parts together with the rebuilt script. Never edit a built file by hand; CI (`Build-Script.ps1 -Check`, three times) fails when one does not match its parts. `src/assessment/25-eol-core.ps1` is shared by all three.
 - **Failures stay visible.** A check that errors must report `MANUAL`; never turn an error into a clean result.
 - **New decision logic is a pure function with a Pester test.** Keep system access out of `Get-*Decision` style functions.
 - **No host data in the repo.** No real hostnames, credentials, report output or customer names in code, tests or docs.
