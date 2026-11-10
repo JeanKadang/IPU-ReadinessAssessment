@@ -114,7 +114,11 @@ flowchart TD
     D --> E[2012 R2 to 2022 is a BLOCKER<br/>script suggests 2019 or 2025]
 ```
 
-Anything else is reported as a `BLOCKER`. A **cluster node** and, by site policy, a **domain controller**
+Anything else is reported as a `BLOCKER`. For a source with no direct path to any target (**Windows Server 2008 R2**,
+2008 or 2012, #276) the row names the shortest documented route, for example *Windows Server 2008 R2 > Windows Server
+2012 R2 > Windows Server 2025 (2 in-place upgrades)*, and says that every step is its own change and that a migration
+to a new server is usually the better plan. Windows Server 2008 R2 needs Windows Management Framework 4.0 installed to
+run the script; Windows Server 2008 (without R2) has no PowerShell 4.0, so the script cannot run there. A **cluster node** and, by site policy, a **domain controller**
 (`-BlockDomainControllerIPU`) are reported as **SPECIAL** (see below).
 
 **PKI servers** (a Certification Authority) follow a site policy too: the PKI team allows an in-place upgrade only to
