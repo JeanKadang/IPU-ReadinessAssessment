@@ -357,6 +357,8 @@ function New-FakeMachine {
             "Win32_TSGeneralSetting|TerminalName='RDP-tcp'" = [pscustomobject]@{ SSLCertificateSHA1Hash = 'AA11BB22CC33DD44EE55FF6677889900AABBCCDD' }
         }
         Registry = @{
+            'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion|CurrentBuildNumber' = '14393'
+            'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion|UBR' = 7428
             'HKLM:\SYSTEM\CurrentControlSet\Control\Nls\Language|InstallLanguage' = '0409'
             'HKLM:\SYSTEM\CurrentControlSet\Control\Nls\Language|Default' = '0409'
             'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName|ComputerName' = 'SRV01'
