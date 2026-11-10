@@ -400,7 +400,11 @@ function Get-SqlSupportDecision {
     # a known version below it is an ACTION; an unknown one names the minimum.
     param([int]$Major, [string]$Target, [string]$Version = '')
     $name = $script:SqlReleaseNames[$Major]
-    if (-not $name) { $name = 'major version ' + $Major }
+    # A major version this script does not know (#260): newer than its tables,
+    # or not read correctly. That is not "unsupported": it has to be checked.
+    if (-not $name) {
+        return [pscustomobject]@{ Status='MANUAL'; Release=('SQL Server major version ' + $Major); Text=('SQL Server major version ' + $Major + ' is not in this script''s support table (it knows ' + ((@($script:SqlReleaseNames.Keys | Sort-Object) | ForEach-Object { $script:SqlReleaseNames[$_] }) -join ', ') + '). Check Microsoft''s "Using SQL Server in Windows" page for ' + (Get-ReleaseDisplayName $Target) + ' and engage the DBA; a newer version of this script may know it.') }
+    }
     $label = 'SQL Server ' + $name
     if (-not $script:SqlSupportedOnTarget.ContainsKey($Target)) {
         return [pscustomobject]@{ Status='MANUAL'; Release=$label; Text=('No SQL support matrix configured for target ' + $Target + '.') }
@@ -971,11 +975,13 @@ function Get-PrinterDriverDecision {
 }
 
 function Get-PrintBackupSpaceDecision {
-    # Pure (#148): PrintBrm exports every driver package, so the export can
-    # be a few MB or several GB. It runs only when the drive has 1.5 times
-    # the size of spool\drivers plus 1 GB free.
+    # Pure (#148, #260): PrintBrm exports every driver package, so the export
+    # can be a few MB or several GB, and it first copies the packages to a
+    # staging folder. Staging is on the same drive as the export (this run's
+    # own folder), so the drive needs twice the size of spool\drivers plus
+    # 1 GB free: one copy staged, one in the export file.
     param([long]$DriverBytes, [long]$FreeBytes)
-    $required = [long][math]::Ceiling($DriverBytes * 1.5) + [long]1GB
+    $required = [long]($DriverBytes * 2) + [long]1GB
     $gb = { param($b) [math]::Round(([double]$b / 1GB), 2) }
     return [pscustomobject]@{
         Proceed = ($FreeBytes -ge $required)
@@ -984,6 +990,18 @@ function Get-PrintBackupSpaceDecision {
         FreeBytes = $FreeBytes
         Text = ('Estimate ' + (& $gb $DriverBytes) + ' GB (spool\drivers), needs ' + (& $gb $required) + ' GB free, ' + (& $gb $FreeBytes) + ' GB free')
     }
+}
+
+function Get-FreeSpaceRoot {
+    # Pure (#260): what to ask for the free space of a path. A drive letter
+    # ('D:') can be read from Win32_LogicalDisk; a network path
+    # ('\\server\share') cannot, and must not make the caller fail.
+    # Kind is Drive, Network or Unknown.
+    param([string]$Path)
+    $text = [string]$Path
+    if ($text -match '^([A-Za-z]):') { return [pscustomobject]@{ Kind = 'Drive'; Root = ($Matches[1].ToUpperInvariant() + ':') } }
+    if ($text -match '^(\\\\[^\\]+\\[^\\]+)') { return [pscustomobject]@{ Kind = 'Network'; Root = $Matches[1] } }
+    return [pscustomobject]@{ Kind = 'Unknown'; Root = $text }
 }
 
 function Get-PrintBackupCommand {

@@ -1801,7 +1801,10 @@ function Invoke-NativeCapture {
     param(
         [Parameter(Mandatory=$true)][string]$FilePath,
         [string[]]$ArgumentList = @(),
-        [int]$TimeoutSeconds = 120
+        [int]$TimeoutSeconds = 120,
+        # Environment variables for the child process only (#260): PrintBrm
+        # stages its export in %TEMP%, and that must be a folder of this run.
+        [hashtable]$Environment = @{}
     )
     $result = [pscustomobject]@{ ExitCode=$null; Output=''; Lines=@(); TimedOut=$false; StillRunning=$false; Error='' }
     $process = $null
@@ -1814,6 +1817,7 @@ function Invoke-NativeCapture {
         $psi.CreateNoWindow = $true
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError = $true
+        foreach ($name in @($Environment.Keys)) { $psi.EnvironmentVariables[[string]$name] = [string]$Environment[$name] }
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = $psi
         $null = $process.Start()
@@ -2046,7 +2050,7 @@ $script:CheckDataOwners = [ordered]@{
     CSummary = 'storage'; NetworkEvidence = 'network'; SqlSummary = 'sql'
     EndpointProducts = 'antivirus'
     # other checks
-    PrintServer = 'printers'; Special = 'special'; EolCandidates = 'eolcandidates'
+    PrintServer = 'printers'; PrintInventoryFailed = 'printers'; Special = 'special'; EolCandidates = 'eolcandidates'
     # the driver list, read once by whichever of the two runs first (#258)
     PnpDrivers = 'platform,drivers'
     RdpSummary = 'rdp'; DriveRedirection = 'rdp'; PolicyEvidence = 'rdp'; NlaState = 'rdp'
@@ -2576,7 +2580,11 @@ function Get-SqlSupportDecision {
     # a known version below it is an ACTION; an unknown one names the minimum.
     param([int]$Major, [string]$Target, [string]$Version = '')
     $name = $script:SqlReleaseNames[$Major]
-    if (-not $name) { $name = 'major version ' + $Major }
+    # A major version this script does not know (#260): newer than its tables,
+    # or not read correctly. That is not "unsupported": it has to be checked.
+    if (-not $name) {
+        return [pscustomobject]@{ Status='MANUAL'; Release=('SQL Server major version ' + $Major); Text=('SQL Server major version ' + $Major + ' is not in this script''s support table (it knows ' + ((@($script:SqlReleaseNames.Keys | Sort-Object) | ForEach-Object { $script:SqlReleaseNames[$_] }) -join ', ') + '). Check Microsoft''s "Using SQL Server in Windows" page for ' + (Get-ReleaseDisplayName $Target) + ' and engage the DBA; a newer version of this script may know it.') }
+    }
     $label = 'SQL Server ' + $name
     if (-not $script:SqlSupportedOnTarget.ContainsKey($Target)) {
         return [pscustomobject]@{ Status='MANUAL'; Release=$label; Text=('No SQL support matrix configured for target ' + $Target + '.') }
@@ -3147,11 +3155,13 @@ function Get-PrinterDriverDecision {
 }
 
 function Get-PrintBackupSpaceDecision {
-    # Pure (#148): PrintBrm exports every driver package, so the export can
-    # be a few MB or several GB. It runs only when the drive has 1.5 times
-    # the size of spool\drivers plus 1 GB free.
+    # Pure (#148, #260): PrintBrm exports every driver package, so the export
+    # can be a few MB or several GB, and it first copies the packages to a
+    # staging folder. Staging is on the same drive as the export (this run's
+    # own folder), so the drive needs twice the size of spool\drivers plus
+    # 1 GB free: one copy staged, one in the export file.
     param([long]$DriverBytes, [long]$FreeBytes)
-    $required = [long][math]::Ceiling($DriverBytes * 1.5) + [long]1GB
+    $required = [long]($DriverBytes * 2) + [long]1GB
     $gb = { param($b) [math]::Round(([double]$b / 1GB), 2) }
     return [pscustomobject]@{
         Proceed = ($FreeBytes -ge $required)
@@ -3160,6 +3170,18 @@ function Get-PrintBackupSpaceDecision {
         FreeBytes = $FreeBytes
         Text = ('Estimate ' + (& $gb $DriverBytes) + ' GB (spool\drivers), needs ' + (& $gb $required) + ' GB free, ' + (& $gb $FreeBytes) + ' GB free')
     }
+}
+
+function Get-FreeSpaceRoot {
+    # Pure (#260): what to ask for the free space of a path. A drive letter
+    # ('D:') can be read from Win32_LogicalDisk; a network path
+    # ('\\server\share') cannot, and must not make the caller fail.
+    # Kind is Drive, Network or Unknown.
+    param([string]$Path)
+    $text = [string]$Path
+    if ($text -match '^([A-Za-z]):') { return [pscustomobject]@{ Kind = 'Drive'; Root = ($Matches[1].ToUpperInvariant() + ':') } }
+    if ($text -match '^(\\\\[^\\]+\\[^\\]+)') { return [pscustomobject]@{ Kind = 'Network'; Root = $Matches[1] } }
+    return [pscustomobject]@{ Kind = 'Unknown'; Root = $text }
 }
 
 function Get-PrintBackupCommand {
@@ -5336,11 +5358,17 @@ function Invoke-PrintersCheck {
     # upgrade and the driver work planned. Read-only.
     $role = (Get-FeatureState 'Print-Server') -eq $true
     $script:Data.PrintServer = $false
+    $script:Data.PrintInventoryFailed = $false
     try { $inv = Get-PrinterInventory }
     catch {
         $spooler = @($script:Data.Services | Where-Object { $_.Name -eq 'Spooler' }) | Select-Object -First 1
         $startMode = ''; if ($spooler) { $startMode = [string]$spooler.StartMode }
         if ((Get-PrinterReadFailureDecision $role $startMode ($null -ne $spooler)) -eq 'Manual') {
+            # Not read is not "none" (#260): the print backup must not call
+            # this "not a print server", and the Post run must not compare
+            # against printer lists that were never filled.
+            $script:Data.PrintInventoryFailed = $true
+            if ($script:Data.Snapshot) { foreach ($list in 'Printers', 'PrinterPorts', 'PrinterDrivers') { $script:Data.Snapshot.Remove($list) } }
             Add-Result 'PRINTING' 'Printers' 'MANUAL' 'Could not read the printers' $_.Exception.Message -Recommendation 'Check that the Print Spooler service runs, and list printers, ports and drivers in Print Management before the change.' -Kind 'Finding' -Source 'PrintManagement, Win32_Printer'
         } else {
             Add-Result 'PRINTING' 'PrintServer' 'OK' 'Not a print server' 'Print Server role not installed and the Print Spooler service is disabled or missing' -Source 'Win32_Service'
@@ -5539,8 +5567,12 @@ function Invoke-PrintBackupCheck {
     # file. It only reads the spooler configuration. The file is not redacted
     # and is never part of the report.
     if ($AssessmentMode -eq 'Post') { $script:CurrentCheckMessage = 'Not applicable: not needed after the upgrade'; $script:CurrentCheckOutcome = 'Skipped'; return }
-    if (-not $script:Data.PrintServer) { $script:CurrentCheckMessage = 'Not applicable: not a print server'; $script:CurrentCheckOutcome = 'Skipped'; return }
     $cmd = Get-PrintBackupCommand
+    if ($script:Data['PrintInventoryFailed']) {
+        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' 'Not taken: the printers could not be read, so it is not known whether this is a print server' -Recommendation 'If this server shares printers, export the print configuration before the change, to a drive with enough free space, and keep the file off the server.' -Kind 'Finding' -Source 'Printer inventory' -Command $cmd -CommandKind 'Evidence'
+        return
+    }
+    if (-not $script:Data.PrintServer) { $script:CurrentCheckMessage = 'Not applicable: not a print server'; $script:CurrentCheckOutcome = 'Skipped'; return }
     if (-not $EnablePrintBackup) {
         Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' 'Not taken (EnablePrintBackup is off)' -Recommendation 'Export the print configuration before the change, to a drive with enough free space, and keep the file off the server.' -Kind 'Finding' -Source 'SETTINGS' -Command $cmd -CommandKind 'Check'
         return
@@ -5550,10 +5582,20 @@ function Invoke-PrintBackupCheck {
         Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' 'PrintBrm.exe not found' $brm -Recommendation 'Export the printers with Print Management (Export printers to a file) before the change, and keep the file off the server.' -Kind 'Finding' -Source 'PrintBrm.exe'
         return
     }
-    $root = [IO.Path]::GetPathRoot($EvidenceRoot).TrimEnd('\')
-    $disk = @(Get-CimRequired 'Win32_LogicalDisk' ("DeviceID='" + $root + "'")) | Select-Object -First 1
-    if (-not $disk -or $null -eq $disk.FreeSpace) { throw ('Could not read the free space of ' + $root) }
-    $space = Get-PrintBackupSpaceDecision (Get-PrintDriverStoreSize) ([long]$disk.FreeSpace)
+    # The export and PrintBrm's staging copy both go to the evidence folder
+    # (#260), so one free-space check covers them. A network path has no
+    # Win32_LogicalDisk row: the export still runs, and the row says the
+    # space was not checked.
+    $where = Get-FreeSpaceRoot $EvidenceRoot
+    $root = $where.Root
+    if ($where.Kind -eq 'Drive') {
+        $disk = @(Get-CimRequired 'Win32_LogicalDisk' ("DeviceID='" + $root + "'")) | Select-Object -First 1
+        if (-not $disk -or $null -eq $disk.FreeSpace) { throw ('Could not read the free space of ' + $root) }
+        $space = Get-PrintBackupSpaceDecision (Get-PrintDriverStoreSize) ([long]$disk.FreeSpace)
+    } else {
+        $estimate = [math]::Round(([double](Get-PrintDriverStoreSize) / 1GB), 2)
+        $space = [pscustomobject]@{ Proceed = $true; Text = ('Estimate ' + $estimate + ' GB (spool\drivers); the free space of ' + $root + ' was not checked (not a local drive)') }
+    }
     if (-not $space.Proceed) {
         Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' ('Skipped: not enough free space on ' + $root) $space.Text -Recommendation 'Run the export to a drive or share with enough free space before the change, and keep the file off the server.' -Kind 'Finding' -Source 'spool\drivers, Win32_LogicalDisk' -Command $cmd -CommandKind 'Check'
         return
@@ -5562,23 +5604,32 @@ function Invoke-PrintBackupCheck {
     $dest = Join-Path (Initialize-EvidenceFolder 'Printers') ($script:SafeComputerName + '-IPU-Print-' + (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture))
     $null = Initialize-OutputFolder $dest
     $file = Join-Path $dest ($script:SafeComputerName + '-printers.printerExport')
+    # PrintBrm stages the driver packages in %TEMP% before it writes the file.
+    # Give it a folder of this run (#260): the space check above covers it,
+    # and it is removed afterwards whatever happens, also after a timeout.
+    $staging = Join-Path $dest 'staging'
+    $null = Initialize-OutputFolder $staging
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    $r = Invoke-NativeCapture $brm @('-B', '-F', $file) $timeout
+    $r = Invoke-NativeCapture $brm @('-B', '-F', $file) $timeout @{ TEMP = $staging; TMP = $staging }
     $sw.Stop()
     $duration = 'Duration=' + (Format-Duration $sw.Elapsed)
+    # SilentlyContinue: this run's own staging folder; when PrintBrm still holds it, the row below names it.
+    if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue }
+    $stagingLeft = ''; if (Test-Path -LiteralPath $staging) { $stagingLeft = 'Staging folder could not be removed, delete it by hand: ' + $staging }
     if ($r.TimedOut) {
         # A cut-off export is not a backup; remove this run's partial file.
+        # SilentlyContinue: this run's own partial file; a file that stays is harmless and sits in the named folder.
         if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
-        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' ('Stopped after ' + [math]::Round($timeout / 60) + ' minutes') @($duration, $space.Text, (Get-StopFailureText $r.StillRunning)) -Recommendation 'Run the export by hand outside the SA job, before the change, and keep the file off the server.' -Kind 'Finding' -Source 'PrintBrm.exe -B' -Command $cmd -CommandKind 'Check'
+        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' ('Stopped after ' + [math]::Round($timeout / 60) + ' minutes') @(@($duration, $space.Text, (Get-StopFailureText $r.StillRunning), $stagingLeft) | Where-Object { $_ }) -Recommendation 'Run the export by hand outside the SA job, before the change, and keep the file off the server.' -Kind 'Finding' -Source 'PrintBrm.exe -B' -Command $cmd -CommandKind 'Check'
         $script:CurrentCheckOutcome = 'TimedOut'; return
     }
     if ($r.Error) { throw $r.Error }
     if ($r.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $file -PathType Leaf)) {
-        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' ('PrintBrm failed (exit code ' + $r.ExitCode + ')') @($duration, (@($r.Lines | Select-Object -Last 3) -join ' | ')) -Recommendation 'Read the PrintBrm output and the PrintBrm event log (Applications and Services Logs > Microsoft > Windows > PrintBRM), then export by hand before the change.' -Kind 'Finding' -Source 'PrintBrm.exe -B' -Command $cmd -CommandKind 'Check'
+        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' ('PrintBrm failed (exit code ' + $r.ExitCode + ')') @(@($duration, (@($r.Lines | Select-Object -Last 3) -join ' | '), $stagingLeft) | Where-Object { $_ }) -Recommendation 'Read the PrintBrm output and the PrintBrm event log (Applications and Services Logs > Microsoft > Windows > PrintBRM), then export by hand before the change.' -Kind 'Finding' -Source 'PrintBrm.exe -B' -Command $cmd -CommandKind 'Check'
         return
     }
     $size = [math]::Round(([double](Get-Item -LiteralPath $file).Length / 1MB), 1)
-    Add-Result 'PRINTING' 'PrintBackup' 'OK' $file @(('SizeMB=' + $size), $duration, $space.Text) -Recommendation 'Copy the file off the server before the change: a backup on C: does not survive a failed upgrade that needs a rebuild. It holds the full print configuration and is not redacted. Restore: PrintBrm -R -F <file> (see the user guide).' -Source 'PrintBrm.exe -B (reads the spooler configuration)'
+    Add-Result 'PRINTING' 'PrintBackup' 'OK' $file @(@(('SizeMB=' + $size), $duration, $space.Text, $stagingLeft) | Where-Object { $_ }) -Recommendation 'Copy the file off the server before the change: a backup on C: does not survive a failed upgrade that needs a rebuild. It holds the full print configuration and is not redacted. Restore: PrintBrm -R -F <file> (see the user guide).' -Source 'PrintBrm.exe -B (reads the spooler configuration)'
 }
 # Chapter: Hardware and virtualization (docs/checks.md).
 # Each check is one function; Register-AssessmentCheck (50-checks.ps1) lists them in run order.

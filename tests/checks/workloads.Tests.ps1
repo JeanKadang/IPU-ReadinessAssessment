@@ -92,6 +92,25 @@ Describe 'Checks on a fake server: workloads' -Skip:($env:OS -ne 'Windows_NT') {
             $r.Status | Should -Be 'MANUAL'
             $r.Details | Should -Match 'spooler'
         }
+        It 'printers that cannot be read: the backup is MANUAL, not "not a print server", and the lists are not compared (#260)' {
+            $script:Fake.Features['Print-Server'] = $true
+            $script:Fake.PrintInvError = 'The spooler service is not reachable'
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'printers'
+            $script:Data.PrintInventoryFailed | Should -BeTrue
+            foreach ($list in 'Printers', 'PrinterPorts', 'PrinterDrivers') { $script:Data.Snapshot.ContainsKey($list) | Should -BeFalse }
+            $run = Invoke-TestCheck 'printbackup'
+            $run.Outcome | Should -Be 'Completed'
+            $row = (Get-Row 'PRINTING' 'PrintBackup')[0]
+            $row.Status | Should -Be 'MANUAL'
+            $row.Value | Should -Match 'could not be read'
+            $row.Command | Should -Match 'PrintBrm\.exe -B -F'
+        }
+        It 'a readable inventory leaves the failed flag off (#260)' {
+            $null = Invoke-TestCheck 'printers'
+            $script:Data.PrintInventoryFailed | Should -BeFalse
+            $script:Data.Snapshot.ContainsKey('Printers') | Should -BeTrue
+        }
     }
 
     Context 'printbackup (#148)' {
@@ -114,6 +133,24 @@ Describe 'Checks on a fake server: workloads' -Skip:($env:OS -ne 'Windows_NT') {
             $row.Value | Should -BeLike (Join-Path $EvidenceRoot 'Printers\*-IPU-Print-*\*-printers.printerExport')
             $row.Recommendation | Should -Match 'off the server'
             $row.Recommendation | Should -Match 'PrintBrm -R -F'
+        }
+        It 'PrintBrm stages in a folder of this run, which is removed afterwards (#260)' {
+            $EvidenceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $script:Fake.Native['printbrm.exe'] = { param($a) [IO.File]::WriteAllText($a[2], 'export'); @{ Output = 'Successfully finished operation.' } }
+            $null = Invoke-TestCheck 'printbackup'
+            $call = @($script:Fake.NativeCalls | Where-Object { $_.Exe -eq 'printbrm.exe' })[0]
+            $call.Environment['TEMP'] | Should -BeLike (Join-Path $EvidenceRoot 'Printers\*-IPU-Print-*\staging')
+            $call.Environment['TMP'] | Should -Be $call.Environment['TEMP']
+            $call.Environment['TEMP'] | Should -Not -Exist
+            (Get-Row 'PRINTING' 'PrintBackup')[0].Status | Should -Be 'OK'
+        }
+        It 'a network EvidenceRoot does not fail the free-space lookup; the row says it was not checked (#260)' {
+            $EvidenceRoot = '\\fileserver.example.test\ipu\evidence'
+            $script:Fake.Native['printbrm.exe'] = @{ ExitCode = 1; Output = 'Operation failed.' }
+            $run = Invoke-TestCheck 'printbackup'
+            $run.Outcome | Should -Be 'Completed'
+            $row = (Get-Row 'PRINTING' 'PrintBackup')[0]
+            $row.Value | Should -Be 'PrintBrm failed (exit code 1)'
         }
         It 'not enough free space: skipped as MANUAL with the command to run elsewhere' {
             $script:Fake.DriverStoreBytes = [long]4GB
