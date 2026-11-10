@@ -10,6 +10,12 @@ AfterAll { Remove-Item Env:\IPU_ASSESSMENT_LIBRARY_ONLY -ErrorAction SilentlyCon
 
 Describe 'Get-WindowsServerRelease' {
     It 'maps build <Build> to <Expected>' -TestCases @(
+        @{ Build='6001';      Expected='2008' }
+        @{ Build='6002';      Expected='2008' }
+        @{ Build='6003';      Expected='2008' }
+        @{ Build='7600';      Expected='2008R2' }
+        @{ Build='7601.24545'; Expected='2008R2' }
+        @{ Build='9200';      Expected='2012' }
         @{ Build='9600';      Expected='2012R2' }
         @{ Build='14393';     Expected='2016' }
         @{ Build='17763.1';   Expected='2019' }
@@ -20,6 +26,12 @@ Describe 'Get-WindowsServerRelease' {
     }
     It 'falls back to the caption when the build is unknown' {
         Get-WindowsServerRelease '' 'Microsoft Windows Server 2012 R2 Standard' | Should -Be '2012R2'
+    }
+    It 'reads 2008 and 2008 R2 from the caption, R2 first (#276)' {
+        Get-WindowsServerRelease '' 'Microsoft Windows Server 2008 R2 Enterprise' | Should -Be '2008R2'
+        Get-WindowsServerRelease '' 'Microsoft Windows Server 2008 Standard' | Should -Be '2008'
+        Get-ReleaseDisplayName '2008R2' | Should -Be 'Windows Server 2008 R2'
+        Get-ReleaseDisplayName '2008' | Should -Be 'Windows Server 2008'
     }
     It 'does not mistake a localized caption for another release' {
         Get-WindowsServerRelease '14393' 'Microsoft Windows Server 2016 Datacenter' | Should -Be '2016'
@@ -40,6 +52,42 @@ Describe 'Get-UpgradePathDecision (Microsoft installation-media table)' {
         @{ Source='';       Target='2025'; Expected='MANUAL' }
     ) {
         (Get-UpgradePathDecision $Source $Target $false).Status | Should -Be $Expected
+    }
+    It '2008 and 2008 R2 have no direct path to any target (#276): <Source> -> <Target>' -TestCases @(
+        @{ Source='2008';   Target='2019' }
+        @{ Source='2008';   Target='2022' }
+        @{ Source='2008';   Target='2025' }
+        @{ Source='2008R2'; Target='2019' }
+        @{ Source='2008R2'; Target='2022' }
+        @{ Source='2008R2'; Target='2025' }
+    ) {
+        $d = Get-UpgradePathDecision $Source $Target $false
+        $d.Status | Should -Be 'BLOCKER'
+        $d.Text | Should -Match 'does not support a direct in-place upgrade'
+        $d.Text | Should -Match 'Shortest documented route'
+        $d.Text | Should -Match 'migration to a new server'
+    }
+    It 'the route from <Source> to <Target> is <Route> (#276)' -TestCases @(
+        @{ Source='2008R2'; Target='2025'; Route='2008R2>2012R2>2025' }
+        @{ Source='2008R2'; Target='2019'; Route='2008R2>2012R2>2019' }
+        @{ Source='2008R2'; Target='2022'; Route='2008R2>2012R2>2019>2022' }
+        @{ Source='2008';   Target='2025'; Route='2008>2012>2016>2025' }
+        @{ Source='2012';   Target='2022'; Route='2012>2016>2022' }
+        @{ Source='2016';   Target='2025'; Route='2016>2025' }
+        @{ Source='2025';   Target='2019'; Route='' }
+        @{ Source='2019';   Target='2019'; Route='' }
+        @{ Source='';       Target='2025'; Route='' }
+        @{ Source='2003';   Target='2025'; Route='' }
+    ) {
+        (@(Get-UpgradeRoute $Source $Target) -join '>') | Should -Be $Route
+    }
+    It 'names the route with the number of upgrades, and a 2012 source gets one too (#276)' {
+        (Get-UpgradePathDecision '2008R2' '2025' $false).Text | Should -Match 'Windows Server 2008 R2 > Windows Server 2012 R2 > Windows Server 2025 \(2 in-place upgrades\)'
+        (Get-UpgradePathDecision '2012' '2025' $false).Text | Should -Match 'Windows Server 2012 > Windows Server 2016 > Windows Server 2025'
+    }
+    It 'a source newer than the target is still a downgrade, also against 2008 (#276)' {
+        $script:ReleaseOrder.IndexOf('2008') | Should -BeLessThan ($script:ReleaseOrder.IndexOf('2008R2'))
+        $script:ReleaseOrder.IndexOf('2008R2') | Should -BeLessThan ($script:ReleaseOrder.IndexOf('2012'))
     }
     It 'suggests the supported target when the path is blocked' {
         (Get-UpgradePathDecision '2012R2' '2022' $false).Text | Should -Match 'Windows Server 2025'
@@ -199,6 +247,17 @@ Describe 'Source end of support (#102)' {
     It 'counts the days left while supported and mentions ESU once ended' {
         (Get-SupportLifecycleDecision '2016' ([datetime]'2027-01-02')).Value | Should -Match '\(10 days\)'
         (Get-SupportLifecycleDecision '2012R2' ([datetime]'2026-10-08')).Text | Should -Match 'ESU'
+    }
+    It '2008 and 2008 R2 are out of support since 2020-01-14, and their ESU has ended too (#276)' {
+        foreach ($r in '2008', '2008R2') {
+            $d = Get-SupportLifecycleDecision $r ([datetime]'2026-11-10')
+            $d.Status | Should -Be 'WARNING'
+            $d.Ended | Should -BeTrue
+            $d.EndDate | Should -Be '2020-01-14'
+            $d.Text | Should -Match 'Extended Security Updates programme has ended as well'
+        }
+        (Get-SupportLifecycleDecision '2008R2' ([datetime]'2020-01-14')).Status | Should -Be 'INFO'
+        (Get-SupportLifecycleDecision '2008R2' ([datetime]'2026-11-10')).Value | Should -Be 'Windows Server 2008 R2: out of support since 2020-01-14'
     }
 }
 

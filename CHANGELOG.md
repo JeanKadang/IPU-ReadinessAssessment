@@ -4,6 +4,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Windows Server 2008 and 2008 R2 are recognised as a source release (#276): builds 6001 to 6003 and 7600 to 7601, with the end of support (2020-01-14) and a note that their Extended Security Updates have ended too. They have no direct in-place path to 2019, 2022 or 2025, so the upgrade-path row is a BLOCKER that names the shortest documented route (for example *Windows Server 2008 R2 > Windows Server 2012 R2 > Windows Server 2025, 2 in-place upgrades*) and says a migration is usually the better plan. A Windows Server 2012 source gets its route too (via 2016). The intermediate paths are a dated fact table (`IntermediateUpgradePaths`). The script needs PowerShell 4.0, so it runs on 2008 R2 with WMF 4.0 and not on 2008.
+
 ### Fixed
 
 - SQL Server and print backup (#260). A SQL Server major version that the script's support table does not know (newer than SQL Server 2025) is MANUAL with a pointer to Microsoft's page, no longer a BLOCKER "not supported". Print backup: when the printers could not be read, the backup row is MANUAL ("not known whether this is a print server") instead of being skipped as "not a print server", and the Post run no longer compares against printer lists that were never filled. A network `EvidenceRoot` no longer makes the free-space lookup fail: the export runs and the row says the space was not checked. PrintBrm's staging copy now goes to a `staging` folder of this run instead of `%TEMP%`, so the free-space check covers it (2 x `spool\drivers` + 1 GB, was 1.5 x) and it is removed afterwards, also after a timeout.

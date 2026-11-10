@@ -2190,7 +2190,9 @@ function Get-BlockedCheckMessage {
 $script:FactSources = [ordered]@{
     SupportedUpgradePaths  = @{ Verified = '2026-10-29'; Source = 'https://learn.microsoft.com/en-us/windows-server/get-started/install-upgrade-migrate' }
     SqlSupportedOnTarget   = @{ Verified = '2026-10-29'; Source = 'https://learn.microsoft.com/en-us/troubleshoot/sql/general/use-sql-server-in-windows' }
-    ReleaseEndOfSupport    = @{ Verified = '2026-10-13'; Source = 'https://learn.microsoft.com/en-us/lifecycle/products/windows-server-2025' }
+    ReleaseEndOfSupport    = @{ Verified = '2026-11-10'; Source = 'https://learn.microsoft.com/en-us/lifecycle/products/windows-server-2025' }
+    # IntermediateUpgradePaths (#276): the 2012 and 2012 R2 upgrade option tables (2008 SP2 and 2008 R2 SP1 to 2012; 2008 R2 SP1 and 2012 to 2012 R2) and the Azure in-place upgrade page (2016 from 2012 or 2012 R2). 2008 and 2008 R2 end dates: learn.microsoft.com/en-us/lifecycle/products/windows-server-2008-r2.
+    IntermediateUpgradePaths = @{ Verified = '2026-11-10'; Source = 'https://learn.microsoft.com/en-us/azure/virtual-machines/windows-in-place-upgrade' }
     # FeatureLifecycle: the page has one tab per release. SMTP Server, the IIS 6 console and PowerShell 2.0 are removed on the 2025 tab only; the 2022 tab removes iSNS and nothing else (#187). A row lists only the targets whose tab names it (#232).
     FeatureLifecycle       = @{ Verified = '2026-10-29'; Source = 'https://learn.microsoft.com/en-us/windows-server/get-started/removed-deprecated-features-windows-server-2025' }
     PerUserServices        = @{ Verified = '2026-10-23'; Source = 'https://learn.microsoft.com/en-us/windows/application-management/per-user-services-in-windows' }
@@ -2217,7 +2219,7 @@ function Get-StaleFactSource {
     return $stale
 }
 
-$script:ReleaseOrder = @('2012','2012R2','2016','2019','2022','2025')
+$script:ReleaseOrder = @('2008','2008R2','2012','2012R2','2016','2019','2022','2025')
 
 # Microsoft "Supported in-place upgrade paths" (installation media).
 # Verified: see $script:FactSources.SupportedUpgradePaths.
@@ -2225,6 +2227,17 @@ $script:SupportedUpgradePaths = @{
     '2019' = @('2012R2','2016')
     '2022' = @('2016','2019')
     '2025' = @('2012R2','2016','2019','2022')
+}
+
+# Documented in-place upgrades to releases that are not a target of this
+# script (#276). They are only used to name a route for a source with no
+# direct path: Windows Server 2008 (64-bit, SP2) to 2012; 2008 R2 (SP1) to
+# 2012 or 2012 R2; 2012 to 2012 R2 or 2016; 2012 R2 to 2016.
+# Verified: see $script:FactSources.IntermediateUpgradePaths.
+$script:IntermediateUpgradePaths = @{
+    '2012'   = @('2008','2008R2')
+    '2012R2' = @('2008R2','2012')
+    '2016'   = @('2012','2012R2')
 }
 
 # SQL Server major version -> Windows Server support (Microsoft "Using SQL
@@ -2254,6 +2267,7 @@ $script:SqlMinimumOnTarget = @{
 function Get-ReleaseDisplayName {
     param([string]$Release)
     if ($Release -eq '2012R2') { return 'Windows Server 2012 R2' }
+    if ($Release -eq '2008R2') { return 'Windows Server 2008 R2' }
     if ($Release) { return ('Windows Server ' + $Release) }
     return 'Unknown'
 }
@@ -2264,6 +2278,12 @@ function Get-WindowsServerRelease {
     $build = 0
     [void][int]::TryParse((([string]$BuildNumber) -split '\.')[0], [ref]$build)
     switch ($build) {
+        # 2008 (#276): 6001 = SP1 (the first server build), 6002 = SP2, 6003 = SP2 with the 2019 servicing update.
+        6001  { return '2008' }
+        6002  { return '2008' }
+        6003  { return '2008' }
+        7600  { return '2008R2' }
+        7601  { return '2008R2' }
         9200  { return '2012' }
         9600  { return '2012R2' }
         14393 { return '2016' }
@@ -2272,7 +2292,8 @@ function Get-WindowsServerRelease {
         26100 { return '2025' }
     }
     if ($Caption -match '2012 R2') { return '2012R2' }
-    foreach ($r in @('2025','2022','2019','2016','2012')) { if ($Caption -match $r) { return $r } }
+    if ($Caption -match '2008 R2') { return '2008R2' }
+    foreach ($r in @('2025','2022','2019','2016','2012','2008')) { if ($Caption -match $r) { return $r } }
     return ''
 }
 
@@ -2280,6 +2301,8 @@ function Get-WindowsServerRelease {
 # policy). Support runs through the listed day.
 # Verified: see $script:FactSources.ReleaseEndOfSupport.
 $script:ReleaseEndOfSupport = @{
+    '2008'   = '2020-01-14'
+    '2008R2' = '2020-01-14'
     '2012'   = '2023-10-10'
     '2012R2' = '2023-10-10'
     '2016'   = '2027-01-12'
@@ -2337,6 +2360,11 @@ function Get-SupportLifecycleDecision {
     }
     $end = [datetime]::ParseExact($script:ReleaseEndOfSupport[$Release], 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
     $endText = $end.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+    if ($Today.Date -gt $end -and @('2008', '2008R2') -contains $Release) {
+        # The Extended Security Updates for these two have ended as well (#276).
+        return [pscustomobject]@{ Status='WARNING'; Ended=$true; EndDate=$endText; Value=($name + ': out of support since ' + $endText)
+            Text='Microsoft no longer ships security updates for this release, and its Extended Security Updates programme has ended as well. This is why the newest update can be years old, and it makes the move to a supported release urgent.' }
+    }
     if ($Today.Date -gt $end) {
         return [pscustomobject]@{ Status='WARNING'; Ended=$true; EndDate=$endText; Value=($name + ': out of support since ' + $endText)
             Text='Microsoft no longer ships security updates for this release unless Extended Security Updates (ESU, for example through Azure Arc) are in place. This is why the newest update can be old, and it adds urgency to the upgrade.' }
@@ -2415,6 +2443,42 @@ function Get-TargetLicensingDecision {
     return [pscustomobject]@{ Value=('Channel not determined, KMS: ' + $KmsEndpoint); Text=('Confirm licence entitlement for ' + $t + ' and that the KMS host/ADBA, MAK or AVMA host can activate it.') }
 }
 
+function Get-UpgradeRoute {
+    # Pure (#276): the shortest documented chain of in-place upgrades from
+    # $Source to $Target, as release names including both ends, or nothing
+    # when there is none. Uses the direct paths to this script's targets and
+    # the documented upgrades to older releases.
+    param([string]$Source, [string]$Target)
+    if (-not $Source -or -not $Target -or $Source -eq $Target) { return @() }
+    # next[from] = releases reachable in one upgrade
+    $next = @{}
+    foreach ($table in @($script:SupportedUpgradePaths, $script:IntermediateUpgradePaths)) {
+        foreach ($to in @($table.Keys)) {
+            foreach ($from in @($table[$to])) {
+                if (-not $next.ContainsKey($from)) { $next[$from] = @() }
+                if ($next[$from] -notcontains $to) { $next[$from] += $to }
+            }
+        }
+    }
+    $paths = @(, @($Source)); $seen = @($Source)
+    while ($paths.Count -gt 0) {
+        $grown = @()
+        foreach ($p in $paths) {
+            $last = $p[$p.Count - 1]
+            if (-not $next.ContainsKey($last)) { continue }
+            # Newest first, so of two routes of the same length the one with the bigger steps wins.
+            foreach ($to in @($next[$last] | Sort-Object { $script:ReleaseOrder.IndexOf($_) } -Descending)) {
+                if ($to -eq $Target) { return @($p + $to) }
+                if ($seen -contains $to) { continue }
+                $seen += $to
+                $grown += , @($p + $to)
+            }
+        }
+        $paths = $grown
+    }
+    return @()
+}
+
 function Get-UpgradePathDecision {
     # -AllowedTargets (#322): when a site policy limits the targets (a PKI
     # server), a target outside it is never suggested as the alternative.
@@ -2445,6 +2509,15 @@ function Get-UpgradePathDecision {
     $hint = ''
     if ($alternatives.Count -gt 0) { $hint = ' Supported direct target(s) from this source: ' + ($alternatives -join ', ') + '.' }
     elseif ($notAllowed.Count -gt 0) { $hint = ' Microsoft supports a direct upgrade to ' + ($notAllowed -join ', ') + ', which the PKI site policy does not allow.' }
+    else {
+        # No direct path to any target (#276): name the documented route, and what it costs.
+        $route = @(Get-UpgradeRoute $Source $Target)
+        if ($route.Count -gt 2) {
+            $hint = ' Shortest documented route: ' + ((@($route | ForEach-Object { Get-ReleaseDisplayName $_ })) -join ' > ') + ' (' + ($route.Count - 1) + ' in-place upgrades). Every step is its own change, with its own media, licence, assessment and maintenance window; a migration to a new server is usually the better plan.'
+        } else {
+            $hint = ' No documented chain of in-place upgrades reaches the target; plan a migration to a new server.'
+        }
+    }
     return (& $make 'BLOCKER' ('Microsoft does not support a direct in-place upgrade from ' + (Get-ReleaseDisplayName $Source) + ' to ' + (Get-ReleaseDisplayName $Target) + '.' + $hint))
 }
 
