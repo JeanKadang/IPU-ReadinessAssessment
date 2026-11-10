@@ -220,6 +220,51 @@ Describe 'VDI hosts (#376)' {
     }
 }
 
+Describe 'Get-VMwareToolsAgeDecision (#279)' {
+    It '<Version> is <Kind> with status <Status>' -TestCases @(
+        @{ Version = '13.1.6.25833820'; Kind = 'Current';        Status = 'OK' }
+        @{ Version = '13.1.5';          Kind = 'Behind';         Status = 'OK' }
+        @{ Version = '13.0.10.0';       Kind = 'Behind';         Status = 'OK' }
+        # 24 months behind is the limit; one more is a WARNING.
+        @{ Version = '12.5.0.24276846'; Kind = 'Behind';         Status = 'OK' }
+        @{ Version = '12.4.5';          Kind = 'Behind';         Status = 'WARNING' }
+        @{ Version = '11.0.0';          Kind = 'Behind';         Status = 'WARNING' }
+        @{ Version = '10.3.5';          Kind = 'OlderThanTable'; Status = 'WARNING' }
+        @{ Version = '14.0.0';          Kind = 'NewerThanTable'; Status = 'OK' }
+        @{ Version = '12.1.1';          Kind = 'NotListed';      Status = 'MANUAL' }
+        @{ Version = '12.5';            Kind = 'Behind';         Status = 'OK' }
+        @{ Version = 'abc';             Kind = 'Unparsable';     Status = '' }
+        @{ Version = '';                Kind = 'Unparsable';     Status = '' }
+    ) {
+        $d = Get-VMwareToolsAgeDecision $Version
+        $d.Kind | Should -Be $Kind
+        $d.Status | Should -Be $Status
+    }
+    It 'says how many releases and months behind, against the newest release with its date' {
+        $d = Get-VMwareToolsAgeDecision '12.2.0.21223074' '2026-11-10'
+        $d.ReleasesBehind | Should -Be 18
+        $d.MonthsBehind | Should -Be 43
+        $d.Text | Should -Be 'Released 2023-03-07: 18 release(s) and 43 month(s) behind 13.1.6 (2026-10-30), table checked 2026-11-10.'
+    }
+    It 'a version that is not in the table is never called current' {
+        (Get-VMwareToolsAgeDecision '14.0.0').Text | Should -Match 'cannot say whether a newer one exists'
+        (Get-VMwareToolsAgeDecision '12.1.1').Text | Should -Match 'not in Broadcom''s release list'
+        (Get-VMwareToolsAgeDecision '9.4.0').Text | Should -Match 'oldest release in the table'
+    }
+    It 'the table is sorted by nothing but itself: every entry parses, dates do not lie in the future, and the newest version is the first entry' {
+        $inv = [Globalization.CultureInfo]::InvariantCulture
+        $seen = @{}
+        foreach ($r in $script:VMwareToolsReleases) {
+            { [version]$r.Version } | Should -Not -Throw
+            [datetime]::ParseExact($r.Released, 'yyyy-MM-dd', $inv) | Should -BeLessThan ((Get-Date).AddDays(1))
+            $seen.ContainsKey($r.Version) | Should -BeFalse -Because ('duplicate ' + $r.Version)
+            $seen[$r.Version] = $true
+        }
+        $max = @($script:VMwareToolsReleases | ForEach-Object { [version]$_.Version } | Sort-Object -Descending)[0]
+        ([version]$script:VMwareToolsReleases[0].Version) | Should -Be $max
+    }
+}
+
 Describe 'Get-VMwareToolsDecision' {
     It '<Version> for <Target> is <Expected>' -TestCases @(
         @{ Version='12.4.5.23787635'; Target='2025'; Expected='ACTION' }

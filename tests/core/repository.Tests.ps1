@@ -44,7 +44,7 @@ Describe 'No company or host names in the repository (#90)' {
 
 Describe 'Dated facts have a source and a recent check (#132)' {
     It 'every fact table is listed with a date and an https source' {
-        foreach ($name in 'SupportedUpgradePaths', 'IntermediateUpgradePaths', 'SqlSupportedOnTarget', 'ReleaseEndOfSupport', 'FeatureLifecycle', 'PerUserServices', 'VMwareToolsMinimum', 'ExpectedWindowsChanges', 'WinReMinPartitionMB', 'DocLinks') {
+        foreach ($name in 'SupportedUpgradePaths', 'IntermediateUpgradePaths', 'SqlSupportedOnTarget', 'ReleaseEndOfSupport', 'FeatureLifecycle', 'PerUserServices', 'VMwareToolsMinimum', 'VMwareToolsReleases', 'ExpectedWindowsChanges', 'WinReMinPartitionMB', 'DocLinks') {
             $script:FactSources.Contains($name) | Should -BeTrue -Because $name
         }
         @(Get-StaleFactSource $script:FactSources ([datetime]'2026-10-13')) | Should -BeNullOrEmpty
