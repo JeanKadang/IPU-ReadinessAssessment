@@ -84,9 +84,9 @@ function Get-RegistryValueSafe {
     return New-Object PSObject -Property @{ Exists = $false; Value = $null }
 }
 function Invoke-NativeCapture {
-    param([string]$FilePath, [string[]]$ArgumentList = @(), [int]$TimeoutSeconds = 120)
+    param([string]$FilePath, [string[]]$ArgumentList = @(), [int]$TimeoutSeconds = 120, [hashtable]$Environment = @{})
     $leaf = [IO.Path]::GetFileName($FilePath).ToLowerInvariant()
-    $script:Fake.NativeCalls += [pscustomobject]@{ Exe = $leaf; Args = @($ArgumentList) }
+    $script:Fake.NativeCalls += [pscustomobject]@{ Exe = $leaf; Args = @($ArgumentList); Environment = $Environment }
     $spec = $script:Fake.Native[$leaf]
     if ($spec -is [scriptblock]) { $spec = & $spec $ArgumentList }
     if (-not $spec) { $spec = @{} }

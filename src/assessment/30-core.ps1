@@ -1098,7 +1098,10 @@ function Invoke-NativeCapture {
     param(
         [Parameter(Mandatory=$true)][string]$FilePath,
         [string[]]$ArgumentList = @(),
-        [int]$TimeoutSeconds = 120
+        [int]$TimeoutSeconds = 120,
+        # Environment variables for the child process only (#260): PrintBrm
+        # stages its export in %TEMP%, and that must be a folder of this run.
+        [hashtable]$Environment = @{}
     )
     $result = [pscustomobject]@{ ExitCode=$null; Output=''; Lines=@(); TimedOut=$false; StillRunning=$false; Error='' }
     $process = $null
@@ -1111,6 +1114,7 @@ function Invoke-NativeCapture {
         $psi.CreateNoWindow = $true
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError = $true
+        foreach ($name in @($Environment.Keys)) { $psi.EnvironmentVariables[[string]$name] = [string]$Environment[$name] }
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = $psi
         $null = $process.Start()

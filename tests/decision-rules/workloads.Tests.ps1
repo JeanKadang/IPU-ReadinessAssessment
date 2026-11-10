@@ -38,6 +38,21 @@ Describe 'Get-SqlSupportDecision (Microsoft SQL/Windows matrix)' {
     ) {
         (Get-SqlSupportDecision $Major $Target).Status | Should -Be $Expected
     }
+    It 'a major version the tables do not know is MANUAL, never BLOCKER: <Major> (#260)' -TestCases @(
+        @{ Major = 18 }
+        @{ Major = 25 }
+        @{ Major = 0 }
+    ) {
+        foreach ($target in '2019', '2022', '2025') {
+            $d = Get-SqlSupportDecision $Major $target
+            $d.Status | Should -Be 'MANUAL'
+            $d.Text | Should -Match 'not in this script''s support table'
+            $d.Release | Should -Be ('SQL Server major version ' + $Major)
+        }
+    }
+    It 'a known old version that no target supports is still a BLOCKER (#260)' {
+        (Get-SqlSupportDecision 10 '2025').Status | Should -Be 'BLOCKER'
+    }
     It 'points SQL 2017 on a 2025 target to Windows Server 2022' {
         (Get-SqlSupportDecision 14 '2025').Text | Should -Match 'Windows Server 2022'
     }
@@ -394,8 +409,19 @@ Describe 'Print servers (#148)' {
     ) {
         Get-PrinterPortKind $Desc $Monitor $Protocol | Should -Be $Kind
     }
-    It 'backup space: 1.5 x the driver store + 1 GB, at the boundary' {
-        $need = [long](1.5 * 2GB) + [long]1GB
+    It 'free-space root: <Path> is <Kind> <Root> (#260)' -TestCases @(
+        @{ Path = 'D:\IPU\Evidence';                    Kind = 'Drive';   Root = 'D:' }
+        @{ Path = 'c:\temp';                            Kind = 'Drive';   Root = 'C:' }
+        @{ Path = '\\fs01.example.test\ipu\evidence';   Kind = 'Network'; Root = '\\fs01.example.test\ipu' }
+        @{ Path = 'evidence';                           Kind = 'Unknown'; Root = 'evidence' }
+        @{ Path = '';                                   Kind = 'Unknown'; Root = '' }
+    ) {
+        $r = Get-FreeSpaceRoot $Path
+        $r.Kind | Should -Be $Kind
+        $r.Root | Should -Be $Root
+    }
+    It 'backup space: 2 x the driver store (staging and export) + 1 GB, at the boundary (#260)' {
+        $need = [long](2 * 2GB) + [long]1GB
         (Get-PrintBackupSpaceDecision ([long]2GB) $need).Proceed | Should -BeTrue
         (Get-PrintBackupSpaceDecision ([long]2GB) ($need - 1)).Proceed | Should -BeFalse
         (Get-PrintBackupSpaceDecision ([long]2GB) $need).RequiredBytes | Should -Be $need

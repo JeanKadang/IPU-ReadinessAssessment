@@ -237,7 +237,7 @@ deliberately not inside the report folder, which is retrieved and shared.
 | `PolicyEvidenceRoot` | blank | Blank: the policy evidence goes to `EvidenceRoot\Policy`. Set it to keep the policy evidence in another folder, for example the location used before 4.5.1, `C:\Temp\Tools\PolBackup`. The other copies are not affected |
 | `CreatePolicyEvidenceZip` | `$true` | Zip each evidence copy |
 | `EnableIISConfigEvidence` | `$true` | When IIS is installed, copy its configuration files into a restricted evidence folder and ZIP under `EvidenceRoot\IIS` (see [IIS configuration copy](#iis-configuration-copy)) |
-| `EnablePrintBackup` | `$true` | On a print server, export printers, ports and drivers with `PrintBrm -B` into a restricted evidence folder under `EvidenceRoot\Printers`; skipped (MANUAL, with the command) when the drive lacks 1.5 x the size of `spool\drivers` + 1 GB (see [Print server backup](#print-server-backup)) |
+| `EnablePrintBackup` | `$true` | On a print server, export printers, ports and drivers with `PrintBrm -B` into a restricted evidence folder under `EvidenceRoot\Printers`; skipped (MANUAL, with the command) when the drive lacks 2 x the size of `spool\drivers` + 1 GB (see [Print server backup](#print-server-backup)) |
 | `PrintBackupTimeoutMinutes` | `30` | Time limit for the export; added to the slow-check budget on a print server (so DISM and SFC keep theirs). A timeout is MANUAL |
 | `EnableNetworkEvidence` | `$true` | Save `ipconfig /all`, `route print` and the netsh interface configuration into a restricted evidence folder and ZIP under `EvidenceRoot\Network` (see [Network configuration copy](#network-configuration-copy)) |
 
@@ -634,9 +634,14 @@ the vendor's version for the target first. LPR ports and the LPD Service are dep
 The `printbackup` check then exports the whole print configuration (printers, ports, drivers, queues) with
 `PrintBrm.exe -B` into `<EvidenceRoot>\Printers\<Computer>-IPU-Print-<time>\<Computer>-printers.printerExport`. PrintBrm
 only reads the spooler configuration. The export holds every driver package and can be a few MB or several GB, so it
-runs only when the drive has 1.5 times the size of `%windir%\System32\spool\drivers` plus 1 GB free; otherwise the row
-is MANUAL with the command to run to another drive. It is a slow check with a timeout (*PrintBackupTimeoutMinutes*,
-also limited by the slow-check budget); a timeout is MANUAL and the partial file is removed.
+runs only when the drive has twice the size of `%windir%\System32\spool\drivers` plus 1 GB free; otherwise the row
+is MANUAL with the command to run to another drive. PrintBrm first copies the driver packages to a staging folder; the
+script points it to a `staging` folder inside this run's export folder (not `%TEMP%` on C:), so the same free-space
+check covers it, and removes that folder afterwards. When `EvidenceRoot` is a network path the free space cannot be
+read and the row says it was not checked. It is a slow check with a timeout (*PrintBackupTimeoutMinutes*,
+also limited by the slow-check budget); a timeout is MANUAL and the partial file and the staging folder are removed.
+When the printers could not be read at all, the backup row is MANUAL too: the script does not know whether this is a
+print server, and says so instead of skipping the backup as "not a print server".
 
 The file is **not redacted** and is never part of the report or of `-RedactExisting`. **Copy it off the server before
 the change**: a backup on C: does not survive a failed upgrade that needs a rebuild.
