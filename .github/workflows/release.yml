@@ -118,7 +118,7 @@ jobs:
             echo
             echo '### Verify the download'
             echo
-            echo 'Compare with `SHA256SUMS.txt` (the scripts are not code-signed yet, see #14):'
+            echo 'The scripts are not code-signed. Compare the download with `SHA256SUMS.txt`:'
             echo
             echo '```powershell'
             echo 'Get-FileHash .\Windows-IPU-Readiness-Assessment.ps1 -Algorithm SHA256'
