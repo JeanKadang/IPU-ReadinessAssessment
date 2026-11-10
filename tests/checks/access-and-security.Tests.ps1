@@ -15,6 +15,19 @@ Describe 'Checks on a fake server: access and security' -Skip:($env:OS -ne 'Wind
     BeforeEach { Reset-FakeServer }
 
     Context 'grouppolicy' {
+        It 'a failed WMI filter lookup keeps the AD groups and says what is missing (#259)' {
+            $script:Fake['WmiFilterError'] = 'Simulated: the WMI filter container could not be searched'
+            (Invoke-TestCheck 'grouppolicy').Outcome | Should -Be 'Completed'
+            (Get-Row 'GROUP_POLICY' 'ADGroup').Count | Should -Be 3
+            $script:Data.Snapshot.Groups | Should -Contain 'CORP\Patch Ring 2'
+            (Get-Row 'GROUP_POLICY' 'DomainLookup').Count | Should -Be 0
+            $script:Data.AdLocation | Should -Be 'corp.example.test/Servers/Web'
+            $f = (Get-Row 'GROUP_POLICY' 'WmiFilters')[0]
+            $f.Status | Should -Be 'MANUAL'
+            $f.Details | Should -Match 'WMI filter container'
+            # The GPO is still listed, with the filter by name, but cannot be judged.
+            (Get-Row 'GROUP_POLICY' 'GPO: Server Baseline')[0].Status | Should -Be 'INFO'
+        }
         It 'a domain member: GPOs with their state, an OS-version WMI filter as WARNING, groups and the snapshot (#80)' {
             (Invoke-TestCheck 'grouppolicy').Outcome | Should -Be 'Completed'
             $baseline = (Get-Row 'GROUP_POLICY' 'GPO: Server Baseline')[0]

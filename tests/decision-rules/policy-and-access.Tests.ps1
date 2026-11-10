@@ -61,6 +61,9 @@ Describe 'Group Policy, WMI filters and AD groups (#80)' {
         @{ Query = "select * from Win32_OperatingSystem where Caption like '%2016%'";       Expected = $true }
         @{ Query = 'SELECT * FROM Win32_OperatingSystem WHERE BuildNumber >= 17763';        Expected = $true }
         @{ Query = 'SELECT * FROM Win32_OperatingSystem WHERE ProductType = 3';             Expected = $false }
+        # #259: Name holds the caption ("Microsoft Windows Server 2016 Standard|C:\Windows|...").
+        @{ Query = "SELECT * FROM Win32_OperatingSystem WHERE Name LIKE '%Server 2016%'";    Expected = $true }
+        @{ Query = 'SELECT * FROM Win32_OperatingSystem WHERE CSName = "SRV01"';            Expected = $false }
         @{ Query = 'SELECT * FROM Win32_ComputerSystem WHERE Model LIKE "%VMware%"';        Expected = $false }
         @{ Query = '';                                                                       Expected = $false }
     ) {
@@ -99,6 +102,29 @@ Describe 'Group Policy, WMI filters and AD groups (#80)' {
         It 'a stale policy names the date' {
             $rows = Get-GroupPolicyDecision $true $true $true ([datetime]'2026-09-01 08:30') $script:GpNow 7
             @($rows | Where-Object { $_.Item -eq 'GroupPolicyLastApplied' })[0].Value | Should -Be 'This server has not received Group Policy since 2026-09-01 08:30 (36 days)'
+        }
+        It 'a date in the future is a WARNING about the clock, not OK (#259)' {
+            $rows = Get-GroupPolicyDecision $true $true $true ($script:GpNow.AddDays(2)) $script:GpNow 7
+            $row = @($rows | Where-Object { $_.Item -eq 'GroupPolicyLastApplied' })[0]
+            "$($row.Status)/$($row.Kind)" | Should -Be 'WARNING/Finding'
+            $row.Value | Should -Be 'Group Policy is recorded as last applied in the future: 2026-10-09 12:00'
+            $row.Recommendation | Should -Match 'server clock'
+        }
+        It 'a few minutes ahead (a refresh between the two reads) is still OK (#259)' {
+            $rows = Get-GroupPolicyDecision $true $true $true ($script:GpNow.AddMinutes(5)) $script:GpNow 7
+            @($rows | Where-Object { $_.Item -eq 'GroupPolicyLastApplied' })[0].Status | Should -Be 'OK'
+        }
+        It 'a failed WMI filter lookup is its own MANUAL row, and AD stays readable (#259)' {
+            $rows = Get-GroupPolicyDecision $true $true $true ($script:GpNow.AddDays(-1)) $script:GpNow 7 '' '' 'Access is denied.'
+            @($rows | Where-Object { $_.Item -eq 'DomainLookup' }).Count | Should -Be 0
+            $row = @($rows | Where-Object { $_.Item -eq 'WmiFilters' })[0]
+            "$($row.Status)/$($row.Kind)" | Should -Be 'MANUAL/Finding'
+            $row.Details | Should -Be 'Access is denied.'
+        }
+        It 'when AD itself could not be read there is one row, not two (#259)' {
+            $rows = Get-GroupPolicyDecision $true $true $false ($script:GpNow.AddDays(-1)) $script:GpNow 7 '' 'Down' 'Down'
+            @($rows | Where-Object { $_.Item -eq 'WmiFilters' }).Count | Should -Be 0
+            @($rows | Where-Object { $_.Item -eq 'DomainLookup' }).Count | Should -Be 1
         }
         It 'an unreadable last-applied time is a MANUAL observation' {
             $row = @(Get-GroupPolicyDecision $true $true $true $null $script:GpNow 7)[0]

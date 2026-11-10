@@ -103,6 +103,8 @@ function Invoke-StorageCheck {
         Add-Result 'STORAGE' 'RecoveryPartitionAfterC' $rd.Status $rd.Value -Recommendation $rd.Text -Source 'Get-Partition, reagentc /info' -Command (Get-RecommendationCommand 'RemoveRecoveryPartition' @{ Disk = $cp.DiskNumber; Partition = $rd.PartitionNumber }).Command -CommandKind 'Change' -Link $script:DocLinks.WinReResize.Url -LinkTitle $script:DocLinks.WinReResize.Title
     } elseif ($rd.Kind -eq 'LikelyNew') {
         Add-Result 'STORAGE' 'RecoveryPartitionAfterC' $rd.Status $rd.Value -Recommendation $rd.Text -Source 'Get-Partition' -Command (Get-RecommendationCommand 'SetupNoRecoveryPartition').Command -CommandKind 'Change' -Link $script:DocLinks.SetupOptions.Url -LinkTitle $script:DocLinks.SetupOptions.Title
+    } elseif ($rd.Kind -eq 'Unknown') {
+        Add-Result 'STORAGE' 'RecoveryPartitionAfterC' $rd.Status $rd.Value -Recommendation $rd.Text -Kind 'Finding' -Source 'Get-Partition'
     } else {
         Add-Result 'STORAGE' 'RecoveryPartitionAfterC' 'OK' $rd.Value -Source 'Get-Partition'
     }

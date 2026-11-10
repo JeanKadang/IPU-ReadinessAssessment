@@ -122,6 +122,8 @@ function Get-AdComputerGroup {
 function Get-WmiFilterQuery {
     param([string[]]$GpoGuids)
     if ($script:Fake.AdError) { throw $script:Fake.AdError }
+    # #259: only the WMI filter lookup fails; AD itself answered.
+    if ($script:Fake.ContainsKey('WmiFilterError') -and $script:Fake.WmiFilterError) { throw $script:Fake.WmiFilterError }
     return @{ '{11111111-1111-1111-1111-111111111111}' = @{ Name = 'Server 2016-2022 only'; Queries = @([pscustomobject]@{ Namespace = 'root\CIMv2'; Query = "SELECT * FROM Win32_OperatingSystem WHERE Version LIKE '10.0.14393%' OR Version LIKE '10.0.20348%'" }) } }
 }
 function Get-AdComputerDn {

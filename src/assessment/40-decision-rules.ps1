@@ -1356,9 +1356,11 @@ function Test-WmiFilterOsDependent {
     # Pure: true when a WMI filter selects on the Windows version, build or
     # caption - such a filter can stop or start matching after an in-place
     # upgrade. ProductType (server/DC) alone does not change with the upgrade.
+    # Name holds the caption too ("Microsoft Windows Server 2016 Standard|C:\
+    # Windows|..."), so a filter on Name depends on the version as well (#259).
     param([string]$Query)
     if (-not $Query) { return $false }
-    return ($Query -match 'Win32_OperatingSystem' -and $Query -match '\b(Version|BuildNumber|Caption|OperatingSystemSKU)\b')
+    return ($Query -match 'Win32_OperatingSystem' -and $Query -match '\b(Version|BuildNumber|Caption|Name|OperatingSystemSKU)\b')
 }
 
 function Get-GroupPolicyDecision {
@@ -1374,7 +1376,10 @@ function Get-GroupPolicyDecision {
         [datetime]$Now,
         [int]$MaxAgeDays = 7,
         [string]$GpResultError = '',
-        [string]$AdError = ''
+        [string]$AdError = '',
+        # #259: the WMI filter lookup is its own read; when only it fails, the
+        # AD groups already read are kept and this is said on its own row.
+        [string]$WmiFilterError = ''
     )
     $rows = @()
     if (-not $PartOfDomain) {
@@ -1387,11 +1392,19 @@ function Get-GroupPolicyDecision {
     if (-not $AdRead) {
         $rows += [pscustomobject]@{ Item = 'DomainLookup'; Status = 'MANUAL'; Kind = 'Finding'; Value = 'Could not reach the domain: WMI filters and AD groups are incomplete'; Details = $AdError; Recommendation = 'Check domain connectivity from this server, then re-run. Until then, review the WMI filters of the GPOs and the computer''s groups in Active Directory manually.' }
     }
+    if ($AdRead -and $WmiFilterError) {
+        $rows += [pscustomobject]@{ Item = 'WmiFilters'; Status = 'MANUAL'; Kind = 'Finding'; Value = 'The WMI filter queries could not be read from the domain'; Details = $WmiFilterError; Recommendation = 'The GPO rows below show a filter by name only, and cannot say whether it depends on the Windows version. Open the WMI filters of these GPOs in Group Policy Management and check for filters on the Windows version, build or name: they can stop or start matching after the upgrade.' }
+    }
     if ($null -eq $LastApplied) {
         $rows += [pscustomobject]@{ Item = 'GroupPolicyLastApplied'; Status = 'MANUAL'; Kind = 'Observation'; Value = 'Not readable'; Details = ''; Recommendation = 'Check "gpresult /r" for the last time Group Policy was applied.' }
     } else {
         $age = [math]::Floor(($Now - [datetime]$LastApplied).TotalDays)
-        if ($age -gt $MaxAgeDays) {
+        # A date in the future (#259) is a wrong clock, or a wrong record: the
+        # age cannot be judged, so it is not OK. Ten minutes of slack for a
+        # refresh that ran between the two reads.
+        if (([datetime]$LastApplied - $Now).TotalMinutes -gt 10) {
+            $rows += [pscustomobject]@{ Item = 'GroupPolicyLastApplied'; Status = 'WARNING'; Kind = 'Finding'; Value = ('Group Policy is recorded as last applied in the future: ' + ([datetime]$LastApplied).ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)); Details = ('Server time now: ' + $Now.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)); Recommendation = 'Check the server clock and its time source (w32tm /query /status). With a wrong clock, Kerberos and Group Policy can fail after the upgrade; when the clock is right, run "gpupdate /target:computer" and assess again.' }
+        } elseif ($age -gt $MaxAgeDays) {
             $rows += [pscustomobject]@{ Item = 'GroupPolicyLastApplied'; Status = 'WARNING'; Kind = 'Finding'; Value = ('This server has not received Group Policy since ' + ([datetime]$LastApplied).ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture) + ' (' + $age + ' days)'); Details = ('Limit: ' + $MaxAgeDays + ' days (GroupPolicyMaxAgeDays)'); Recommendation = 'Find out why (domain connectivity, secure channel, Group Policy errors in the System log), fix it and run "gpupdate /target:computer" before the change.' }
         } else {
             $rows += [pscustomobject]@{ Item = 'GroupPolicyLastApplied'; Status = 'OK'; Kind = 'Evidence'; Value = ([datetime]$LastApplied).ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture); Details = ($age.ToString() + ' days ago'); Recommendation = '' }
@@ -1478,6 +1491,13 @@ function Get-RecoveryPartitionDecision {
     # WinRE). Before the upgrade, predict that and point to the Setup switch.
     param([object[]]$Partitions, [int]$CPartitionNumber, $WinRePartition = $null, [string]$Mode = 'Pre')
     $c = @($Partitions | Where-Object { [int]$_.PartitionNumber -eq $CPartitionNumber }) | Select-Object -First 1
+    # Without the system partition in the list nothing can be "after" it (#259):
+    # say so instead of reporting that no recovery partition follows it.
+    if (-not $c) {
+        return [pscustomobject]@{ Status = 'MANUAL'; Kind = 'Unknown'; PartitionNumber = $null
+            Value = 'The system partition is not in the partition list: whether a recovery partition follows it was not checked'
+            Text = 'Open Disk Management (or run Get-Partition) and check whether a recovery partition sits directly after the system partition; one there blocks extending it.' }
+    }
     $recovery = @($Partitions | Where-Object { $_.IsRecovery })
     $after = @($recovery | Where-Object { $c -and [double]$_.Offset -gt [double]$c.Offset } | Sort-Object Offset)
     if ($after.Count -gt 0) {

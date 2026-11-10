@@ -228,6 +228,16 @@ Describe 'Recovery partition after C: (#161)' {
         $cNumber = if ($Case -like 'GPT*' -or $Case -like 'big*') { 4 } else { 2 }
         (Get-RecoveryPartitionDecision $built $cNumber $null $Mode).Kind | Should -Be $Kind
     }
+    It 'says so when the system partition is not in the list, in both modes (#259)' {
+        $parts = @((New-Part 1 1 500 $true), (New-Part 2 600 100 $false), (New-Part 6 801000 901 $true))
+        foreach ($mode in 'Pre', 'Post') {
+            $d = Get-RecoveryPartitionDecision $parts 5 $null $mode
+            $d.Kind | Should -Be 'Unknown'
+            $d.Status | Should -Be 'MANUAL'
+            $d.Value | Should -Match 'not in the partition list'
+        }
+        (Get-RecoveryPartitionDecision @() 2 $null 'Pre').Kind | Should -Be 'Unknown'
+    }
     It 'names the partition after C:, prefers the one WinRE is on, and warns about reagentc /disable' {
         $parts = @((New-Part 1 1 500 $true), (New-Part 2 600 100 $false), (New-Part 5 800 800000 $false), (New-Part 6 801000 901 $true))
         $d = Get-RecoveryPartitionDecision $parts 5 6 'Post'

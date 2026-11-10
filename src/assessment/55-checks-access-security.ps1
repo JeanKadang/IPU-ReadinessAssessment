@@ -28,14 +28,19 @@ function Invoke-GroupPolicyCheck {
         # Say what the fallback found, so a MANUAL row can be followed up (#215).
         if (-not $gp) { $gpError = ($gpError + ' | ' + (Get-GpoFallbackNote $fbEntries $fbNamed $fbError $fbMissing)).Trim(' |') }
     }
-    $groups = @(); $filters = @{}; $adError = ''; $adRead = $true
+    $groups = @(); $filters = @{}; $adError = ''; $adRead = $true; $filterError = ''
     if ($domainMember) {
         try {
             # Assign first: the function returns the list as one object.
             $groups = Get-AdComputerGroup
             $groups = @($groups | Where-Object { $_ })
-            if ($gp) { $filters = Get-WmiFilterQuery @($gp.Gpos | ForEach-Object { $_.Guid }) }
         } catch { $adRead = $false; $adError = $_.Exception.Message; Write-Swallowed $_ }
+        # Its own read (#259): a failed WMI filter lookup must not throw away
+        # the AD groups that were just read, or call the domain unreachable.
+        if ($adRead -and $gp) {
+            try { $filters = Get-WmiFilterQuery @($gp.Gpos | ForEach-Object { $_.Guid }) }
+            catch { $filters = @{}; $filterError = $_.Exception.Message; if (-not $filterError) { $filterError = 'The lookup failed without a message' }; Write-Swallowed $_ }
+        }
     }
     # Where the computer object is in AD (#99): the OU decides which GPOs link.
     $dn = ''
@@ -55,7 +60,7 @@ function Invoke-GroupPolicyCheck {
     }
     $last = $null
     if ($domainMember) { $last = Get-GroupPolicyLastApplied }
-    foreach ($row in (Get-GroupPolicyDecision $domainMember ($null -ne $gp) $adRead $last (Get-Date) $GroupPolicyMaxAgeDays $gpError $adError)) {
+    foreach ($row in (Get-GroupPolicyDecision $domainMember ($null -ne $gp) $adRead $last (Get-Date) $GroupPolicyMaxAgeDays $gpError $adError $filterError)) {
         Add-Result 'GROUP_POLICY' $row.Item $row.Status $row.Value $row.Details -Recommendation $row.Recommendation -Kind $row.Kind -Source 'gpresult, Active Directory, Group Policy state'
     }
     if ($gpSource -eq 'registry') {
