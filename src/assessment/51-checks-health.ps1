@@ -238,26 +238,38 @@ function Invoke-PendingRebootCheck {
 }
 
 function Invoke-PatchLevelCheck {
+    $fixes = @()
     # SilentlyContinue: An empty or failed list is reported as MANUAL below ('No dated update history').
-    $fixes = @(Get-HotFix -ErrorAction SilentlyContinue | Where-Object { $_.InstalledOn })
-    $latest = $null
-    foreach ($f in $fixes) { try { $d = [datetime]$f.InstalledOn; if (-not $latest -or $d -gt $latest.Date) { $latest = [pscustomobject]@{ Date=$d; Id=$f.HotFixID } } } catch { Write-Swallowed $_ } }
-    if (-not $latest) {
-        Add-Result 'WINDOWS_HEALTH' 'LatestUpdate' 'MANUAL' 'No dated update history returned' -Recommendation 'Confirm the server has the latest cumulative and servicing stack updates before IPU.' -Source 'Get-HotFix'
+    foreach ($f in @(Get-HotFix -ErrorAction SilentlyContinue | Where-Object { $_.InstalledOn })) {
+        $d = $null; try { $d = [datetime]$f.InstalledOn } catch { Write-Swallowed $_ }
+        $description = ''; if ($f.PSObject.Properties['Description']) { $description = [string]$f.Description }
+        $fixes += [pscustomobject]@{ Id = [string]$f.HotFixID; Date = $d; Description = $description }
+    }
+    # The build with its update revision (UBR) is the cumulative level itself (#257).
+    # Read here, not from the baseline inventory: this check runs its own queries
+    # and must still run when the baseline did not complete (#360).
+    $buildText = ''
+    $cvKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+    $build = Get-RegistryValueSafe $cvKey 'CurrentBuildNumber'
+    $ubr = Get-RegistryValueSafe $cvKey 'UBR'
+    if ($build.Exists -and $build.Value) { $buildText = [string]$build.Value }
+    if ($ubr.Exists -and $null -ne $ubr.Value -and $buildText) { $buildText += '.' + $ubr.Value }
+    $patch = Get-PatchLevelDecision $fixes (Get-Date) $MaxPatchAgeDays $buildText
+    if ($patch.Kind -eq 'NoHistory') {
+        Add-Result 'WINDOWS_HEALTH' 'LatestUpdate' 'MANUAL' $patch.Value -Recommendation 'Confirm the server has the latest cumulative and servicing stack updates before IPU.' -Source 'Get-HotFix'
         return
     }
-    $age = [math]::Floor(((Get-Date) - $latest.Date).TotalDays)
-    $value = 'LatestInstalled=' + $latest.Date.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) + ' (' + $latest.Id + ')'
-    $patchDetails = @('AgeDays=' + $age)
+    $value = $patch.Value
+    $patchDetails = @($patch.Details)
     $patchAdvice = 'Install the latest cumulative update before IPU; Setup and Dynamic Update are most reliable on a current source OS.'
     if ($script:Data.SourceSupport -and $script:Data.SourceSupport.Ended) {
         $patchDetails += ('SourceOutOfSupportSince=' + $script:Data.SourceSupport.EndDate)
         $patchAdvice += ' The source OS is out of support since ' + $script:Data.SourceSupport.EndDate + ', so without ESU no newer updates exist; install the last available ones.'
     }
-    if ($age -gt $MaxPatchAgeDays) {
+    if ($patch.Status -eq 'WARNING') {
         Add-Result 'WINDOWS_HEALTH' 'LatestUpdate' 'WARNING' $value $patchDetails -Recommendation $patchAdvice -Source 'Get-HotFix'
     } else {
-        Add-Result 'WINDOWS_HEALTH' 'LatestUpdate' 'OK' $value ('AgeDays=' + $age) -Source 'Get-HotFix'
+        Add-Result 'WINDOWS_HEALTH' 'LatestUpdate' 'OK' $value @($patch.Details) -Source 'Get-HotFix, CurrentVersion registry (UBR)'
     }
 }
 

@@ -303,6 +303,17 @@ Describe 'Checks on a fake server: windows health' -Skip:($env:OS -ne 'Windows_N
             $r.Recommendation | Should -Match 'out of support since 2023-10-10'
             ($r.Details -join ' ') | Should -Match 'SourceOutOfSupportSince=2023-10-10'
         }
+        It 'a recent .NET update does not hide an old security update (#257)' {
+            $script:Fake.HotFixes = @(
+                [pscustomobject]@{ HotFixID = 'KB4000001'; InstalledOn = (Get-Date).AddDays(-200); Description = 'Security Update' },
+                [pscustomobject]@{ HotFixID = 'KB5000009'; InstalledOn = (Get-Date).AddDays(-5); Description = 'Update' })
+            $null = Invoke-TestCheck 'patchlevel'
+            $r = (Get-Row 'WINDOWS_HEALTH' 'LatestUpdate')[0]
+            $r.Status | Should -Be 'WARNING'
+            $r.Value | Should -Match 'LatestSecurityUpdate=.*KB4000001'
+            ($r.Details -join ' ') | Should -Match 'NewestOfAnyKind=.*KB5000009'
+            ($r.Details -join ' ') | Should -Match 'Build=\d+\.7428'
+        }
         It 'no dated history is MANUAL' {
             $script:Fake.HotFixes = @()
             $null = Invoke-TestCheck 'patchlevel'

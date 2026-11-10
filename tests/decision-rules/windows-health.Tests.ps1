@@ -204,3 +204,44 @@ Describe 'Language-neutral parsing (#246)' {
         }
     }
 }
+
+Describe 'Get-PatchLevelDecision (#257)' {
+    BeforeAll {
+        $script:Now = [datetime]'2026-11-10'
+        function New-Fix([string]$Id, [int]$DaysAgo, [string]$Description = '') { [pscustomobject]@{ Id = $Id; Date = $script:Now.AddDays(-$DaysAgo); Description = $Description } }
+    }
+    It 'no dated update is MANUAL' {
+        (Get-PatchLevelDecision @() $script:Now 60).Status | Should -Be 'MANUAL'
+        $d = Get-PatchLevelDecision @([pscustomobject]@{ Id = 'KB1'; Date = $null; Description = 'Security Update' }) $script:Now 60
+        $d.Kind | Should -Be 'NoHistory'
+        $d.Status | Should -Be 'MANUAL'
+    }
+    It 'the newest Security Update is the patch level, not a newer update of another kind' {
+        $d = Get-PatchLevelDecision @((New-Fix 'KB100' 200 'Security Update'), (New-Fix 'KB200' 3 'Update'), (New-Fix 'KB050' 400 'Security Update')) $script:Now 60 '14393.7428'
+        $d.Kind | Should -Be 'Security'
+        $d.Status | Should -Be 'WARNING'
+        $d.AgeDays | Should -Be 200
+        $d.Value | Should -Be 'LatestSecurityUpdate=2026-04-24 (KB100)'
+        ($d.Details -join ' | ') | Should -Match 'NewestOfAnyKind=2026-11-07 \(KB200, Update\)'
+        $d.Details | Should -Contain 'Build=14393.7428'
+    }
+    It 'a recent Security Update is OK and adds no note about other updates' {
+        $d = Get-PatchLevelDecision @((New-Fix 'KB100' 12 'Security Update'), (New-Fix 'KB200' 40 'Update')) $script:Now 60
+        $d.Status | Should -Be 'OK'
+        ($d.Details -join ' | ') | Should -Not -Match 'NewestOfAnyKind'
+    }
+    It 'exactly at the limit is OK, one day more is a WARNING' {
+        (Get-PatchLevelDecision @((New-Fix 'KB1' 60 'Security Update')) $script:Now 60).Status | Should -Be 'OK'
+        (Get-PatchLevelDecision @((New-Fix 'KB1' 61 'Security Update')) $script:Now 60).Status | Should -Be 'WARNING'
+    }
+    It 'without any Security Update entry the newest of any kind is used and the row says so' {
+        $d = Get-PatchLevelDecision @((New-Fix 'KB200' 3 'Update'), (New-Fix 'KB300' 90 '')) $script:Now 60
+        $d.Kind | Should -Be 'AnyKind'
+        $d.Status | Should -Be 'OK'
+        $d.Value | Should -Be 'LatestInstalled=2026-11-07 (KB200)'
+        ($d.Details -join ' | ') | Should -Match 'can hide an old cumulative update'
+    }
+    It 'one fix (not an array) works' {
+        (Get-PatchLevelDecision (New-Fix 'KB1' 5 'Security Update') $script:Now 60).Value | Should -Match 'KB1'
+    }
+}

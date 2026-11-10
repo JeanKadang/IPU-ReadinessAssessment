@@ -2237,6 +2237,44 @@ $script:ReleaseEndOfSupport = @{
     '2025'   = '2034-11-14'
 }
 
+function Get-PatchLevelDecision {
+    # Pure (#257): how old the patch level is. Get-HotFix lists updates of every
+    # kind; a recent .NET or servicing-stack update must not hide an old
+    # cumulative update. The monthly security release (cumulative update or
+    # rollup) is listed with the description "Security Update"; .NET updates
+    # and previews are listed as "Update". So the newest "Security Update" is
+    # the best date for the patch level that the update list can give, and the
+    # build with its revision (UBR) is shown beside it. When no entry carries
+    # that description, the newest update of any kind is used and the row says so.
+    # $Fixes: objects with Id, Date ([datetime] or $null) and Description.
+    # Kind is NoHistory, Security or AnyKind.
+    param([object[]]$Fixes, [datetime]$Now, [int]$MaxAgeDays, [string]$BuildText = '')
+    $dated = @(@($Fixes) | Where-Object { $_ -and $_.Date -is [datetime] } | Sort-Object Date -Descending)
+    if ($dated.Count -eq 0) {
+        return [pscustomobject]@{ Kind = 'NoHistory'; Status = 'MANUAL'; Value = 'No dated update history returned'; Details = @(); AgeDays = $null }
+    }
+    $inv = [Globalization.CultureInfo]::InvariantCulture
+    $newestAny = $dated[0]
+    $security = @($dated | Where-Object { [string]$_.Description -match '^\s*Security Update\s*$' })
+    $kind = 'Security'; $basis = $null
+    if ($security.Count -gt 0) { $basis = $security[0] } else { $kind = 'AnyKind'; $basis = $newestAny }
+    $age = [int][math]::Floor(($Now - $basis.Date).TotalDays)
+    $details = @('AgeDays=' + $age)
+    if ($BuildText) { $details += ('Build=' + $BuildText) }
+    if ($kind -eq 'Security') {
+        $value = 'LatestSecurityUpdate=' + $basis.Date.ToString('yyyy-MM-dd', $inv) + ' (' + $basis.Id + ')'
+        if ($newestAny.Id -ne $basis.Id -and $newestAny.Date -gt $basis.Date) {
+            $what = [string]$newestAny.Description; if (-not $what) { $what = 'no description' }
+            $details += ('NewestOfAnyKind=' + $newestAny.Date.ToString('yyyy-MM-dd', $inv) + ' (' + $newestAny.Id + ', ' + $what + '); a .NET, servicing-stack or preview update does not show the security patch level')
+        }
+    } else {
+        $value = 'LatestInstalled=' + $basis.Date.ToString('yyyy-MM-dd', $inv) + ' (' + $basis.Id + ')'
+        $details += 'No listed update is described as a Security Update, so the newest update of any kind is used; a .NET or servicing-stack update can hide an old cumulative update. Compare the build number with the Windows update history.'
+    }
+    $status = 'OK'; if ($age -gt $MaxAgeDays) { $status = 'WARNING' }
+    return [pscustomobject]@{ Kind = $kind; Status = $status; Value = $value; Details = $details; AgeDays = $age }
+}
+
 function Get-SupportLifecycleDecision {
     # Pure: release + today -> INFO while supported, WARNING once extended
     # support has ended (the day after the end date). An unknown release is
@@ -4821,26 +4859,38 @@ function Invoke-PendingRebootCheck {
 }
 
 function Invoke-PatchLevelCheck {
+    $fixes = @()
     # SilentlyContinue: An empty or failed list is reported as MANUAL below ('No dated update history').
-    $fixes = @(Get-HotFix -ErrorAction SilentlyContinue | Where-Object { $_.InstalledOn })
-    $latest = $null
-    foreach ($f in $fixes) { try { $d = [datetime]$f.InstalledOn; if (-not $latest -or $d -gt $latest.Date) { $latest = [pscustomobject]@{ Date=$d; Id=$f.HotFixID } } } catch { Write-Swallowed $_ } }
-    if (-not $latest) {
-        Add-Result 'WINDOWS_HEALTH' 'LatestUpdate' 'MANUAL' 'No dated update history returned' -Recommendation 'Confirm the server has the latest cumulative and servicing stack updates before IPU.' -Source 'Get-HotFix'
+    foreach ($f in @(Get-HotFix -ErrorAction SilentlyContinue | Where-Object { $_.InstalledOn })) {
+        $d = $null; try { $d = [datetime]$f.InstalledOn } catch { Write-Swallowed $_ }
+        $description = ''; if ($f.PSObject.Properties['Description']) { $description = [string]$f.Description }
+        $fixes += [pscustomobject]@{ Id = [string]$f.HotFixID; Date = $d; Description = $description }
+    }
+    # The build with its update revision (UBR) is the cumulative level itself (#257).
+    # Read here, not from the baseline inventory: this check runs its own queries
+    # and must still run when the baseline did not complete (#360).
+    $buildText = ''
+    $cvKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+    $build = Get-RegistryValueSafe $cvKey 'CurrentBuildNumber'
+    $ubr = Get-RegistryValueSafe $cvKey 'UBR'
+    if ($build.Exists -and $build.Value) { $buildText = [string]$build.Value }
+    if ($ubr.Exists -and $null -ne $ubr.Value -and $buildText) { $buildText += '.' + $ubr.Value }
+    $patch = Get-PatchLevelDecision $fixes (Get-Date) $MaxPatchAgeDays $buildText
+    if ($patch.Kind -eq 'NoHistory') {
+        Add-Result 'WINDOWS_HEALTH' 'LatestUpdate' 'MANUAL' $patch.Value -Recommendation 'Confirm the server has the latest cumulative and servicing stack updates before IPU.' -Source 'Get-HotFix'
         return
     }
-    $age = [math]::Floor(((Get-Date) - $latest.Date).TotalDays)
-    $value = 'LatestInstalled=' + $latest.Date.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) + ' (' + $latest.Id + ')'
-    $patchDetails = @('AgeDays=' + $age)
+    $value = $patch.Value
+    $patchDetails = @($patch.Details)
     $patchAdvice = 'Install the latest cumulative update before IPU; Setup and Dynamic Update are most reliable on a current source OS.'
     if ($script:Data.SourceSupport -and $script:Data.SourceSupport.Ended) {
         $patchDetails += ('SourceOutOfSupportSince=' + $script:Data.SourceSupport.EndDate)
         $patchAdvice += ' The source OS is out of support since ' + $script:Data.SourceSupport.EndDate + ', so without ESU no newer updates exist; install the last available ones.'
     }
-    if ($age -gt $MaxPatchAgeDays) {
+    if ($patch.Status -eq 'WARNING') {
         Add-Result 'WINDOWS_HEALTH' 'LatestUpdate' 'WARNING' $value $patchDetails -Recommendation $patchAdvice -Source 'Get-HotFix'
     } else {
-        Add-Result 'WINDOWS_HEALTH' 'LatestUpdate' 'OK' $value ('AgeDays=' + $age) -Source 'Get-HotFix'
+        Add-Result 'WINDOWS_HEALTH' 'LatestUpdate' 'OK' $value @($patch.Details) -Source 'Get-HotFix, CurrentVersion registry (UBR)'
     }
 }
 
