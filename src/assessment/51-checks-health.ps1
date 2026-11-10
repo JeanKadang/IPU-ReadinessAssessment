@@ -289,7 +289,9 @@ function Invoke-HistoryCheck {
     # original installation writes it), so it is shown as the OS install trace
     # only. C:\$WINDOWS.~BT is left by an aborted setup or a compatibility scan.
     $upgradeHints = @()
-    if (Test-Path 'C:\Windows.old') { $upgradeHints += 'C:\Windows.old exists' }
+    $sysRoot = (Get-SystemDrive) + '\'
+    $windowsOld = $sysRoot + 'Windows.old'
+    if (Test-Path -LiteralPath $windowsOld) { $upgradeHints += ($windowsOld + ' exists') }
     $osInstall = ''
     $installDate = ConvertTo-DateTimeValue $script:Data.OS.InstallDate
     if ($installDate) { $osInstall = $installDate.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) }
@@ -303,11 +305,12 @@ function Invoke-HistoryCheck {
     } else {
         Add-Result 'UPGRADE_HISTORY' 'PreviousUpgradeEvidence' 'INFO' 'No previous in-place upgrade recorded' 'Cleanup can remove this evidence; absence does not prove the server was never upgraded.' -Source 'HKLM\SYSTEM\Setup, C:\Windows.old'
     }
-    $btLog = 'C:\$WINDOWS.~BT\Sources\Panther\setupact.log'
-    if (Test-Path -LiteralPath 'C:\$WINDOWS.~BT') {
+    $btFolder = $sysRoot + '$WINDOWS.~BT'
+    $btLog = $btFolder + '\Sources\Panther\setupact.log'
+    if (Test-Path -LiteralPath $btFolder) {
         $btDate = ''
         if (Test-Path -LiteralPath $btLog) { $btDate = 'setupact.log LastWrite=' + (Get-Item -LiteralPath $btLog).LastWriteTime.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture) }
-        Add-Result 'UPGRADE_HISTORY' 'SetupWorkingFolder' 'INFO' 'C:\$WINDOWS.~BT exists' $btDate -Recommendation 'Left by an earlier Setup run: a compatibility scan or an aborted upgrade. If no scan was run, read the Panther logs to see why an upgrade stopped.' -Kind 'Observation' -Source 'C:\$WINDOWS.~BT'
+        Add-Result 'UPGRADE_HISTORY' 'SetupWorkingFolder' 'INFO' ($btFolder + ' exists') $btDate -Recommendation 'Left by an earlier Setup run: a compatibility scan or an aborted upgrade. If no scan was run, read the Panther logs to see why an upgrade stopped.' -Kind 'Observation' -Source 'C:\$WINDOWS.~BT'
     }
 }
 
@@ -419,7 +422,7 @@ function Invoke-CompatScanCheck {
         # Keep Setup's CompatData XML and list the hard blocks it names.
         $evidence = Join-Path $ReportDirectory ($script:SafeComputerName + '-CompatData')
         $blocks = @()
-        $panther = 'C:\$WINDOWS.~BT\Sources\Panther'
+        $panther = (Get-SystemDrive) + '\$WINDOWS.~BT\Sources\Panther'
         # SilentlyContinue: Setup writes no CompatData file when it finds nothing; the verdict comes from the exit code.
         $xmlFiles = @(Get-ChildItem -LiteralPath $panther -Filter 'CompatData*.xml' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge (Get-Date).AddSeconds(-1 * ($sw.Elapsed.TotalSeconds + 60)) })
         if ($xmlFiles.Count -gt 0) {

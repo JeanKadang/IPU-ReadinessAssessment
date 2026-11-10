@@ -1614,6 +1614,51 @@ function Test-CommandAvailable {
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function ConvertTo-SystemDrive {
+    # Pure (#258): 'C:' form of a system drive value ('d:', 'D:\'); 'C:' when
+    # the value is empty or not a drive letter.
+    param([string]$Value)
+    if ([string]$Value -match '^\s*([A-Za-z]):') { return ($Matches[1].ToUpperInvariant() + ':') }
+    return 'C:'
+}
+
+function Get-SystemDrive {
+    # The drive Windows is installed on (#258). Nearly always C:, but not by rule.
+    return (ConvertTo-SystemDrive $env:SystemDrive)
+}
+
+function Read-PnpSignedDriver {
+    # Win32_PnPSignedDriver is a slow provider (#258, SE-30): the platform and
+    # drivers checks read it once and share the list ($script:Data.PnpDrivers).
+    # A failed read is kept with its error, so each check can say so.
+    $items = @(); $failure = ''
+    try { $items = @(Get-CimRequired 'Win32_PnPSignedDriver') } catch { $failure = $_.Exception.Message; Write-Swallowed $_ }
+    return [pscustomobject]@{ Items = $items; Error = $failure }
+}
+
+function Get-FirmwareModeDecision {
+    # Pure (#258, SE-29): UEFI or legacy BIOS. PEFirmwareType under
+    # HKLM\SYSTEM\CurrentControlSet\Control is written by Windows at boot
+    # (1 = BIOS, 2 = UEFI; Windows 8 / Server 2012 and newer). The SecureBoot
+    # State key is only a hint: it is there on most UEFI systems, but its
+    # absence proves nothing and it can exist on legacy BIOS.
+    # Mode is UEFI, BIOS or Unknown.
+    param($PeFirmwareType, [bool]$SecureBootKeyPresent)
+    $type = 0
+    if ($null -ne $PeFirmwareType -and [string]$PeFirmwareType -match '^\s*\d+\s*$') { $type = [int]$PeFirmwareType }
+    if ($type -eq 2) { return [pscustomobject]@{ Mode = 'UEFI'; Text = 'UEFI'; Source = 'PEFirmwareType registry value' } }
+    if ($type -eq 1) { return [pscustomobject]@{ Mode = 'BIOS'; Text = 'Legacy BIOS'; Source = 'PEFirmwareType registry value' } }
+    if ($SecureBootKeyPresent) { return [pscustomobject]@{ Mode = 'UEFI'; Text = 'UEFI (likely: the Secure Boot state key exists; PEFirmwareType was not readable)'; Source = 'SecureBoot registry presence' } }
+    return [pscustomobject]@{ Mode = 'Unknown'; Text = 'Not determined (PEFirmwareType was not readable)'; Source = 'PEFirmwareType registry value' }
+}
+
+function Get-FirmwareMode {
+    # Reads the two registry facts and decides (#258).
+    $pe = Get-RegistryValueSafe 'HKLM:\SYSTEM\CurrentControlSet\Control' 'PEFirmwareType'
+    $value = $null; if ($pe.Exists) { $value = $pe.Value }
+    return (Get-FirmwareModeDecision $value ([bool](Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\State')))
+}
+
 function Get-RegistryValueSafe {
     param([string]$Path, [string]$Name)
     $result = New-Object PSObject -Property @{ Exists=$false; Value=$null }
@@ -2002,6 +2047,8 @@ $script:CheckDataOwners = [ordered]@{
     EndpointProducts = 'antivirus'
     # other checks
     PrintServer = 'printers'; Special = 'special'; EolCandidates = 'eolcandidates'
+    # the driver list, read once by whichever of the two runs first (#258)
+    PnpDrivers = 'platform,drivers'
     RdpSummary = 'rdp'; DriveRedirection = 'rdp'; PolicyEvidence = 'rdp'; NlaState = 'rdp'
     # written outside the checks
     SpecialKind = 'main'; NlaBefore = 'report'; RedactLiterals = 'rules'
@@ -4910,7 +4957,9 @@ function Invoke-HistoryCheck {
     # original installation writes it), so it is shown as the OS install trace
     # only. C:\$WINDOWS.~BT is left by an aborted setup or a compatibility scan.
     $upgradeHints = @()
-    if (Test-Path 'C:\Windows.old') { $upgradeHints += 'C:\Windows.old exists' }
+    $sysRoot = (Get-SystemDrive) + '\'
+    $windowsOld = $sysRoot + 'Windows.old'
+    if (Test-Path -LiteralPath $windowsOld) { $upgradeHints += ($windowsOld + ' exists') }
     $osInstall = ''
     $installDate = ConvertTo-DateTimeValue $script:Data.OS.InstallDate
     if ($installDate) { $osInstall = $installDate.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) }
@@ -4924,11 +4973,12 @@ function Invoke-HistoryCheck {
     } else {
         Add-Result 'UPGRADE_HISTORY' 'PreviousUpgradeEvidence' 'INFO' 'No previous in-place upgrade recorded' 'Cleanup can remove this evidence; absence does not prove the server was never upgraded.' -Source 'HKLM\SYSTEM\Setup, C:\Windows.old'
     }
-    $btLog = 'C:\$WINDOWS.~BT\Sources\Panther\setupact.log'
-    if (Test-Path -LiteralPath 'C:\$WINDOWS.~BT') {
+    $btFolder = $sysRoot + '$WINDOWS.~BT'
+    $btLog = $btFolder + '\Sources\Panther\setupact.log'
+    if (Test-Path -LiteralPath $btFolder) {
         $btDate = ''
         if (Test-Path -LiteralPath $btLog) { $btDate = 'setupact.log LastWrite=' + (Get-Item -LiteralPath $btLog).LastWriteTime.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture) }
-        Add-Result 'UPGRADE_HISTORY' 'SetupWorkingFolder' 'INFO' 'C:\$WINDOWS.~BT exists' $btDate -Recommendation 'Left by an earlier Setup run: a compatibility scan or an aborted upgrade. If no scan was run, read the Panther logs to see why an upgrade stopped.' -Kind 'Observation' -Source 'C:\$WINDOWS.~BT'
+        Add-Result 'UPGRADE_HISTORY' 'SetupWorkingFolder' 'INFO' ($btFolder + ' exists') $btDate -Recommendation 'Left by an earlier Setup run: a compatibility scan or an aborted upgrade. If no scan was run, read the Panther logs to see why an upgrade stopped.' -Kind 'Observation' -Source 'C:\$WINDOWS.~BT'
     }
 }
 
@@ -5040,7 +5090,7 @@ function Invoke-CompatScanCheck {
         # Keep Setup's CompatData XML and list the hard blocks it names.
         $evidence = Join-Path $ReportDirectory ($script:SafeComputerName + '-CompatData')
         $blocks = @()
-        $panther = 'C:\$WINDOWS.~BT\Sources\Panther'
+        $panther = (Get-SystemDrive) + '\$WINDOWS.~BT\Sources\Panther'
         # SilentlyContinue: Setup writes no CompatData file when it finds nothing; the verdict comes from the exit code.
         $xmlFiles = @(Get-ChildItem -LiteralPath $panther -Filter 'CompatData*.xml' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge (Get-Date).AddSeconds(-1 * ($sw.Elapsed.TotalSeconds + 60)) })
         if ($xmlFiles.Count -gt 0) {
@@ -5539,20 +5589,25 @@ function Invoke-PlatformCheck {
         if ($releaseDate) { $biosDate = $releaseDate.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) }
         Add-Result 'HARDWARE' 'BIOS' 'INFO' ('Version=' + $bios.SMBIOSBIOSVersion) @(('Manufacturer=' + $bios.Manufacturer),('ReleaseDate=' + $biosDate)) -Source 'Win32_BIOS'
     }
-    $firmware = 'Legacy BIOS or undetermined'
-    if (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\State') { $firmware = 'UEFI' }
-    Add-Result 'HARDWARE' 'FirmwareMode' 'INFO' $firmware -Source 'SecureBoot registry presence'
+    $fw = Get-FirmwareMode
+    Add-Result 'HARDWARE' 'FirmwareMode' 'INFO' $fw.Text -Source $fw.Source
     $i = 0
     foreach ($cpu in $script:Data.CPU) { $i++; Add-Result 'HARDWARE' ('CPU-' + $i) 'INFO' $cpu.Name @(('Cores=' + $cpu.NumberOfCores),('Logical=' + $cpu.NumberOfLogicalProcessors)) -Source 'Win32_Processor' }
 
-    $netDrivers = @(Get-CimSafe 'Win32_PnPSignedDriver' "DeviceClass='NET'")
+    # One read of the slow driver provider, shared with the drivers check (#258).
+    if (-not $script:Data.ContainsKey('PnpDrivers')) { $script:Data.PnpDrivers = Read-PnpSignedDriver }
+    $allDrivers = @($script:Data.PnpDrivers.Items)
+    if ($script:Data.PnpDrivers.Error) {
+        Add-Result 'HARDWARE' 'DeviceDriverList' 'MANUAL' 'The device driver list could not be read' $script:Data.PnpDrivers.Error -Recommendation 'The network and storage controller drivers are not shown below. List them by hand (driverquery /v, or Device Manager) before the change.' -Source 'Win32_PnPSignedDriver'
+    }
+    $netDrivers = @($allDrivers | Where-Object { $_.DeviceClass -eq 'NET' })
     foreach ($nic in @(Get-CimSafe 'Win32_NetworkAdapter' | Where-Object { $_.PhysicalAdapter -eq $true })) {
         $drv = @($netDrivers | Where-Object { $_.DeviceID -eq $nic.PNPDeviceID }) | Select-Object -First 1
         $drvText = 'Driver not correlated'
         if ($drv) { $drvText = 'Provider=' + $drv.DriverProviderName + ', Version=' + $drv.DriverVersion + ', Date=' + $drv.DriverDate }
         Add-Result 'HARDWARE' ('NIC: ' + $nic.Name) 'INFO' ('MAC=' + $nic.MACAddress) $drvText -Source 'Win32_NetworkAdapter, Win32_PnPSignedDriver'
     }
-    $storageDrivers = @(Get-CimSafe 'Win32_PnPSignedDriver' "DeviceClass='SCSIAdapter'") + @(Get-CimSafe 'Win32_PnPSignedDriver' "DeviceClass='HDC'")
+    $storageDrivers = @($allDrivers | Where-Object { $_.DeviceClass -eq 'SCSIAdapter' -or $_.DeviceClass -eq 'HDC' })
     foreach ($drv in @($storageDrivers | Sort-Object DeviceName,DriverVersion -Unique)) {
         Add-Result 'HARDWARE' ('Storage controller: ' + $drv.DeviceName) 'INFO' ('Provider=' + $drv.DriverProviderName) @(('Version=' + $drv.DriverVersion),('Date=' + $drv.DriverDate)) -Source 'Win32_PnPSignedDriver'
     }
@@ -5587,9 +5642,9 @@ function Invoke-VmwareCheck {
     if ($toolsSvc) { $svcText = 'VMTools service ' + $toolsSvc.State + ', ' + $toolsSvc.StartMode }
     Add-Result 'VMWARE' 'VMwareTools' $decision.Status ('Version=' + $version) $svcText -Recommendation $decision.Text -Source 'Uninstall registry / vmtoolsd.exe'
 
-    $firmware = 'BIOS'
-    if (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\State') { $firmware = 'EFI' }
-    Add-Result 'VMWARE' 'VMFirmware' 'INFO' $firmware ('BIOS version=' + $script:Data.BIOS.SMBIOSBIOSVersion) -Recommendation 'BIOS-firmware VMs upgrade in place; Secure Boot and vTPM need EFI firmware.' -Source 'SecureBoot registry, Win32_BIOS'
+    $fw = Get-FirmwareMode
+    $firmware = 'Not determined'; if ($fw.Mode -eq 'UEFI') { $firmware = 'EFI' } elseif ($fw.Mode -eq 'BIOS') { $firmware = 'BIOS' }
+    Add-Result 'VMWARE' 'VMFirmware' 'INFO' $firmware @(('BIOS version=' + $script:Data.BIOS.SMBIOSBIOSVersion), ('Detected=' + $fw.Text)) -Recommendation 'BIOS-firmware VMs upgrade in place; Secure Boot and vTPM need EFI firmware.' -Source ($fw.Source + ', Win32_BIOS')
 
     foreach ($drv in @($script:Data.KernelDrivers | Where-Object { $_.Name -match '^(pvscsi|vmxnet3|vmxnet3ndis6|vsepflt|vnetflt|vnetWFP|vmci|vsock|vm3dmp|vmmemctl|vmhgfs|vmrawdsk|vmusbmouse|vmmouse|glxgi)' } | Sort-Object Name)) {
         $fileVersion = ''
@@ -5608,9 +5663,11 @@ function Invoke-VmwareCheck {
 function Invoke-DriversCheck {
     $unsigned = @()
     $pnp = @(); $pnpError = ''
-    try { $pnp = @(Get-CimRequired 'Win32_PnPSignedDriver' | Where-Object { $_.DeviceName -and $_.DriverProviderName -and $_.DriverProviderName -notmatch '^Microsoft' }) }
-    catch {
-        $pnpError = $_.Exception.Message; Write-Swallowed $_
+    # One read of the slow driver provider, shared with the platform check (#258).
+    if (-not $script:Data.ContainsKey('PnpDrivers')) { $script:Data.PnpDrivers = Read-PnpSignedDriver }
+    $pnpError = [string]$script:Data.PnpDrivers.Error
+    if (-not $pnpError) { $pnp = @($script:Data.PnpDrivers.Items | Where-Object { $_.DeviceName -and $_.DriverProviderName -and $_.DriverProviderName -notmatch '^Microsoft' }) }
+    else {
         Add-Result 'DRIVERS' 'DeviceDrivers' 'MANUAL' 'The device driver list could not be read' $pnpError -Recommendation 'List the third-party drivers by hand (driverquery /v, or Device Manager) before the change; old drivers are the most common cause of IPU rollback.' -Kind 'Finding' -Source 'Win32_PnPSignedDriver'
     }
     foreach ($d in @($pnp | Sort-Object DeviceName,DriverVersion -Unique)) {
@@ -5691,13 +5748,17 @@ function Invoke-SpecialCheck {
 }
 
 function Invoke-StorageCheck {
-    $c = @(Get-CimRequired 'Win32_LogicalDisk' "DeviceID='C:'") | Select-Object -First 1
+    # The system drive, not a fixed C: (#258). The row names (CFreeSpace,
+    # PartitionAfterC) stay, so results from different versions compare.
+    $sys = Get-SystemDrive
+    $c = @(Get-CimRequired 'Win32_LogicalDisk' ("DeviceID='" + $sys + "'")) | Select-Object -First 1
     $sizeGB = [math]::Round(([double]$c.Size / 1GB),2)
     $freeGB = [math]::Round(([double]$c.FreeSpace / 1GB),2)
     $script:Data.CSummary = 'Size ' + (Format-Number $sizeGB) + ' GB, free ' + (Format-Number $freeGB) + ' GB'
+    if ($sys -ne 'C:') { $script:Data.CSummary += ' (system drive ' + $sys + ')' }
     if ($freeGB -lt $MinimumCFreeGB) {
         $needed = [math]::Ceiling(($MinimumCFreeGB - $freeGB) / $ExtendBlockGB) * $ExtendBlockGB
-        Add-Result 'STORAGE' 'CFreeSpace' 'ACTION' $script:Data.CSummary ('RequiredExpansionGB=' + $needed) -Recommendation ('Extend C: by at least ' + $needed + ' GB to reach the ' + $MinimumCFreeGB + ' GB free-space target.') -Source 'Win32_LogicalDisk' -Command (Get-RecommendationCommand 'CFreeSpace').Command -CommandKind 'Check'
+        Add-Result 'STORAGE' 'CFreeSpace' 'ACTION' $script:Data.CSummary ('RequiredExpansionGB=' + $needed) -Recommendation ('Extend ' + $sys + ' by at least ' + $needed + ' GB to reach the ' + $MinimumCFreeGB + ' GB free-space target.') -Source 'Win32_LogicalDisk' -Command (Get-RecommendationCommand 'CFreeSpace').Command -CommandKind 'Check'
     } else {
         Add-Result 'STORAGE' 'CFreeSpace' 'OK' $script:Data.CSummary -Source 'Win32_LogicalDisk'
     }
@@ -5706,7 +5767,7 @@ function Invoke-StorageCheck {
         foreach ($d in @(Get-CimSafe 'Win32_DiskDrive' | Sort-Object Index)) { Add-Result 'STORAGE' ('Disk' + $d.Index) 'INFO' ('SizeGB=' + (Format-Number ($d.Size/1GB))) ('Model=' + $d.Model) -Source 'Win32_DiskDrive' }
         return
     }
-    $cp = Get-Partition -DriveLetter C
+    $cp = Get-Partition -DriveLetter $sys.Substring(0, 1)
     $after = @(Get-Partition -DiskNumber $cp.DiskNumber | Where-Object { $_.Offset -gt $cp.Offset } | Sort-Object Offset)
     if ($after.Count -gt 0) {
         $desc = @($after | ForEach-Object { 'P' + $_.PartitionNumber + ':' + [math]::Round($_.Size/1MB) + 'MB:' + $_.Type })
@@ -6286,11 +6347,13 @@ function Invoke-AntivirusCheck {
         } catch { Write-Swallowed $_; Add-Result 'SECURITY' 'AppLocker' 'MANUAL' 'The effective AppLocker policy could not be read' $_.Exception.Message -Recommendation 'Check Local Security Policy > Application Control Policies by hand: Setup and the new binaries must be allowed.' -Kind 'Finding' -Source 'Get-AppLockerPolicy' }
     }
     if (Test-CommandAvailable 'Get-BitLockerVolume') {
+        # The system drive (#258); the row keeps its name 'BitLocker C:'.
+        $sysDrive = Get-SystemDrive
         try {
-            $bl = Get-BitLockerVolume -MountPoint 'C:' -ErrorAction Stop
+            $bl = Get-BitLockerVolume -MountPoint $sysDrive -ErrorAction Stop
             if ([string]$bl.ProtectionStatus -eq 'On') { Add-Result 'SECURITY' 'BitLocker C:' 'WARNING' ('Protection=On, Method=' + $bl.EncryptionMethod) '' -Recommendation 'Confirm the recovery key is escrowed and retrievable before IPU.' -Source 'Get-BitLockerVolume' }
             else { Add-Result 'SECURITY' 'BitLocker C:' 'INFO' ('Protection=' + $bl.ProtectionStatus) -Source 'Get-BitLockerVolume' }
-        } catch { Write-Swallowed $_; Add-Result 'SECURITY' 'BitLocker C:' 'MANUAL' 'The BitLocker state of C: could not be read' $_.Exception.Message -Recommendation 'Run manage-bde -status C: by hand; confirm the recovery key is escrowed if protection is on.' -Kind 'Finding' -Source 'Get-BitLockerVolume' }
+        } catch { Write-Swallowed $_; Add-Result 'SECURITY' 'BitLocker C:' 'MANUAL' ('The BitLocker state of ' + $sysDrive + ' could not be read') $_.Exception.Message -Recommendation ('Run manage-bde -status ' + $sysDrive + ' by hand; confirm the recovery key is escrowed if protection is on.') -Kind 'Finding' -Source 'Get-BitLockerVolume' }
     }
     if (Test-CommandAvailable 'Confirm-SecureBootUEFI') {
         try { Add-Result 'SECURITY' 'SecureBoot' 'INFO' ('Enabled=' + (Confirm-SecureBootUEFI -ErrorAction Stop)) -Source 'Confirm-SecureBootUEFI' }

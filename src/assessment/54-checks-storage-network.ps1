@@ -51,13 +51,17 @@ function Invoke-SpecialCheck {
 }
 
 function Invoke-StorageCheck {
-    $c = @(Get-CimRequired 'Win32_LogicalDisk' "DeviceID='C:'") | Select-Object -First 1
+    # The system drive, not a fixed C: (#258). The row names (CFreeSpace,
+    # PartitionAfterC) stay, so results from different versions compare.
+    $sys = Get-SystemDrive
+    $c = @(Get-CimRequired 'Win32_LogicalDisk' ("DeviceID='" + $sys + "'")) | Select-Object -First 1
     $sizeGB = [math]::Round(([double]$c.Size / 1GB),2)
     $freeGB = [math]::Round(([double]$c.FreeSpace / 1GB),2)
     $script:Data.CSummary = 'Size ' + (Format-Number $sizeGB) + ' GB, free ' + (Format-Number $freeGB) + ' GB'
+    if ($sys -ne 'C:') { $script:Data.CSummary += ' (system drive ' + $sys + ')' }
     if ($freeGB -lt $MinimumCFreeGB) {
         $needed = [math]::Ceiling(($MinimumCFreeGB - $freeGB) / $ExtendBlockGB) * $ExtendBlockGB
-        Add-Result 'STORAGE' 'CFreeSpace' 'ACTION' $script:Data.CSummary ('RequiredExpansionGB=' + $needed) -Recommendation ('Extend C: by at least ' + $needed + ' GB to reach the ' + $MinimumCFreeGB + ' GB free-space target.') -Source 'Win32_LogicalDisk' -Command (Get-RecommendationCommand 'CFreeSpace').Command -CommandKind 'Check'
+        Add-Result 'STORAGE' 'CFreeSpace' 'ACTION' $script:Data.CSummary ('RequiredExpansionGB=' + $needed) -Recommendation ('Extend ' + $sys + ' by at least ' + $needed + ' GB to reach the ' + $MinimumCFreeGB + ' GB free-space target.') -Source 'Win32_LogicalDisk' -Command (Get-RecommendationCommand 'CFreeSpace').Command -CommandKind 'Check'
     } else {
         Add-Result 'STORAGE' 'CFreeSpace' 'OK' $script:Data.CSummary -Source 'Win32_LogicalDisk'
     }
@@ -66,7 +70,7 @@ function Invoke-StorageCheck {
         foreach ($d in @(Get-CimSafe 'Win32_DiskDrive' | Sort-Object Index)) { Add-Result 'STORAGE' ('Disk' + $d.Index) 'INFO' ('SizeGB=' + (Format-Number ($d.Size/1GB))) ('Model=' + $d.Model) -Source 'Win32_DiskDrive' }
         return
     }
-    $cp = Get-Partition -DriveLetter C
+    $cp = Get-Partition -DriveLetter $sys.Substring(0, 1)
     $after = @(Get-Partition -DiskNumber $cp.DiskNumber | Where-Object { $_.Offset -gt $cp.Offset } | Sort-Object Offset)
     if ($after.Count -gt 0) {
         $desc = @($after | ForEach-Object { 'P' + $_.PartitionNumber + ':' + [math]::Round($_.Size/1MB) + 'MB:' + $_.Type })

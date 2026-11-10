@@ -6,6 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Storage and platform (#258). The system drive is taken from `%SystemDrive%` instead of a fixed `C:` in the free-space, partition, BitLocker, upgrade-history and Setup-scan reads; the row names (`CFreeSpace`, `PartitionAfterC`, `BitLocker C:`) stay. The firmware mode (UEFI or legacy BIOS) comes from the `PEFirmwareType` registry value; the Secure Boot key is only a labelled fallback, and an unreadable value is "not determined", no longer "legacy BIOS". The slow `Win32_PnPSignedDriver` list is read once and shared by the `platform` and `drivers` checks (it was read four times), and a failed read is a MANUAL row in `platform` too.
 - Patch level (#257): the age is now taken from the newest update described as a *Security Update* (the monthly cumulative update or rollup), not from the newest update of any kind, so a recent .NET or servicing-stack update no longer hides an old cumulative update. The row shows `LatestSecurityUpdate=`, the build with its update revision (`Build=14393.7428`) and, when there is one, the newer update of another kind. When no update carries that description, the newest of any kind is used and the row says so.
 
 ## [4.7.0] - 2026-11-03

@@ -27,20 +27,25 @@ function Invoke-PlatformCheck {
         if ($releaseDate) { $biosDate = $releaseDate.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) }
         Add-Result 'HARDWARE' 'BIOS' 'INFO' ('Version=' + $bios.SMBIOSBIOSVersion) @(('Manufacturer=' + $bios.Manufacturer),('ReleaseDate=' + $biosDate)) -Source 'Win32_BIOS'
     }
-    $firmware = 'Legacy BIOS or undetermined'
-    if (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\State') { $firmware = 'UEFI' }
-    Add-Result 'HARDWARE' 'FirmwareMode' 'INFO' $firmware -Source 'SecureBoot registry presence'
+    $fw = Get-FirmwareMode
+    Add-Result 'HARDWARE' 'FirmwareMode' 'INFO' $fw.Text -Source $fw.Source
     $i = 0
     foreach ($cpu in $script:Data.CPU) { $i++; Add-Result 'HARDWARE' ('CPU-' + $i) 'INFO' $cpu.Name @(('Cores=' + $cpu.NumberOfCores),('Logical=' + $cpu.NumberOfLogicalProcessors)) -Source 'Win32_Processor' }
 
-    $netDrivers = @(Get-CimSafe 'Win32_PnPSignedDriver' "DeviceClass='NET'")
+    # One read of the slow driver provider, shared with the drivers check (#258).
+    if (-not $script:Data.ContainsKey('PnpDrivers')) { $script:Data.PnpDrivers = Read-PnpSignedDriver }
+    $allDrivers = @($script:Data.PnpDrivers.Items)
+    if ($script:Data.PnpDrivers.Error) {
+        Add-Result 'HARDWARE' 'DeviceDriverList' 'MANUAL' 'The device driver list could not be read' $script:Data.PnpDrivers.Error -Recommendation 'The network and storage controller drivers are not shown below. List them by hand (driverquery /v, or Device Manager) before the change.' -Source 'Win32_PnPSignedDriver'
+    }
+    $netDrivers = @($allDrivers | Where-Object { $_.DeviceClass -eq 'NET' })
     foreach ($nic in @(Get-CimSafe 'Win32_NetworkAdapter' | Where-Object { $_.PhysicalAdapter -eq $true })) {
         $drv = @($netDrivers | Where-Object { $_.DeviceID -eq $nic.PNPDeviceID }) | Select-Object -First 1
         $drvText = 'Driver not correlated'
         if ($drv) { $drvText = 'Provider=' + $drv.DriverProviderName + ', Version=' + $drv.DriverVersion + ', Date=' + $drv.DriverDate }
         Add-Result 'HARDWARE' ('NIC: ' + $nic.Name) 'INFO' ('MAC=' + $nic.MACAddress) $drvText -Source 'Win32_NetworkAdapter, Win32_PnPSignedDriver'
     }
-    $storageDrivers = @(Get-CimSafe 'Win32_PnPSignedDriver' "DeviceClass='SCSIAdapter'") + @(Get-CimSafe 'Win32_PnPSignedDriver' "DeviceClass='HDC'")
+    $storageDrivers = @($allDrivers | Where-Object { $_.DeviceClass -eq 'SCSIAdapter' -or $_.DeviceClass -eq 'HDC' })
     foreach ($drv in @($storageDrivers | Sort-Object DeviceName,DriverVersion -Unique)) {
         Add-Result 'HARDWARE' ('Storage controller: ' + $drv.DeviceName) 'INFO' ('Provider=' + $drv.DriverProviderName) @(('Version=' + $drv.DriverVersion),('Date=' + $drv.DriverDate)) -Source 'Win32_PnPSignedDriver'
     }
@@ -75,9 +80,9 @@ function Invoke-VmwareCheck {
     if ($toolsSvc) { $svcText = 'VMTools service ' + $toolsSvc.State + ', ' + $toolsSvc.StartMode }
     Add-Result 'VMWARE' 'VMwareTools' $decision.Status ('Version=' + $version) $svcText -Recommendation $decision.Text -Source 'Uninstall registry / vmtoolsd.exe'
 
-    $firmware = 'BIOS'
-    if (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\State') { $firmware = 'EFI' }
-    Add-Result 'VMWARE' 'VMFirmware' 'INFO' $firmware ('BIOS version=' + $script:Data.BIOS.SMBIOSBIOSVersion) -Recommendation 'BIOS-firmware VMs upgrade in place; Secure Boot and vTPM need EFI firmware.' -Source 'SecureBoot registry, Win32_BIOS'
+    $fw = Get-FirmwareMode
+    $firmware = 'Not determined'; if ($fw.Mode -eq 'UEFI') { $firmware = 'EFI' } elseif ($fw.Mode -eq 'BIOS') { $firmware = 'BIOS' }
+    Add-Result 'VMWARE' 'VMFirmware' 'INFO' $firmware @(('BIOS version=' + $script:Data.BIOS.SMBIOSBIOSVersion), ('Detected=' + $fw.Text)) -Recommendation 'BIOS-firmware VMs upgrade in place; Secure Boot and vTPM need EFI firmware.' -Source ($fw.Source + ', Win32_BIOS')
 
     foreach ($drv in @($script:Data.KernelDrivers | Where-Object { $_.Name -match '^(pvscsi|vmxnet3|vmxnet3ndis6|vsepflt|vnetflt|vnetWFP|vmci|vsock|vm3dmp|vmmemctl|vmhgfs|vmrawdsk|vmusbmouse|vmmouse|glxgi)' } | Sort-Object Name)) {
         $fileVersion = ''
@@ -96,9 +101,11 @@ function Invoke-VmwareCheck {
 function Invoke-DriversCheck {
     $unsigned = @()
     $pnp = @(); $pnpError = ''
-    try { $pnp = @(Get-CimRequired 'Win32_PnPSignedDriver' | Where-Object { $_.DeviceName -and $_.DriverProviderName -and $_.DriverProviderName -notmatch '^Microsoft' }) }
-    catch {
-        $pnpError = $_.Exception.Message; Write-Swallowed $_
+    # One read of the slow driver provider, shared with the platform check (#258).
+    if (-not $script:Data.ContainsKey('PnpDrivers')) { $script:Data.PnpDrivers = Read-PnpSignedDriver }
+    $pnpError = [string]$script:Data.PnpDrivers.Error
+    if (-not $pnpError) { $pnp = @($script:Data.PnpDrivers.Items | Where-Object { $_.DeviceName -and $_.DriverProviderName -and $_.DriverProviderName -notmatch '^Microsoft' }) }
+    else {
         Add-Result 'DRIVERS' 'DeviceDrivers' 'MANUAL' 'The device driver list could not be read' $pnpError -Recommendation 'List the third-party drivers by hand (driverquery /v, or Device Manager) before the change; old drivers are the most common cause of IPU rollback.' -Kind 'Finding' -Source 'Win32_PnPSignedDriver'
     }
     foreach ($d in @($pnp | Sort-Object DeviceName,DriverVersion -Unique)) {

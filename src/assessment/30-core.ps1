@@ -911,6 +911,51 @@ function Test-CommandAvailable {
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function ConvertTo-SystemDrive {
+    # Pure (#258): 'C:' form of a system drive value ('d:', 'D:\'); 'C:' when
+    # the value is empty or not a drive letter.
+    param([string]$Value)
+    if ([string]$Value -match '^\s*([A-Za-z]):') { return ($Matches[1].ToUpperInvariant() + ':') }
+    return 'C:'
+}
+
+function Get-SystemDrive {
+    # The drive Windows is installed on (#258). Nearly always C:, but not by rule.
+    return (ConvertTo-SystemDrive $env:SystemDrive)
+}
+
+function Read-PnpSignedDriver {
+    # Win32_PnPSignedDriver is a slow provider (#258, SE-30): the platform and
+    # drivers checks read it once and share the list ($script:Data.PnpDrivers).
+    # A failed read is kept with its error, so each check can say so.
+    $items = @(); $failure = ''
+    try { $items = @(Get-CimRequired 'Win32_PnPSignedDriver') } catch { $failure = $_.Exception.Message; Write-Swallowed $_ }
+    return [pscustomobject]@{ Items = $items; Error = $failure }
+}
+
+function Get-FirmwareModeDecision {
+    # Pure (#258, SE-29): UEFI or legacy BIOS. PEFirmwareType under
+    # HKLM\SYSTEM\CurrentControlSet\Control is written by Windows at boot
+    # (1 = BIOS, 2 = UEFI; Windows 8 / Server 2012 and newer). The SecureBoot
+    # State key is only a hint: it is there on most UEFI systems, but its
+    # absence proves nothing and it can exist on legacy BIOS.
+    # Mode is UEFI, BIOS or Unknown.
+    param($PeFirmwareType, [bool]$SecureBootKeyPresent)
+    $type = 0
+    if ($null -ne $PeFirmwareType -and [string]$PeFirmwareType -match '^\s*\d+\s*$') { $type = [int]$PeFirmwareType }
+    if ($type -eq 2) { return [pscustomobject]@{ Mode = 'UEFI'; Text = 'UEFI'; Source = 'PEFirmwareType registry value' } }
+    if ($type -eq 1) { return [pscustomobject]@{ Mode = 'BIOS'; Text = 'Legacy BIOS'; Source = 'PEFirmwareType registry value' } }
+    if ($SecureBootKeyPresent) { return [pscustomobject]@{ Mode = 'UEFI'; Text = 'UEFI (likely: the Secure Boot state key exists; PEFirmwareType was not readable)'; Source = 'SecureBoot registry presence' } }
+    return [pscustomobject]@{ Mode = 'Unknown'; Text = 'Not determined (PEFirmwareType was not readable)'; Source = 'PEFirmwareType registry value' }
+}
+
+function Get-FirmwareMode {
+    # Reads the two registry facts and decides (#258).
+    $pe = Get-RegistryValueSafe 'HKLM:\SYSTEM\CurrentControlSet\Control' 'PEFirmwareType'
+    $value = $null; if ($pe.Exists) { $value = $pe.Value }
+    return (Get-FirmwareModeDecision $value ([bool](Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\State')))
+}
+
 function Get-RegistryValueSafe {
     param([string]$Path, [string]$Name)
     $result = New-Object PSObject -Property @{ Exists=$false; Value=$null }

@@ -309,11 +309,13 @@ function Invoke-AntivirusCheck {
         } catch { Write-Swallowed $_; Add-Result 'SECURITY' 'AppLocker' 'MANUAL' 'The effective AppLocker policy could not be read' $_.Exception.Message -Recommendation 'Check Local Security Policy > Application Control Policies by hand: Setup and the new binaries must be allowed.' -Kind 'Finding' -Source 'Get-AppLockerPolicy' }
     }
     if (Test-CommandAvailable 'Get-BitLockerVolume') {
+        # The system drive (#258); the row keeps its name 'BitLocker C:'.
+        $sysDrive = Get-SystemDrive
         try {
-            $bl = Get-BitLockerVolume -MountPoint 'C:' -ErrorAction Stop
+            $bl = Get-BitLockerVolume -MountPoint $sysDrive -ErrorAction Stop
             if ([string]$bl.ProtectionStatus -eq 'On') { Add-Result 'SECURITY' 'BitLocker C:' 'WARNING' ('Protection=On, Method=' + $bl.EncryptionMethod) '' -Recommendation 'Confirm the recovery key is escrowed and retrievable before IPU.' -Source 'Get-BitLockerVolume' }
             else { Add-Result 'SECURITY' 'BitLocker C:' 'INFO' ('Protection=' + $bl.ProtectionStatus) -Source 'Get-BitLockerVolume' }
-        } catch { Write-Swallowed $_; Add-Result 'SECURITY' 'BitLocker C:' 'MANUAL' 'The BitLocker state of C: could not be read' $_.Exception.Message -Recommendation 'Run manage-bde -status C: by hand; confirm the recovery key is escrowed if protection is on.' -Kind 'Finding' -Source 'Get-BitLockerVolume' }
+        } catch { Write-Swallowed $_; Add-Result 'SECURITY' 'BitLocker C:' 'MANUAL' ('The BitLocker state of ' + $sysDrive + ' could not be read') $_.Exception.Message -Recommendation ('Run manage-bde -status ' + $sysDrive + ' by hand; confirm the recovery key is escrowed if protection is on.') -Kind 'Finding' -Source 'Get-BitLockerVolume' }
     }
     if (Test-CommandAvailable 'Confirm-SecureBootUEFI') {
         try { Add-Result 'SECURITY' 'SecureBoot' 'INFO' ('Enabled=' + (Confirm-SecureBootUEFI -ErrorAction Stop)) -Source 'Confirm-SecureBootUEFI' }
