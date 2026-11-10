@@ -1169,12 +1169,21 @@ function Invoke-NativeTreeKill {
     Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
 }
 
+# How many uninstall entries the last Get-InstalledApplication could not read.
+$script:AppReadFailures = 0
+
 function Get-InstalledApplication {
+    # One key at a time (#386): a wildcard read stops at the first entry with
+    # a value it cannot convert, and the rest of the list is lost without a
+    # word. A failed entry is counted, and the baseline reports it.
     $items = @()
-    foreach ($path in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*')) {
-        # SilentlyContinue: One unreadable uninstall entry must not hide the others; Wow6432Node is absent on 32-bit Windows.
-        foreach ($entry in @(Get-ItemProperty $path -ErrorAction SilentlyContinue)) {
-            if ($entry.DisplayName -and -not $entry.SystemComponent) {
+    $script:AppReadFailures = 0
+    foreach ($path in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall','HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall')) {
+        # SilentlyContinue: Wow6432Node is absent on 32-bit Windows (absence is normal).
+        foreach ($key in @(Get-ChildItem -LiteralPath $path -ErrorAction SilentlyContinue)) {
+            $entry = $null
+            try { $entry = Get-ItemProperty -LiteralPath $key.PSPath -ErrorAction Stop } catch { $script:AppReadFailures++; Write-Swallowed $_; continue }
+            if ($entry -and $entry.PSObject.Properties['DisplayName'] -and $entry.DisplayName -and -not ($entry.PSObject.Properties['SystemComponent'] -and $entry.SystemComponent)) {
                 $items += [pscustomobject]@{
                     Name=[string]$entry.DisplayName; Version=[string]$entry.DisplayVersion
                     Publisher=[string]$entry.Publisher; InstallDate=[string]$entry.InstallDate

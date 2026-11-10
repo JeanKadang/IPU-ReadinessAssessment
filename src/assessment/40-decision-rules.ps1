@@ -375,6 +375,9 @@ function Get-PkiTargetDecision {
     # upgrade. Kind is Allowed, TargetNotAllowed, NoAllowedPath or Unknown.
     param([string]$Source, [string]$Target, [string[]]$Allowed)
     $make = { param($k, $s, $t, $r) [pscustomobject]@{ Kind = $k; Status = $s; Text = $t; Recommendation = $r } }
+    $Allowed = @($Allowed | Where-Object { $_ })
+    # An empty list (#386) is not "nothing is forbidden".
+    if ($Allowed.Count -eq 0) { return (& $make 'Unknown' 'MANUAL' 'The PKI site policy (PkiAllowedTargets) names no release, so it cannot be checked.' 'Set PkiAllowedTargets to the releases the PKI team allows (for example 2019,2022) and run again, or ask the PKI team.') }
     $names = (@($Allowed | ForEach-Object { Get-ReleaseDisplayName $_ }) -join ' or ')
     if (-not $Source) { return (& $make 'Unknown' 'MANUAL' 'The source release is unknown, so the PKI site policy cannot be checked.' ('Check by hand: PKI servers are upgraded in place only to ' + $names + '.')) }
     $canReach = { param($t) $Source -eq $t -or ($script:SupportedUpgradePaths.ContainsKey($t) -and $script:SupportedUpgradePaths[$t] -contains $Source) }
@@ -383,15 +386,18 @@ function Get-PkiTargetDecision {
     $reachable = @($Allowed | Where-Object { $_ -ne $Source -and $script:SupportedUpgradePaths.ContainsKey($_) -and $script:SupportedUpgradePaths[$_] -contains $Source } | Sort-Object -Descending)
     $exception = ' An in-place upgrade to ' + (Get-ReleaseDisplayName $Target) + ' needs an exception agreed with the PKI team (for example for the last PKI server in the environment); building a new PKI on ' + (Get-ReleaseDisplayName $Target) + ' is a migration, not an in-place upgrade, and is outside this rule.'
     if (@($Allowed) -notcontains $Target) {
-        if (@($Allowed) -contains $Source) {
-            return (& $make 'TargetNotAllowed' 'BLOCKER' ('Site policy: PKI servers are not upgraded in place beyond ' + $names + ', and this server is already on ' + (Get-ReleaseDisplayName $Source) + '.') ('Leave the server on its current release.' + $exception))
-        }
+        # An allowed release that can still be reached comes first (#386): a
+        # server on 2019 with 2019 and 2022 allowed can go to 2022.
         if ($reachable.Count -gt 0) {
             return (& $make 'TargetNotAllowed' 'BLOCKER' ('Site policy: PKI servers are upgraded in place only to ' + $names + ', not to ' + (Get-ReleaseDisplayName $Target) + '.') ('Assess and upgrade against ' + (Get-ReleaseDisplayName $reachable[0]) + ' (-TargetServerVersion ' + $reachable[0] + ').' + $exception))
         }
-    } elseif ($reachable.Count -gt 0) {
-        # The target is allowed but not reachable; another allowed one is:
-        # the upgrade path row already says so.
+        if (@($Allowed) -contains $Source) {
+            return (& $make 'TargetNotAllowed' 'BLOCKER' ('Site policy: PKI servers are not upgraded in place beyond ' + $names + ', and this server is already on ' + (Get-ReleaseDisplayName $Source) + '.') ('Leave the server on its current release.' + $exception))
+        }
+    } elseif ($reachable.Count -gt 0 -or @($Allowed) -contains $Source) {
+        # The target is allowed but cannot be reached from here; another
+        # allowed release can, or the server is already on one. The upgrade
+        # path row says what is wrong with the target.
         return (& $make 'Allowed' 'OK' ('The PKI site policy allows ' + $names + '.') '')
     }
     return (& $make 'NoAllowedPath' 'BLOCKER' ('No in-place upgrade the PKI site policy allows: PKI servers go only to ' + $names + ', and Microsoft supports no direct in-place upgrade from ' + (Get-ReleaseDisplayName $Source) + ' to it.') 'Plan a migration to a new server with the PKI team (CA backup and restore, or a side-by-side CA migration) instead of an in-place upgrade.')
@@ -490,10 +496,13 @@ function Get-SqlSupportDecision {
         if ($min) {
             $parsed = $null
             $clean = ([regex]::Match([string]$Version, '^\d+(\.\d+){1,3}')).Value
-            if ($clean -and [version]::TryParse($clean, [ref]$parsed) -and $parsed -lt [version]$min.Build) {
+            # Compare the build number only (#386): the registry writes the
+            # service pack as the minor number (13.2.5026.0 is SP2), the
+            # minimum is in the product form (13.0.6300).
+            if ($clean -and [version]::TryParse($clean, [ref]$parsed) -and $parsed.Build -ge 0 -and $parsed.Build -lt ([version]$min.Build).Build) {
                 return [pscustomobject]@{ Status='ACTION'; Release=$label; Text=($label + ' ' + $clean + ' is below ' + $min.ServicePack + ' (' + $min.Build + '), which Microsoft requires on ' + (Get-ReleaseDisplayName $Target) + '. Install ' + $min.ServicePack + ' and the latest CU before IPU, and engage the DBA.') }
             }
-            if (-not $parsed) {
+            if (-not $parsed -or $parsed.Build -lt 0) {
                 return [pscustomobject]@{ Status='OK'; Release=$label; Text=($label + ' is supported on ' + (Get-ReleaseDisplayName $Target) + ' with ' + $min.ServicePack + ' or later. Confirm the service pack and the latest CU are installed, and engage the DBA.') }
             }
         }
@@ -2020,6 +2029,8 @@ function ConvertTo-RelaunchArgumentText {
         elseif ($v -is [bool]) { $text += ' -' + $key + ' $' + $v.ToString().ToLowerInvariant() }
         elseif ($v -is [int]) { $text += ' -' + $key + ' ' + $v.ToString([Globalization.CultureInfo]::InvariantCulture) }
         elseif ($v -is [string]) { $text += ' -' + $key + " '" + ($v -replace "'","''") + "'" }
+        # A list of text (#386, -PkiAllowedTargets): 'a','b'.
+        elseif ($v -is [string[]] -and $v.Count -gt 0) { $text += ' -' + $key + ' ' + (@($v | ForEach-Object { "'" + ($_ -replace "'","''") + "'" }) -join ',') }
         else {
             $typeName = '<null>'
             if ($null -ne $v) { $typeName = $v.GetType().FullName }
@@ -2272,6 +2283,9 @@ function Get-ProfileSettingDecision {
                 $msg = $_.Exception.Message; if ($_.Exception.InnerException) { $msg = $_.Exception.InnerException.Message }
                 $errors.Add(($name + ': value "' + [string]$s.Value + '" is not allowed. ' + $msg)); continue
             }
+            # An empty list passes the pattern of a list parameter, because
+            # there is no element to test (#386).
+            if ($s.Value -is [array] -and @($s.Value).Count -eq 0) { $errors.Add(($name + ': an empty list is not allowed. Name at least one value.')); continue }
             if ($Bound -contains $name) { $ignored.Add($name); continue }
             $settings[$name] = $probe.Value
         }
@@ -2585,7 +2599,10 @@ function Get-SpecialServerDecision {
 function Get-SpecialServerCheckId {
     # Pure (#152): the checks a SPECIAL short report keeps - what is needed
     # to describe the server and choose a plan.
-    return ,@('baseline','upgradepath','licensing','platform','performance','domain','cluster','special','storage')
+    # sql and pki (#386): a clustered SQL Server or a CA on a domain
+    # controller is common, and the fleet overview names the DBA and PKI
+    # teams from their rows.
+    return ,@('baseline','upgradepath','licensing','platform','performance','domain','cluster','special','storage','sql','pki')
 }
 
 function Get-SpecialServerContent {

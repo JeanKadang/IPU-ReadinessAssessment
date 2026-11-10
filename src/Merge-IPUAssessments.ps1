@@ -76,7 +76,7 @@ $script:TeamRules = @(
     @{ Team = 'Exchange';          Area = '^EXCHANGE$';           Item = '.';                         Status = @('BLOCKER', 'ACTION') }
     # Only backup infrastructure (server, proxy, storage agent, media agent);
     # a plain backup client is the Windows Team's.
-    @{ Team = 'Team Backup';       Area = '^BACKUP$';             Item = '^(?!VSS|GuestBackupAgent$)'; Status = @('INFO'); Details = 'Veeam Backup (&|and) Replication|Veeam Backup Proxy|Veeam Backup Transport|VeeamTransportSvc|VeeamProxySvc|VeeamBackupSvc|Spectrum Protect Server|Storage Protect Server|Tivoli Storage Manager Server|Storage Agent|dsmsta|MediaAgent|GxMMM' }
+    @{ Team = 'Team Backup';       Area = '^BACKUP$';             Item = '^(?!VSS|GuestBackupAgent$)'; Status = @('INFO'); Details = 'Veeam Backup (&|and) Replication|Veeam Backup Proxy|Veeam Backup Transport|VeeamTransportSvc|VeeamProxySvc|VeeamBackupSvc|Spectrum Protect Server|Storage Protect Server|Tivoli Storage Manager Server|Storage Agent|dsmsta|MediaAgent|GxMMM|CommServe' }
     # The agent is deployed by the Windows Team; the backend and policy are the Security Team's.
     @{ Team = 'Security Team (AV)'; Area = '^ANTIVIRUS$';         Item = '.';                         Status = @('WARNING') }
     @{ Team = 'Security Team (AV)'; Area = '^SECURITY$';          Item = '^(?!AppLocker$|SecureBoot$|TPM$|BitLocker|FileSystemFilterDrivers$)'; Status = @('WARNING') }
@@ -267,6 +267,12 @@ function Get-EolDecision {
     if ($c.eol -is [bool] -and $c.eol) {
         $result.State = 'EndOfLife'; $result.Status = 'WARNING'
         $result.Text = $name + ' ' + $result.Cycle + ' has reached end of life.'
+        return [pscustomobject]$result
+    }
+    # Only an explicit false means "no end date is published" (#386). A
+    # missing or unreadable value is not known, and must not read as supported.
+    if ($null -eq $eol -and -not ($c.eol -is [bool])) {
+        $result.Text = $name + ' ' + $result.Cycle + ': the end-of-life date in the snapshot is missing or cannot be read. Check the vendor lifecycle page, and refresh the snapshot.'
         return [pscustomobject]$result
     }
     if ($null -eq $eol) {
@@ -489,6 +495,8 @@ function Get-NotAssessedCheck {
     param([object[]]$CheckRuns)
     $list = @()
     foreach ($run in @($CheckRuns)) {
+        # A result without check runs (#386) lists nothing.
+        if ($null -eq $run) { continue }
         if ($run.Outcome -eq 'Completed') { continue }
         if ($run.Outcome -eq 'Skipped') {
             if ([string]$run.Message -like 'Needs *') { $list += ($run.Name + ' (' + $run.Message + ')') }

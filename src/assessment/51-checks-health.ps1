@@ -43,7 +43,12 @@ function Invoke-BaselineCheck {
     if ($null -ne $script:Data.Features) { $script:Data.Snapshot.Features = @($script:Data.Features.Keys | Where-Object { $script:Data.Features[$_] } | Sort-Object) }
 
     if ($featureInventoryError) {
-        Add-Result 'ASSESSMENT' 'FeatureInventory' 'MANUAL' 'Get-WindowsFeature failed' $featureInventoryError -Recommendation 'List the installed roles and features by hand (Server Manager, or Get-WindowsFeature in an elevated session). Until then the cluster, IIS and RDS rows are MANUAL, not "not installed".' -Source 'ServerManager'
+        Add-Result 'ASSESSMENT' 'FeatureInventory' 'MANUAL' 'Get-WindowsFeature failed' $featureInventoryError -Recommendation 'List the installed roles and features by hand (Server Manager, or Get-WindowsFeature in an elevated session). Until then the cluster, IIS and RDS rows are MANUAL, not "not installed", and other role checks (for example the AD CS role services) can miss a role.' -Source 'ServerManager'
+    }
+    # Uninstall entries that could not be read (#386): the application list,
+    # and every check that looks for a product in it, may miss something.
+    if ($script:AppReadFailures -gt 0) {
+        Add-Result 'ASSESSMENT' 'ApplicationInventory' 'MANUAL' ($script:AppReadFailures.ToString() + ' uninstall entr' + $(if ($script:AppReadFailures -eq 1) { 'y' } else { 'ies' }) + ' could not be read') 'The list of installed applications may be incomplete, so a product (agent, antivirus, backup, database) can be missing from this report.' -Recommendation 'Compare the application rows with Programs and Features on the server. The log names each entry that failed.' -Kind 'Finding' -Source 'Uninstall registry keys'
     }
     if (-not $script:NumberCultureResolved.Known) {
         Add-Result 'ASSESSMENT' 'NumberCulture' 'INFO' ('Number format ''' + $NumberCultureName + ''' is not a culture on this server') 'Numbers use the invariant format (1,234.5).' -Recommendation 'Give -NumberCultureName a culture name that exists, for example da-DK or en-US.' -Source 'NumberCultureName'
@@ -376,8 +381,12 @@ function Invoke-CompatScanCheck {
         $mediaRoot = $TargetMediaPath
         if ($TargetMediaPath -match '\.iso$') {
             if (-not (Test-Path -LiteralPath $TargetMediaPath)) { throw ('ISO not found: ' + $TargetMediaPath) }
-            $mountedIso = Mount-DiskImage -ImagePath $TargetMediaPath -PassThru -ErrorAction Stop
-            $letter = ($mountedIso | Get-Volume -ErrorAction Stop).DriveLetter
+            # An ISO the operator had mounted before the run stays mounted (#386).
+            $wasAttached = $false
+            if (Test-CommandAvailable 'Get-DiskImage') { try { $wasAttached = [bool](Get-DiskImage -ImagePath $TargetMediaPath -ErrorAction Stop).Attached } catch { Write-Swallowed $_ } }
+            $image = Mount-DiskImage -ImagePath $TargetMediaPath -PassThru -ErrorAction Stop
+            if (-not $wasAttached) { $mountedIso = $image }
+            $letter = ($image | Get-Volume -ErrorAction Stop).DriveLetter
             if (-not $letter) { throw 'The mounted ISO received no drive letter.' }
             $mediaRoot = $letter + ':\'
         }

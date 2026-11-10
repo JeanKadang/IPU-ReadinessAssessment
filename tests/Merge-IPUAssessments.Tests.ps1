@@ -510,6 +510,7 @@ Describe 'Teams needed in the fleet overview (#323, #374)' {
             @{ Case = 'Db2';                           Row = @('WORKLOAD', 'IBM Db2', 'WARNING', '', '');                       Label = 'DBA Team (Db2)' }
             @{ Case = 'Exchange';                      Row = @('EXCHANGE', 'ExchangeServerRole', 'BLOCKER', '', '');            Label = 'Exchange' }
             @{ Case = 'a Veeam backup server';         Row = @('BACKUP', 'Veeam', 'INFO', '', 'Veeam Backup & Replication Server version 12.1 | Service VeeamBackupSvc (Running)'); Label = 'Team Backup' }
+            @{ Case = 'a Commvault CommServe (#386)';  Row = @('BACKUP', 'Commvault', 'INFO', '', 'Commvault CommServe version 11.36'); Label = 'Team Backup' }
             @{ Case = 'a Veeam proxy';                 Row = @('BACKUP', 'Veeam', 'INFO', '', 'Service VeeamTransportSvc (Running)'); Label = 'Team Backup' }
             @{ Case = 'a Spectrum Protect storage agent'; Row = @('BACKUP', 'IBM Spectrum Protect (TSM)', 'INFO', '', 'Service dsmsta (Running)'); Label = 'Team Backup' }
             @{ Case = 'an antivirus agent to check';   Row = @('ANTIVIRUS', 'Trend Micro Apex One', 'WARNING', '', '');         Label = 'Security Team (AV)' }
@@ -617,6 +618,15 @@ Describe 'Checks that were not assessed in the fleet overview (#360)' {
         $script:NaOut = Join-Path $TestDrive 'na360-out'
         $null = & $script:MergeScript -InputFolder $dir -OutputFolder $script:NaOut
         $script:NaRow = @(Import-Csv -LiteralPath (Join-Path $script:NaOut 'IPU-Fleet-Servers.csv') -Delimiter ';')[0]
+    }
+    It 'a result without check runs lists nothing, not an empty pair of brackets (#386)' {
+        $dir = Join-Path $TestDrive 'na386'; New-Item -ItemType Directory -Path $dir | Out-Null
+        $noRuns = New-FakeResult 'SRV-NORUNS' -Overall 'OK'
+        $noRuns.CheckRuns = $null
+        Save-Result $noRuns $dir 'SRV-NORUNS-IPU-Assessment.json'
+        $out = Join-Path $TestDrive 'na386-out'
+        $null = & $script:MergeScript -InputFolder $dir -OutputFolder $out
+        @(Import-Csv -LiteralPath (Join-Path $out 'IPU-Fleet-Servers.csv') -Delimiter ';')[0].NotAssessed | Should -BeNullOrEmpty
     }
     It 'lists the checks that failed or ran out of time' {
         $script:NaRow.NotAssessed | Should -Match 'Baseline inventory \(Failed\)'

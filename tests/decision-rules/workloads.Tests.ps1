@@ -38,6 +38,23 @@ Describe 'Get-SqlSupportDecision (Microsoft SQL/Windows matrix)' {
     ) {
         (Get-SqlSupportDecision $Major $Target).Status | Should -Be $Expected
     }
+    It 'the service pack minimum compares the build number, in either version form: <Version> is <Expected> (#386)' -TestCases @(
+        # Registry form: the minor number is the service pack.
+        @{ Version = '13.2.5026.0';  Expected = 'ACTION' }
+        @{ Version = '13.1.4001.0';  Expected = 'ACTION' }
+        @{ Version = '13.3.6300.2';  Expected = 'OK' }
+        @{ Version = '13.3.6455.2';  Expected = 'OK' }
+        # Product form.
+        @{ Version = '13.0.5026.0';  Expected = 'ACTION' }
+        @{ Version = '13.0.6300.2';  Expected = 'OK' }
+    ) {
+        $d = Get-SqlSupportDecision 13 '2019' $Version
+        $d.Status | Should -Be $Expected
+        if ($Expected -eq 'OK') { $d.Text | Should -Not -Match 'Confirm the service pack' }
+    }
+    It 'a version without a build number asks to confirm the service pack (#386)' {
+        (Get-SqlSupportDecision 13 '2019' '13.2').Text | Should -Match 'Confirm the service pack'
+    }
     It 'a major version the tables do not know is MANUAL, never BLOCKER: <Major> (#260)' -TestCases @(
         @{ Major = 18 }
         @{ Major = 25 }

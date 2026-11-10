@@ -281,6 +281,16 @@ Describe 'Hygiene (#18)' {
 }
 
 Describe 'ConvertTo-RelaunchArgumentText (#38)' {
+    It 'passes a list of text as a quoted list, as -PkiAllowedTargets needs (#386)' {
+        ConvertTo-RelaunchArgumentText @{ PkiAllowedTargets = [string[]]@('2019', '2022') } | Should -Be " -PkiAllowedTargets '2019','2022'"
+        ConvertTo-RelaunchArgumentText @{ PkiAllowedTargets = [string[]]@('2019,2022') } | Should -Be " -PkiAllowedTargets '2019,2022'"
+        ConvertTo-RelaunchArgumentText @{ Names = [string[]]@("O'Brien") } | Should -Be " -Names 'O''Brien'"
+    }
+    It 'the relaunch text of a list binds back to the same values (#386)' {
+        $text = ConvertTo-RelaunchArgumentText @{ PkiAllowedTargets = [string[]]@('2019', '2022') }
+        $back = & ([scriptblock]::Create('& { param([string[]]$PkiAllowedTargets) $PkiAllowedTargets }' + $text))
+        @($back) | Should -Be @('2019', '2022')
+    }
     It 'quotes strings and doubles embedded apostrophes' {
         ConvertTo-RelaunchArgumentText @{ ReportDirectory = "D:\O'Brien" } | Should -Be " -ReportDirectory 'D:\O''Brien'"
     }
@@ -301,6 +311,7 @@ Describe 'ConvertTo-RelaunchArgumentText (#38)' {
         ConvertTo-RelaunchArgumentText ([ordered]@{ Zeta = 'z'; Alpha = 1 }) | Should -Be " -Alpha 1 -Zeta 'z'"
     }
     It 'throws a clear error for an unsupported type' {
+        { ConvertTo-RelaunchArgumentText @{ Empty = [string[]]@() } } | Should -Throw -ExpectedMessage "*Empty*"
         { ConvertTo-RelaunchArgumentText @{ Ratio = [double]1.5 } } | Should -Throw -ExpectedMessage "*Ratio*System.Double*"
         { ConvertTo-RelaunchArgumentText @{ Paths = @('a','b') } } | Should -Throw -ExpectedMessage "*Paths*"
     }

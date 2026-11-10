@@ -364,6 +364,11 @@ Describe 'SPECIAL servers (#152)' {
         $ids | Should -Not -Contain 'dism'
         $ids | Should -Not -Contain 'compatscan'
     }
+    It 'the short report keeps sql and pki, so the fleet overview can name their teams (#386)' {
+        $ids = Get-SpecialServerCheckId
+        $ids | Should -Contain 'sql'
+        $ids | Should -Contain 'pki'
+    }
     Context 'report' {
         BeforeAll {
             $script:Results.Clear(); $script:CheckRuns.Clear()
@@ -461,6 +466,23 @@ Describe 'PKI site policy (#322)' {
         $cmd = Get-Command (Join-Path $PSScriptRoot '..\..\src\Windows-IPU-Readiness-Assessment.ps1')
         $default = $cmd.ScriptBlock.Ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'PkiAllowedTargets' }
         $default.DefaultValue.Value | Should -Be '2019,2022'
+    }
+    It 'an allowed release that can still be reached is named before "stay" (#386)' {
+        $d = Get-PkiTargetDecision '2019' '2025' @('2019', '2022')
+        $d.Kind | Should -Be 'TargetNotAllowed'
+        $d.Text | Should -Not -Match 'already on'
+        $d.Recommendation | Should -Match '-TargetServerVersion 2022'
+    }
+    It 'a server already on an allowed release is not "no allowed path" when the target is an older allowed one (#386)' {
+        (Get-PkiTargetDecision '2025' '2022' @('2022', '2025')).Kind | Should -Be 'Allowed'
+    }
+    It 'an empty policy list is MANUAL, not a pass (#386)' {
+        foreach ($list in @(@(), @(''), $null)) {
+            $d = Get-PkiTargetDecision '2019' '2022' $list
+            $d.Kind | Should -Be 'Unknown'
+            $d.Status | Should -Be 'MANUAL'
+            $d.Text | Should -Match 'PkiAllowedTargets'
+        }
     }
     It 'no allowed path means a migration with the PKI team' {
         $d = Get-PkiTargetDecision '2012R2' '2022' @('2022')

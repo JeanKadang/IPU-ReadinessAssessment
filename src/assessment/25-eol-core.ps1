@@ -123,6 +123,12 @@ function Get-EolDecision {
         $result.Text = $name + ' ' + $result.Cycle + ' has reached end of life.'
         return [pscustomobject]$result
     }
+    # Only an explicit false means "no end date is published" (#386). A
+    # missing or unreadable value is not known, and must not read as supported.
+    if ($null -eq $eol -and -not ($c.eol -is [bool])) {
+        $result.Text = $name + ' ' + $result.Cycle + ': the end-of-life date in the snapshot is missing or cannot be read. Check the vendor lifecycle page, and refresh the snapshot.'
+        return [pscustomobject]$result
+    }
     if ($null -eq $eol) {
         $result.State = 'Supported'; $result.Status = 'OK'
         $result.Text = $name + ' ' + $result.Cycle + ': no end-of-life date is published (that is not a promise of support).'

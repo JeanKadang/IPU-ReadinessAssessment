@@ -463,6 +463,20 @@ Describe 'Checks on a fake server: windows health' -Skip:($env:OS -ne 'Windows_N
             (Invoke-TestCheck 'compatscan').Outcome | Should -Be 'Skipped'
             (Get-Row 'COMPAT_SCAN' 'SetupCompatibilityScan')[0].Status | Should -Be 'INFO'
         }
+        It 'an ISO is dismounted after the scan, unless it was mounted before the run (#386)' {
+            $iso = Join-Path $script:Media 'media.iso'
+            Set-Content -LiteralPath $iso -Value 'x'
+            $TargetMediaPath = $iso
+            $ReportDirectory = $script:Out
+            $script:Fake.Native['setup.exe'] = @{ ExitCode = -1047526896 }
+            $script:Fake.Remove('Dismounted'); $script:Fake['IsoAttached'] = $false
+            $null = Invoke-TestCheck 'compatscan'
+            $script:Fake.Mounted | Should -Be $iso
+            $script:Fake.Dismounted | Should -Be $iso
+            $script:Fake.Remove('Dismounted'); $script:Fake['IsoAttached'] = $true
+            $null = Invoke-TestCheck 'compatscan'
+            $script:Fake.ContainsKey('Dismounted') | Should -BeFalse
+        }
         It 'a clean scan with the matching image is OK' {
             $TargetMediaPath = $script:Media
             $ReportDirectory = $script:Out
