@@ -409,7 +409,7 @@ function Invoke-PrintBackupCheck {
     if ($AssessmentMode -eq 'Post') { $script:CurrentCheckMessage = 'Not applicable: not needed after the upgrade'; $script:CurrentCheckOutcome = 'Skipped'; return }
     $cmd = Get-PrintBackupCommand
     if ($script:Data['PrintInventoryFailed']) {
-        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' 'Not taken: the printers could not be read, so it is not known whether this is a print server' -Recommendation 'If this server shares printers, export the print configuration before the change, to a drive with enough free space, and keep the file off the server.' -Kind 'Finding' -Source 'Printer inventory' -Command $cmd -CommandKind 'Evidence'
+        Add-Result 'PRINTING' 'PrintBackup' 'MANUAL' 'Not taken: the printers could not be read, so it is not known whether this is a print server' -Recommendation 'If this server shares printers, export the print configuration before the change, to a drive with enough free space, and keep the file off the server.' -Kind 'Finding' -Source 'Printer inventory' -Command $cmd -CommandKind 'Check'
         return
     }
     if (-not $script:Data.PrintServer) { $script:CurrentCheckMessage = 'Not applicable: not a print server'; $script:CurrentCheckOutcome = 'Skipped'; return }
