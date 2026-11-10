@@ -96,10 +96,10 @@ endoflife.date contributors.` The snapshot file also records the date it was tak
 - Detection is the larger open problem. A product that leaves no uninstall entry (PHP and Apache HTTP Server on
   Windows are often unpacked folders) will not be seen until the script learns to probe for it. Until then the
   report cannot say a server has no such software, only that none was found.
-- The assessment script itself does not yet recognise 2008 and 2008 R2 as a source release (its release table
-  starts at 2012), so on those servers the upgrade-path and support rows fall back to MANUAL. Teaching it the two
-  releases (#276) is a separate change, because it touches the upgrade-path rules.
+- Until 4.8.0 the assessment script did not recognise 2008 and 2008 R2 as a source release, so on those servers the
+  upgrade-path and support rows fell back to MANUAL. From 4.8.0 it knows both (#276) and names the shortest supported
+  route.
 - Follow-up work, tracked on #266. Done: the shared source part and the build change for it (#275), the shipped
   snapshot and its monthly refresh (#285), detection of the products and the `EolCandidates` field in the result
-  JSON (#286), and the verdicts in the assessment and the merged report (#275). Open: recognising 2008 and 2008 R2
-  as a source release (#276).
+  JSON (#286), the verdicts in the assessment and the merged report (#275), and recognising 2008 and 2008 R2 as a
+  source release (#276, 4.8.0).

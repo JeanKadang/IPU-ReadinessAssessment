@@ -161,7 +161,7 @@ Describe 'Redaction gaps from a live run (#100)' {
         (@($script:Data.RedactLiterals.Keys) | Sort-Object) -join ',' | Should -Be 'adm-jdoe,Contoso VM filter,Contoso Web Lockdown,svc_batch'
     }
     It 'replaces <What>' -TestCases @(
-        @{ What = 'IIS binding host names outside the domain'; In = 'IIS https *:443:shop.customer-site.dk'; Gone = 'customer-site' }
+        @{ What = 'IIS binding host names outside the domain'; In = 'IIS https *:443:shop.customer-site.example.com'; Gone = 'customer-site' }
         @{ What = 'servers in another domain';                 In = 'Backup to bck01.backup.vendorcorp.com done'; Gone = 'vendorcorp' }
         @{ What = 'bare run-as accounts in free text';         In = '\Nightly export (adm-jdoe) | \Cleanup (svc_batch)'; Gone = 'adm-jdoe|svc_batch' }
         @{ What = 'the same account with a domain prefix';     In = 'RunAs=CORP\adm-jdoe'; Gone = 'adm-jdoe' }

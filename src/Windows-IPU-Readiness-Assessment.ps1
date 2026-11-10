@@ -14,7 +14,7 @@
 
 .SYNOPSIS
     Read-only IPU readiness assessment for Windows Server 2012 R2 and later,
-    targeting Windows Server 2025 (default) or Windows Server 2022.
+    targeting Windows Server 2025 (default), 2022 or 2019.
     Run once before the upgrade (Mode Pre) and, optionally, once after it
     (Mode Post) to compare the server against its own pre-upgrade snapshot.
 
@@ -34,8 +34,8 @@
     keeps Setup's CompatData XML next to the report.
 
     The report is written TWICE: a PARTIAL checkpoint after the fast checks,
-    and the final report after the slow checks (DISM, SFC, optional Setup
-    compatibility scan). If SA stops the job, the checkpoint still exists.
+    and the final report after the slow checks (DISM, SFC, the optional
+    print server backup and Setup compatibility scan). If SA stops the job, the checkpoint still exists.
 
     SA receives one semicolon-delimited result line (same header as 3.x/4.0).
 
@@ -224,7 +224,7 @@ param(
 
     # Site policy (#322): the releases a PKI server (Certification Authority
     # role or CertSvc) may be upgraded to in place, comma-separated. The PKI
-    # team allows only 2022 for now; '2019,2022,2025' lifts the rule.
+    # team allows 2019 and 2022 (#338); '2019,2022,2025' lifts the rule.
     [ValidatePattern('^\s*(2019|2022|2025)\s*(,\s*(2019|2022|2025)\s*)*$')][string[]]$PkiAllowedTargets = '2019,2022',
 
     # Operational thresholds (project values, not Microsoft minimums unless noted).

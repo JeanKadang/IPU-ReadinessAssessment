@@ -26,6 +26,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Storage and platform (#258). The system drive is taken from `%SystemDrive%` instead of a fixed `C:` in the free-space, partition, BitLocker, upgrade-history and Setup-scan reads; the row names (`CFreeSpace`, `PartitionAfterC`, `BitLocker C:`) stay. The firmware mode (UEFI or legacy BIOS) comes from the `PEFirmwareType` registry value; the Secure Boot key is only a labelled fallback, and an unreadable value is "not determined", no longer "legacy BIOS". The slow `Win32_PnPSignedDriver` list is read once and shared by the `platform` and `drivers` checks (it was read four times), and a failed read is a MANUAL row in `platform` too.
 - Patch level (#257): the age is now taken from the newest update described as a *Security Update* (the monthly cumulative update or rollup), not from the newest update of any kind, so a recent .NET or servicing-stack update no longer hides an old cumulative update. The row shows `LatestSecurityUpdate=`, the build with its update revision (`Build=14393.7428`) and, when there is one, the newer update of another kind. When no update carries that description, the newest of any kind is used and the row says so.
 
+### Documentation
+
+- Documentation brought in line with the scripts (#387): `SPECIAL` in every status list (user guide, result schema, the SA line); the full list of profile settings and of the parameters a profile cannot set; the pattern-file fields `Link` and `LinkTitle`; the lock file per mode; the JSON key list; why a check run is `Skipped` and what its `Message` holds; four fleet output files, not three; the print backup among the slow checks; the script help names 2019 as a target and the PKI policy default; Pester version (CI uses 6.2.0); contributor and build notes that still described one built script; ADR 0003 after #276. The git setup guide showed a real noreply address and now shows a placeholder, and a redaction test uses a host name under `example.com`.
+
 ## [4.7.0] - 2026-11-03
 
 ### Added
@@ -42,6 +46,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- CI runs the tests with Pester 6.2.0 and lints with PSScriptAnalyzer 1.25.0 (the versions pinned in `ci.yml`); the tests still run with Pester 5.
 - The report builder and the RDP evidence check are split into steps (#137). `New-IPUReportHtml` (233 lines) calls one function per part of the report (head, header, counter cards, summary, SPECIAL section, decision and planning tables, chapters, footer) and `Invoke-RdpPolicyAssessment` (176 lines) calls one function per step (evidence backup, enablement, NLA, listener, user rights, drive redirection, verdict, evidence zip). No function in either area is over 60 lines. No behaviour change: `docs/samples` is byte-identical before and after.
 
 - Each check is its own function (`Invoke-<Name>Check`), in one part per chapter of `docs/checks.md` (`51-checks-health.ps1` to `56-checks-backup-services.ps1`); `Register-AssessmentCheck` is now a short list in run order (#255). No behaviour change: the simulated-server golden output, the tests and the smoke run are the same before and after. The largest function is no longer a check body (it was 1,580 lines).

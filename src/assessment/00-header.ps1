@@ -14,7 +14,7 @@
 
 .SYNOPSIS
     Read-only IPU readiness assessment for Windows Server 2012 R2 and later,
-    targeting Windows Server 2025 (default) or Windows Server 2022.
+    targeting Windows Server 2025 (default), 2022 or 2019.
     Run once before the upgrade (Mode Pre) and, optionally, once after it
     (Mode Post) to compare the server against its own pre-upgrade snapshot.
 
@@ -34,8 +34,8 @@
     keeps Setup's CompatData XML next to the report.
 
     The report is written TWICE: a PARTIAL checkpoint after the fast checks,
-    and the final report after the slow checks (DISM, SFC, optional Setup
-    compatibility scan). If SA stops the job, the checkpoint still exists.
+    and the final report after the slow checks (DISM, SFC, the optional
+    print server backup and Setup compatibility scan). If SA stops the job, the checkpoint still exists.
 
     SA receives one semicolon-delimited result line (same header as 3.x/4.0).
 
