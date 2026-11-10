@@ -22,9 +22,7 @@ Signing the script (#14) is closed as not planned: no certificate; build provena
 | [#134](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/134) | P2 | JeanKadang | Releases have hashes but no build provenance |
 | [#153](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/153) | P3 | Micker71 | Dedicated cluster node assessment script |
 | [#394](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/394) | P3 | JeanKadang | CI job pester (unelevated) can fail without blocking a merge |
-| [#395](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/395) | P3 | JeanKadang | docs/roadmap.md drifts from the issues again; nothing checks it |
 | [#396](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/396) | P3 | JeanKadang | AGENTS.md still describes a one-script repository |
-| [#398](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/398) | P3 | JeanKadang | Docs and release notes still promise code signing (#14) |
 
 ## Future
 
