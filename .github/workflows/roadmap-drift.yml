@@ -1,0 +1,48 @@
+name: Roadmap drift
+
+# Weekly comparison of docs/roadmap.md with the open issues (#395): listed or
+# not, milestone, priority label and owner. Keeps ONE issue, "Roadmap page
+# differs from the issues", up to date: it opens (or is rewritten) when there
+# are differences and closes itself when there are none. The page went stale
+# three times before this (#302, #347, #395).
+# No third-party action: gh and PowerShell only.
+on:
+  schedule:
+    - cron: '37 5 * * 1'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  roadmap:
+    name: roadmap
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Compare the page with the open issues
+        id: scan
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./build/Find-RoadmapDrift.ps1 -ReportPath (Join-Path $env:RUNNER_TEMP 'roadmap.md') | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+      - name: Update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COUNT: ${{ steps.scan.outputs.count }}
+          REPORT: ${{ runner.temp }}/roadmap.md
+        run: |
+          title='Roadmap page differs from the issues'
+          existing=$(gh issue list --state open --search "\"$title\" in:title" --json number,title --jq "[.[] | select(.title == \"$title\")][0].number // empty")
+          if [ "$COUNT" -gt 0 ]; then
+            if [ -n "$existing" ]; then
+              gh issue edit "$existing" --body-file "$REPORT"
+            else
+              gh issue create --title "$title" --label documentation --label P3 --body-file "$REPORT"
+            fi
+          elif [ -n "$existing" ]; then
+            gh issue close "$existing" --reason completed --comment "docs/roadmap.md agrees with the open issues now."
+          fi
