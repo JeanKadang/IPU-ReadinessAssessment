@@ -39,3 +39,4 @@ No date: needs a decision first, or depends on something outside the repo.
 | [#388](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/388) | P3 | Micker71 | End-of-life cycle match takes the first of two equal matches |
 | [#406](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/406) | P3 | Micker71 | Evidence file with the raw protocol, cipher, SMB and NTLM settings |
 | [#407](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/407) | P3 | Micker71 | Investigate: which clients would break, and a side-by-side comparison mode |
+| [#412](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/412) | P3 | JeanKadang | Hosts file: judge the entries, not only list them |
