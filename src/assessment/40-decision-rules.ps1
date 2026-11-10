@@ -18,6 +18,8 @@ $script:FactSources = [ordered]@{
     PerUserServices        = @{ Verified = '2026-10-23'; Source = 'https://learn.microsoft.com/en-us/windows/application-management/per-user-services-in-windows' }
     # VMwareToolsMinimum: Broadcom's guest OS compatibility table for 2019 and 2022 (#253); 2025 keeps 12.5.0, the first release with drivers certified for it (Broadcom blog, 2024-11-07).
     VMwareToolsMinimum     = @{ Verified = '2026-10-29'; Source = 'https://knowledge.broadcom.com/external/article/313371/vmware-tools-compatibility-with-guest-op' }
+    # VMwareToolsReleases (#279): versions and release dates from Broadcom KB 304809; newest 13.1.6.0 of 2026-10-30.
+    VMwareToolsReleases    = @{ Verified = '2026-11-10'; Source = 'https://knowledge.broadcom.com/external/article/304809/build-numbers-and-versions-of-vmware-too.html' }
     # ExpectedWindowsChanges: live runs (#158); AzureArcSetup per learn.microsoft.com/en-us/azure/azure-arc/servers/onboard-windows-server (#197).
     ExpectedWindowsChanges = @{ Verified = '2026-10-14'; Source = 'https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/158' }
     WinReMinPartitionMB    = @{ Verified = '2026-10-13'; Source = 'https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/161' }
@@ -643,6 +645,99 @@ $script:VMwareToolsMinimum = @{
     '2019' = @{ Minimum = '10.1.0'; Recommended = '' }
     '2022' = @{ Minimum = '10.3.5'; Recommended = '12.0.0' }
     '2025' = @{ Minimum = '12.5.0'; Recommended = '' }
+}
+
+# VMware Tools releases with their dates (#279), newest first, from 11.0.0 on:
+# Broadcom KB 304809 "Build numbers and versions of VMware Tools". Used to say
+# how far behind an installed version is; endoflife.date has no VMware Tools.
+# Verified: see $script:FactSources.VMwareToolsReleases.
+$script:VMwareToolsReleases = @(
+    @{ Version = '13.1.6'; Released = '2026-10-30' }
+    @{ Version = '13.1.5'; Released = '2026-09-03' }
+    @{ Version = '13.1.0'; Released = '2026-05-12' }
+    @{ Version = '13.0.10'; Released = '2026-01-20' }
+    @{ Version = '13.0.5'; Released = '2025-09-29' }
+    @{ Version = '13.0.1'; Released = '2025-07-15' }
+    @{ Version = '13.0.0'; Released = '2025-06-17' }
+    @{ Version = '12.5.4'; Released = '2025-09-29' }
+    @{ Version = '12.5.3'; Released = '2025-07-15' }
+    @{ Version = '12.5.2'; Released = '2025-05-12' }
+    @{ Version = '12.5.1'; Released = '2025-03-25' }
+    @{ Version = '12.5.0'; Released = '2024-10-08' }
+    @{ Version = '12.4.5'; Released = '2024-06-07' }
+    @{ Version = '12.4.0'; Released = '2024-03-21' }
+    @{ Version = '12.3.5'; Released = '2023-10-26' }
+    @{ Version = '12.3.0'; Released = '2023-08-31' }
+    @{ Version = '12.2.6'; Released = '2023-08-17' }
+    @{ Version = '12.2.5'; Released = '2023-06-13' }
+    @{ Version = '12.2.0'; Released = '2023-03-07' }
+    @{ Version = '12.1.5'; Released = '2022-11-29' }
+    @{ Version = '12.1.0'; Released = '2022-08-23' }
+    @{ Version = '12.0.6'; Released = '2022-07-21' }
+    @{ Version = '12.0.5'; Released = '2022-05-24' }
+    @{ Version = '12.0.0'; Released = '2022-03-01' }
+    @{ Version = '11.3.5'; Released = '2021-09-23' }
+    @{ Version = '11.3.0'; Released = '2021-06-17' }
+    @{ Version = '11.2.6'; Released = '2021-04-29' }
+    @{ Version = '11.2.5'; Released = '2021-01-12' }
+    @{ Version = '11.2.1'; Released = '2020-12-10' }
+    @{ Version = '11.2.0'; Released = '2020-10-15' }
+    @{ Version = '11.1.5'; Released = '2020-08-18' }
+    @{ Version = '11.1.1'; Released = '2020-06-18' }
+    @{ Version = '11.1.0'; Released = '2020-05-07' }
+    @{ Version = '11.0.6'; Released = '2020-04-07' }
+    @{ Version = '11.0.5'; Released = '2020-01-14' }
+    @{ Version = '11.0.1'; Released = '2019-10-17' }
+    @{ Version = '11.0.0'; Released = '2019-09-19' }
+)
+# More than this many months between the installed release and the newest one is a WARNING (#279).
+$script:VMwareToolsBehindWarnMonths = 24
+
+function Get-VMwareToolsAgeDecision {
+    # Pure (#279): how far behind the newest VMware Tools release an installed
+    # version is, from the dated release table. Kind is Current, Behind,
+    # OlderThanTable, NewerThanTable, NotListed or Unparsable. A version that
+    # is not in the table is never called current. Status is '' when there is
+    # nothing to add to the row (unparsable: the caller already says so).
+    param([string]$Version, [string]$TableChecked = '')
+    $parsed = $null
+    $clean = ([regex]::Match([string]$Version, '^\d+(\.\d+){1,3}')).Value
+    if (-not $clean -or -not [version]::TryParse($clean, [ref]$parsed)) {
+        return [pscustomobject]@{ Kind = 'Unparsable'; Status = ''; Text = ''; ReleasesBehind = $null; MonthsBehind = $null }
+    }
+    $build = $parsed.Build; if ($build -lt 0) { $build = 0 }
+    $three = New-Object System.Version $parsed.Major, $parsed.Minor, $build
+    $inv = [Globalization.CultureInfo]::InvariantCulture
+    $table = @($script:VMwareToolsReleases | ForEach-Object { [pscustomobject]@{ Version = [version]$_.Version; Text = $_.Version; Released = [datetime]::ParseExact($_.Released, 'yyyy-MM-dd', $inv) } } | Sort-Object Version -Descending)
+    $newest = $table[0]; $oldest = $table[$table.Count - 1]
+    $checked = ''; if ($TableChecked) { $checked = ', table checked ' + $TableChecked }
+    $newestText = $newest.Text + ' (' + $newest.Released.ToString('yyyy-MM-dd', $inv) + ')'
+    $months = { param([datetime]$from, [datetime]$to) [int](($to.Year - $from.Year) * 12 + ($to.Month - $from.Month)) }
+    if ($three -gt $newest.Version) {
+        return [pscustomobject]@{ Kind = 'NewerThanTable'; Status = 'OK'; ReleasesBehind = 0; MonthsBehind = 0
+            Text = ('Newer than ' + $newestText + ', the newest release this script knows' + $checked + ': it cannot say whether a newer one exists.') }
+    }
+    if ($three -lt $oldest.Version) {
+        $m = & $months $oldest.Released $newest.Released
+        return [pscustomobject]@{ Kind = 'OlderThanTable'; Status = 'WARNING'; ReleasesBehind = $table.Count; MonthsBehind = $m
+            Text = ('Older than ' + $oldest.Text + ' (' + $oldest.Released.ToString('yyyy-MM-dd', $inv) + '), the oldest release in the table: more than ' + $m + ' months and ' + ($table.Count - 1) + ' releases behind ' + $newestText + '.') }
+    }
+    $hit = @($table | Where-Object { $_.Version -eq $three }) | Select-Object -First 1
+    if (-not $hit) {
+        $earlier = @($table | Where-Object { $_.Version -lt $three }) | Select-Object -First 1
+        return [pscustomobject]@{ Kind = 'NotListed'; Status = 'MANUAL'; ReleasesBehind = $null; MonthsBehind = $null
+            Text = ('Version ' + $three.ToString() + ' is not in Broadcom''s release list as this script knows it' + $checked + '; the nearest earlier release is ' + $earlier.Text + ' (' + $earlier.Released.ToString('yyyy-MM-dd', $inv) + '). Check by hand how far behind ' + $newestText + ' it is.') }
+    }
+    if ($hit.Version -eq $newest.Version) {
+        return [pscustomobject]@{ Kind = 'Current'; Status = 'OK'; ReleasesBehind = 0; MonthsBehind = 0
+            Text = ('Released ' + $hit.Released.ToString('yyyy-MM-dd', $inv) + ': the newest release this script knows' + $checked + '.') }
+    }
+    # Releases behind: every release published after the installed one.
+    $behind = @($table | Where-Object { $_.Released -gt $hit.Released -or ($_.Released -eq $hit.Released -and $_.Version -gt $hit.Version) }).Count
+    $m = & $months $hit.Released $newest.Released
+    $status = 'OK'; if ($m -gt $script:VMwareToolsBehindWarnMonths) { $status = 'WARNING' }
+    return [pscustomobject]@{ Kind = 'Behind'; Status = $status; ReleasesBehind = $behind; MonthsBehind = $m
+        Text = ('Released ' + $hit.Released.ToString('yyyy-MM-dd', $inv) + ': ' + $behind + ' release(s) and ' + $m + ' month(s) behind ' + $newestText + $checked + '.') }
 }
 
 function Get-VMwareToolsDecision {

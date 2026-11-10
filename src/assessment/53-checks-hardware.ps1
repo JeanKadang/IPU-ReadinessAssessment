@@ -78,7 +78,16 @@ function Invoke-VmwareCheck {
     $toolsSvc = @($script:Data.Services | Where-Object { $_.Name -eq 'VMTools' }) | Select-Object -First 1
     $svcText = 'VMTools service not found'
     if ($toolsSvc) { $svcText = 'VMTools service ' + $toolsSvc.State + ', ' + $toolsSvc.StartMode }
-    Add-Result 'VMWARE' 'VMwareTools' $decision.Status ('Version=' + $version) $svcText -Recommendation $decision.Text -Source 'Uninstall registry / vmtoolsd.exe'
+    # How far behind the newest release (#279). It can raise an OK to a WARNING
+    # (far behind) or MANUAL (not in the list); it never lowers a finding.
+    $age = Get-VMwareToolsAgeDecision $version ([string]$script:FactSources.VMwareToolsReleases.Verified)
+    $toolsStatus = $decision.Status; $toolsAdvice = $decision.Text; $toolsDetails = @($svcText)
+    if ($age.Text) { $toolsDetails += $age.Text }
+    if ($decision.Status -eq 'OK' -and ($age.Status -eq 'WARNING' -or $age.Status -eq 'MANUAL')) {
+        $toolsStatus = $age.Status
+        if ($age.Status -eq 'WARNING') { $toolsAdvice = 'VMware Tools is far behind the newest release. Update it before IPU: old VMware drivers (PVSCSI, VMXNET3) are a common cause of a rollback. ' + $decision.Text }
+    }
+    Add-Result 'VMWARE' 'VMwareTools' $toolsStatus ('Version=' + $version) $toolsDetails -Recommendation $toolsAdvice -Source 'Uninstall registry / vmtoolsd.exe; Broadcom KB 304809 (release dates)'
 
     $fw = Get-FirmwareMode
     $firmware = 'Not determined'; if ($fw.Mode -eq 'UEFI') { $firmware = 'EFI' } elseif ($fw.Mode -eq 'BIOS') { $firmware = 'BIOS' }
@@ -93,6 +102,9 @@ function Invoke-VmwareCheck {
 
     $hostText = 'Confirm the ESXi host version supports ' + (Get-ReleaseDisplayName $TargetServerVersion) + ' guests (VMware Compatibility Guide).'
     if ($TargetServerVersion -eq '2025') { $hostText = 'Windows Server 2025 is certified on vSphere 7.0 U3 and 8.0.x. Confirm the host (and any vMotion/DRS target) runs one of these.' }
+    # The ESXi version is not read from the guest (#279): it stays a question
+    # for the virtualization team, with the host's own support status.
+    $hostText += ' Ask the virtualization team which ESXi version hosts this VM, and whether that version is itself still supported.'
     Add-Result 'CHECKLIST' 'VMware host version' 'MANUAL' 'Not visible from inside the guest' '' -Recommendation $hostText -Kind 'Checklist'
     Add-Result 'CHECKLIST' 'VMware guest OS setting' 'MANUAL' 'After the upgrade' '' -Recommendation ('After IPU, power off the VM and change its Guest OS version to Microsoft Windows Server ' + $TargetServerVersion + ' (64-bit), as Broadcom''s IPU KB 374927 instructs.') -Kind 'Checklist'
     Add-Result 'VMWARE' 'BroadcomGuidance' 'INFO' 'Broadcom KB 374927' 'Broadcom recommends a new VM with a clean install over an in-place upgrade of the guest OS.' -Recommendation 'Company decision; listed so the choice to do an IPU is made knowingly.' -Kind 'Observation' -Source 'knowledge.broadcom.com/external/article/374927'

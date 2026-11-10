@@ -402,6 +402,27 @@ Describe 'Checks on a fake server: platform storage network' -Skip:($env:OS -ne 
             (Get-Row 'VMWARE' 'Driver: pvscsi').Count | Should -Be 1
             (Get-Row 'CHECKLIST' 'VMware host version')[0].Kind | Should -Be 'Checklist'
         }
+        It 'the row says how far behind the newest release the installed version is (#279)' {
+            $null = Invoke-TestCheck 'vmware'
+            $r = (Get-Row 'VMWARE' 'VMwareTools')[0]
+            ($r.Details -join ' | ') | Should -Match 'Released 2024-10-08: \d+ release\(s\) and \d+ month\(s\) behind'
+            (Get-Row 'CHECKLIST' 'VMware host version')[0].Recommendation | Should -Match 'which ESXi version hosts this VM'
+        }
+        It 'VMware Tools far behind the newest release are a WARNING for a target that accepts them (#279)' {
+            ($script:Fake.Apps | Where-Object { $_.Name -eq 'VMware Tools' }).Version = '12.0.0.19345655'
+            Reset-FakeServerKeep
+            $TargetServerVersion = '2022'
+            $null = Invoke-TestCheck 'vmware'
+            $r = (Get-Row 'VMWARE' 'VMwareTools')[0]
+            $r.Status | Should -Be 'WARNING'
+            $r.Recommendation | Should -Match 'far behind the newest release'
+        }
+        It 'a version that is not in the release list is MANUAL, not OK (#279)' {
+            ($script:Fake.Apps | Where-Object { $_.Name -eq 'VMware Tools' }).Version = '12.5.9.1'
+            Reset-FakeServerKeep
+            $null = Invoke-TestCheck 'vmware'
+            (Get-Row 'VMWARE' 'VMwareTools')[0].Status | Should -Be 'MANUAL'
+        }
         It 'old VMware Tools are an ACTION for 2025' {
             ($script:Fake.Apps | Where-Object { $_.Name -eq 'VMware Tools' }).Version = '12.3.5.22544099'
             Reset-FakeServerKeep

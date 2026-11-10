@@ -6,6 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- VMware Tools: how far behind (#279). The `VMwareTools` row now says when the installed version was released and how many releases and months it is behind the newest one, for example *Released 2024-10-08: 11 release(s) and 24 month(s) behind 13.1.6 (2026-10-30)*. More than 24 months behind is a WARNING, and a version that is not in the release list is MANUAL instead of OK. The dates are a fact table from Broadcom's KB 304809 (11.0.0 to 13.1.6), with a `FactSources` entry so the six-month freshness test covers it. The ESXi host version is not read from the guest; the existing checklist row now also asks whether the host's ESXi version is itself still supported.
 - Windows Server 2008 and 2008 R2 are recognised as a source release (#276): builds 6001 to 6003 and 7600 to 7601, with the end of support (2020-01-14) and a note that their Extended Security Updates have ended too. They have no direct in-place path to 2019, 2022 or 2025, so the upgrade-path row is a BLOCKER that names the shortest documented route (for example *Windows Server 2008 R2 > Windows Server 2012 R2 > Windows Server 2025, 2 in-place upgrades*) and says a migration is usually the better plan. A Windows Server 2012 source gets its route too (via 2016). The intermediate paths are a dated fact table (`IntermediateUpgradePaths`). The script needs PowerShell 4.0, so it runs on 2008 R2 with WMF 4.0 and not on 2008.
 
 ### Fixed
