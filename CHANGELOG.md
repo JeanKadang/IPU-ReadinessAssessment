@@ -10,7 +10,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Documentation
 
-- `docs/roadmap.md` brought in line with the issues: #349 is P2, #90 is closed, and the four issues of the 2026-11-10 repository review are listed (#393, #394, #396; #395 closes with this change).
+- `docs/roadmap.md` brought in line with the issues: #349 is P2, #90 is closed, and the four issues of the 2026-11-10 repository review are listed (#393, #394, #396).
+- No more "not code-signed yet" (#398). Signing the scripts (#14) is closed as not planned: the project has no code-signing certificate and no signing authority to get one from. The README, the user guide and the notes of every release now say the scripts are not code-signed and that a download is checked against `SHA256SUMS.txt`; the advice for machines that enforce signed scripts (sign with your own certificate, or a process-scoped `-ExecutionPolicy Bypass`) is unchanged. Build provenance (#134) is the planned addition.
 
 ## [4.8.0] - 2026-11-10
 

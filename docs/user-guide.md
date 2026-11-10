@@ -99,9 +99,11 @@ Open an elevated PowerShell session on the server.
 .\Windows-IPU-Readiness-Assessment.ps1 -AssessmentMode Post
 ```
 
-If your machine enforces signed scripts and refuses to run it (`is not digitally signed`), either sign the
-script or start PowerShell with a process-scoped bypass: `powershell -ExecutionPolicy Bypass -File .\...ps1`.
-Do not change the machine-wide policy for this.
+The scripts are not code-signed (the project has no certificate), so check the hash of the download first
+([README, Get the script](../README.md#get-the-script)). If your machine enforces signed scripts and refuses to run
+it (`is not digitally signed`), either sign the script with your organisation's certificate or start PowerShell with a
+process-scoped bypass: `powershell -ExecutionPolicy Bypass -File .\...ps1`. Do not change the machine-wide policy for
+this.
 
 ### Choosing a target
 
@@ -952,7 +954,7 @@ access to the output folder.
 | `MANUAL` row *Prerequisites* naming a module | An optional PowerShell module is missing | Install the feature that provides it, or review the named area by hand |
 | SA job fails at once: `Cannot convert value "System.String" to type "System.Boolean"` | `$true`/`$false` in the SA parameter field (SA escapes `$`) | Use `1`/`0` (section 10, [Passing arguments in SA](#passing-arguments-in-sa)) |
 | SA output starts with `Set-ExecutionPolicy ... overridden by a policy defined at a more specific scope` | SA's wrapper, with a Group Policy that sets the execution policy | Nothing: harmless; read the result line that follows |
-| `... is not digitally signed` | Machine enforces signed scripts | Sign the script, or `powershell -ExecutionPolicy Bypass -File` for that process only |
+| `... is not digitally signed` | Machine enforces signed scripts; the project does not sign its scripts | Check the hash, then sign the script with your own certificate, or `powershell -ExecutionPolicy Bypass -File` for that process only |
 | Fleet overview: `No ... files found` | Wrong `InputFolder`, or the files were renamed | Files must end in `-IPU-Assessment.json` or `-IPU-PostUpgrade.json` |
 | Fleet overview lists a file under "Files not read" | Corrupt JSON, or not an `IPU-Assessment/1` result JSON | Re-collect the file from the server; check the assessment script version is 4.0.1 or later |
 | Fleet CSV opens as one column in Excel | Regional list separator differs from `;` | Re-run with `-Delimiter ','` |

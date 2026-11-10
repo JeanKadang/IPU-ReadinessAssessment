@@ -64,8 +64,9 @@ that its hash matches the one in `SHA256SUMS.txt`:
 Get-FileHash .\Windows-IPU-Readiness-Assessment.ps1 -Algorithm SHA256
 ```
 
-The scripts are not code-signed yet (#14). If your servers enforce signed scripts, sign them with your
-organisation's certificate after checking the hash.
+The scripts are not code-signed: this project has no code-signing certificate. Check a download against the hash
+above (`SHA256SUMS.txt` on the release). If your servers enforce signed scripts, sign them with your organisation's
+certificate after checking the hash.
 
 ## Quick start
 
