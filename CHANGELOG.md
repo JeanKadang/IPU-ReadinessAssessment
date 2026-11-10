@@ -4,6 +4,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Patch level (#257): the age is now taken from the newest update described as a *Security Update* (the monthly cumulative update or rollup), not from the newest update of any kind, so a recent .NET or servicing-stack update no longer hides an old cumulative update. The row shows `LatestSecurityUpdate=`, the build with its update revision (`Build=14393.7428`) and, when there is one, the newer update of another kind. When no update carries that description, the newest of any kind is used and the row says so.
+
 ## [4.7.0] - 2026-11-03
 
 ### Added

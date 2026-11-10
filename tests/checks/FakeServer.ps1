@@ -366,7 +366,7 @@ function New-FakeMachine {
             'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp|UserAuthentication' = 1
         }
         ItemProperty = @{
-            'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' = [pscustomobject]@{ EditionID = 'ServerStandard'; InstallationType = 'Server'; UBR = 7428 }
+            'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' = [pscustomobject]@{ EditionID = 'ServerStandard'; InstallationType = 'Server'; CurrentBuildNumber = '14393'; UBR = 7428 }
             'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform' = [pscustomobject]@{ KeyManagementServiceName = 'kms.example.test'; KeyManagementServicePort = '1688' }
         }
         Licensing = @([pscustomobject]@{ Name = 'Windows(R), ServerStandard edition'; Description = 'Windows(R) Operating System, VOLUME_KMSCLIENT channel'; LicenseStatus = 1; PartialProductKey = 'ABCDE'; ProductKeyChannel = 'Volume:GVLK'; GracePeriodRemaining = 0 })

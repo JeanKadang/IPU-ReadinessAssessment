@@ -178,7 +178,7 @@ These are project values, not Microsoft minimums (unless noted).
 | `MinimumCFreeGB` | 40 | Free space target on C:. Below it, an `ACTION` finding recommends extending C: |
 | `ExtendBlockGB` | 10 | Step size for that recommendation: the shortfall is rounded up to a multiple of this (for example 12 GB short with a 10 GB step recommends 20 GB) |
 | `MinimumMemoryGB` | 8 | Below this, a `WARNING` recommends adding memory |
-| `MaxPatchAgeDays` | 60 | Warn when the last patch is older |
+| `MaxPatchAgeDays` | 60 | Warn when the newest security (cumulative) update is older |
 | `UptimeWarningDays` | 60 | Warn on long uptime (a reboot is overdue) |
 | `GroupPolicyMaxAgeDays` | 7 | Domain members: warn when Group Policy has not applied for longer |
 | `AVMaxAgeDays` | 3 | Warn when antivirus signatures are older |

@@ -108,6 +108,44 @@ $script:ReleaseEndOfSupport = @{
     '2025'   = '2034-11-14'
 }
 
+function Get-PatchLevelDecision {
+    # Pure (#257): how old the patch level is. Get-HotFix lists updates of every
+    # kind; a recent .NET or servicing-stack update must not hide an old
+    # cumulative update. The monthly security release (cumulative update or
+    # rollup) is listed with the description "Security Update"; .NET updates
+    # and previews are listed as "Update". So the newest "Security Update" is
+    # the best date for the patch level that the update list can give, and the
+    # build with its revision (UBR) is shown beside it. When no entry carries
+    # that description, the newest update of any kind is used and the row says so.
+    # $Fixes: objects with Id, Date ([datetime] or $null) and Description.
+    # Kind is NoHistory, Security or AnyKind.
+    param([object[]]$Fixes, [datetime]$Now, [int]$MaxAgeDays, [string]$BuildText = '')
+    $dated = @(@($Fixes) | Where-Object { $_ -and $_.Date -is [datetime] } | Sort-Object Date -Descending)
+    if ($dated.Count -eq 0) {
+        return [pscustomobject]@{ Kind = 'NoHistory'; Status = 'MANUAL'; Value = 'No dated update history returned'; Details = @(); AgeDays = $null }
+    }
+    $inv = [Globalization.CultureInfo]::InvariantCulture
+    $newestAny = $dated[0]
+    $security = @($dated | Where-Object { [string]$_.Description -match '^\s*Security Update\s*$' })
+    $kind = 'Security'; $basis = $null
+    if ($security.Count -gt 0) { $basis = $security[0] } else { $kind = 'AnyKind'; $basis = $newestAny }
+    $age = [int][math]::Floor(($Now - $basis.Date).TotalDays)
+    $details = @('AgeDays=' + $age)
+    if ($BuildText) { $details += ('Build=' + $BuildText) }
+    if ($kind -eq 'Security') {
+        $value = 'LatestSecurityUpdate=' + $basis.Date.ToString('yyyy-MM-dd', $inv) + ' (' + $basis.Id + ')'
+        if ($newestAny.Id -ne $basis.Id -and $newestAny.Date -gt $basis.Date) {
+            $what = [string]$newestAny.Description; if (-not $what) { $what = 'no description' }
+            $details += ('NewestOfAnyKind=' + $newestAny.Date.ToString('yyyy-MM-dd', $inv) + ' (' + $newestAny.Id + ', ' + $what + '); a .NET, servicing-stack or preview update does not show the security patch level')
+        }
+    } else {
+        $value = 'LatestInstalled=' + $basis.Date.ToString('yyyy-MM-dd', $inv) + ' (' + $basis.Id + ')'
+        $details += 'No listed update is described as a Security Update, so the newest update of any kind is used; a .NET or servicing-stack update can hide an old cumulative update. Compare the build number with the Windows update history.'
+    }
+    $status = 'OK'; if ($age -gt $MaxAgeDays) { $status = 'WARNING' }
+    return [pscustomobject]@{ Kind = $kind; Status = $status; Value = $value; Details = $details; AgeDays = $age }
+}
+
 function Get-SupportLifecycleDecision {
     # Pure: release + today -> INFO while supported, WARNING once extended
     # support has ended (the day after the end date). An unknown release is
