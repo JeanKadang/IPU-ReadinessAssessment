@@ -4,6 +4,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- The roadmap page no longer goes stale unnoticed (#395). The weekly workflow "Roadmap drift" (`build/Find-RoadmapDrift.ps1`) compares `docs/roadmap.md` with the open issues (listed or not, milestone, priority label, owner) and keeps one issue, "Roadmap page differs from the issues", up to date; it closes itself when the page agrees. The page went stale three times before (#302, #347, #395).
+
+### Documentation
+
+- `docs/roadmap.md` brought in line with the issues: #349 is P2, #90 is closed, and the four issues of the 2026-11-10 repository review are listed (#393, #394, #396; #395 closes with this change).
+
 ## [4.8.0] - 2026-11-10
 
 ### Added
