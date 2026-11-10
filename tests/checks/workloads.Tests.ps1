@@ -145,12 +145,18 @@ Describe 'Checks on a fake server: workloads' -Skip:($env:OS -ne 'Windows_NT') {
             (Get-Row 'PRINTING' 'PrintBackup')[0].Status | Should -Be 'OK'
         }
         It 'a network EvidenceRoot does not fail the free-space lookup; the row says it was not checked (#260)' {
+            # No such share exists in a test: the evidence folder is a local stand-in,
+            # the free-space decision still sees the network root.
+            $standIn = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            Mock Initialize-EvidenceFolder { $null = New-Item -ItemType Directory -Path $standIn -Force; return $standIn }
             $EvidenceRoot = '\\fileserver.example.test\ipu\evidence'
-            $script:Fake.Native['printbrm.exe'] = @{ ExitCode = 1; Output = 'Operation failed.' }
+            $script:Fake.Cim.Remove('Win32_LogicalDisk')
+            $script:Fake.Native['printbrm.exe'] = { param($a) [IO.File]::WriteAllText($a[2], 'export'); @{ Output = 'Successfully finished operation.' } }
             $run = Invoke-TestCheck 'printbackup'
             $run.Outcome | Should -Be 'Completed'
             $row = (Get-Row 'PRINTING' 'PrintBackup')[0]
-            $row.Value | Should -Be 'PrintBrm failed (exit code 1)'
+            $row.Status | Should -Be 'OK'
+            ($row.Details -join ' | ') | Should -Match 'free space of \\\\fileserver\.example\.test\\ipu was not checked'
         }
         It 'not enough free space: skipped as MANUAL with the command to run elsewhere' {
             $script:Fake.DriverStoreBytes = [long]4GB
