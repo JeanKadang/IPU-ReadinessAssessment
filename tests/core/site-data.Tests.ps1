@@ -115,6 +115,7 @@ Describe 'Site data files (#32)' {
             @{ Case = 'an unknown setting';                  Json = '"Settings": { "MinimumCFree": 60 }';             Message = '"MinimumCFree" is not a profile setting' }
             @{ Case = 'a per-run argument';                  Json = '"Settings": { "AssessmentMode": "Post" }';       Message = '"AssessmentMode" is not a profile setting' }
             @{ Case = 'a missing Settings object';           Json = '"Thresholds": { "MinimumCFreeGB": 60 }';         Message = 'Settings must be an object' }
+            @{ Case = 'an empty list (#386)';                Json = '"Settings": { "PkiAllowedTargets": [] }';        Message = 'PkiAllowedTargets: an empty list is not allowed' }
             @{ Case = 'an empty Settings object';            Json = '"Settings": { }';                                Message = 'sets no setting' }
         ) {
             $d = Get-ProfileSettingDecision (New-ProfileFile $Json) $script:ProfileAttributes

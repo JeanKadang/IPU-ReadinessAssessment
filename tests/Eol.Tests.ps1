@@ -81,6 +81,22 @@ Describe 'ConvertTo-EolDate' {
 }
 
 Describe 'Get-EolDecision' {
+    It 'a missing or unreadable end date is MANUAL, never supported: <Case> (#386)' -TestCases @(
+        @{ Case = 'no value';        Eol = $null }
+        @{ Case = 'empty text';      Eol = '' }
+        @{ Case = 'not a date';      Eol = 'soon' }
+        @{ Case = 'another format';  Eol = '31-12-2028' }
+        @{ Case = 'a number';        Eol = 2028 }
+    ) {
+        $d = Get-EolDecision 'php' '8.4.1' @((New-Cycle '8.4' $Eol)) $script:Today
+        $d.Status | Should -Be 'MANUAL'
+        $d.State | Should -Be 'Unknown'
+        $d.Text | Should -Match 'missing or cannot be read'
+    }
+    It 'an explicit false still means no end date is published (#386)' {
+        $d = Get-EolDecision 'php' '8.4.1' @((New-Cycle '8.4' $false)) $script:Today
+        $d.Status | Should -Be 'OK'; $d.State | Should -Be 'Supported'
+    }
     It 'supported' {
         $d = Get-EolDecision 'php' '8.4.1' @((New-Cycle '8.4' '2028-12-31' '2026-12-31')) $script:Today
         $d.State | Should -Be 'Supported'; $d.Status | Should -Be 'OK'; $d.Cycle | Should -Be '8.4'; $d.EolDate | Should -Be '2028-12-31'

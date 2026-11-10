@@ -25,6 +25,8 @@ function Get-NotAssessedCheck {
     param([object[]]$CheckRuns)
     $list = @()
     foreach ($run in @($CheckRuns)) {
+        # A result without check runs (#386) lists nothing.
+        if ($null -eq $run) { continue }
         if ($run.Outcome -eq 'Completed') { continue }
         if ($run.Outcome -eq 'Skipped') {
             if ([string]$run.Message -like 'Needs *') { $list += ($run.Name + ' (' + $run.Message + ')') }

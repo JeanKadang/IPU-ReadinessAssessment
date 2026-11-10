@@ -80,9 +80,12 @@ function Get-CheckRunCount {
     # or does not apply (switched off, no media, not a print server, a SPECIAL
     # short report): it is not a gap.
     param([object[]]$CheckRuns)
-    $notCompleted = @((Get-CoverageNotice $CheckRuns).Problems).Count
-    $other = @(@($CheckRuns) | Where-Object { $_ -and $_.Outcome -ne 'Completed' }).Count
-    return [pscustomobject]@{ Total = @(@($CheckRuns) | Where-Object { $_ }).Count; NotCompleted = $notCompleted; Skipped = ($other - $notCompleted) }
+    # No list, or a list with an empty entry, counts as nothing (#386).
+    $runs = @(@($CheckRuns) | Where-Object { $_ })
+    if ($runs.Count -eq 0) { return [pscustomobject]@{ Total = 0; NotCompleted = 0; Skipped = 0 } }
+    $notCompleted = @((Get-CoverageNotice $runs).Problems).Count
+    $other = @($runs | Where-Object { $_.Outcome -ne 'Completed' }).Count
+    return [pscustomobject]@{ Total = $runs.Count; NotCompleted = $notCompleted; Skipped = ($other - $notCompleted) }
 }
 
 function New-RecommendationHtml {

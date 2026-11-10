@@ -222,7 +222,7 @@ Describe 'Checks on a fake server: workloads' -Skip:($env:OS -ne 'Windows_NT') {
         It 'SQL Server 2016 below SP3 is an ACTION for a 2019 target (#332)' {
             $root = 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server'
             $script:Fake.ItemProperty[$root + '\Instance Names\SQL'] = [pscustomobject]@{ MSSQLSERVER = 'MSSQL13.MSSQLSERVER' }
-            $script:Fake.ItemProperty[$root + '\MSSQL13.MSSQLSERVER\Setup'] = [pscustomobject]@{ Version = '13.0.5026.0'; Edition = 'Standard Edition' }
+            $script:Fake.ItemProperty[$root + '\MSSQL13.MSSQLSERVER\Setup'] = [pscustomobject]@{ Version = '13.2.5026.0'; PatchLevel = '13.2.5830.85'; Edition = 'Standard Edition' }
             $TargetServerVersion = '2019'
             $null = Invoke-TestCheck 'sql'
             $r = (Get-Row 'SQL' 'Database Engine: MSSQLSERVER')[0]
@@ -302,6 +302,14 @@ Describe 'Checks on a fake server: workloads' -Skip:($env:OS -ne 'Windows_NT') {
                 [pscustomobject]@{ Name = 'print$'; Path = 'C:\Windows\system32\spool\drivers'; Description = 'Printer Drivers'; Special = $false }
             )
             $script:Fake.ShareAccess = @{ 'Data' = @([pscustomobject]@{ AccountName = 'CORP\Data Owners'; AccessRight = 'Full'; AccessControlType = 'Allow' }, [pscustomobject]@{ AccountName = 'Everyone'; AccessRight = 'Read'; AccessControlType = 'Allow' }) }
+        }
+        It 'a server without shares keeps an empty list in the snapshot, so the post-upgrade run can compare it (#386)' {
+            $script:Fake.Shares = @($script:Fake.Shares | Where-Object { $_.Special })
+            Reset-FakeServerKeep
+            (Invoke-TestCheck 'fileshares').Outcome | Should -Be 'Completed'
+            (Get-Row 'FILE_SHARES' 'FileShares')[0].Status | Should -Be 'INFO'
+            $script:Data.Snapshot.ContainsKey('Shares') | Should -BeTrue
+            @($script:Data.Snapshot.Shares).Count | Should -Be 0
         }
         It 'lists shares with path and permissions, without administrative shares, and keeps them in the snapshot (#95)' {
             $script:Fake.Features['FS-FileServer'] = $true

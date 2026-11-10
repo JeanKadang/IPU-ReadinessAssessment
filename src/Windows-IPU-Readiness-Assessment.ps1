@@ -586,6 +586,12 @@ function Get-EolDecision {
         $result.Text = $name + ' ' + $result.Cycle + ' has reached end of life.'
         return [pscustomobject]$result
     }
+    # Only an explicit false means "no end date is published" (#386). A
+    # missing or unreadable value is not known, and must not read as supported.
+    if ($null -eq $eol -and -not ($c.eol -is [bool])) {
+        $result.Text = $name + ' ' + $result.Cycle + ': the end-of-life date in the snapshot is missing or cannot be read. Check the vendor lifecycle page, and refresh the snapshot.'
+        return [pscustomobject]$result
+    }
     if ($null -eq $eol) {
         $result.State = 'Supported'; $result.Status = 'OK'
         $result.Text = $name + ' ' + $result.Cycle + ': no end-of-life date is published (that is not a promise of support).'
@@ -1872,12 +1878,21 @@ function Invoke-NativeTreeKill {
     Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
 }
 
+# How many uninstall entries the last Get-InstalledApplication could not read.
+$script:AppReadFailures = 0
+
 function Get-InstalledApplication {
+    # One key at a time (#386): a wildcard read stops at the first entry with
+    # a value it cannot convert, and the rest of the list is lost without a
+    # word. A failed entry is counted, and the baseline reports it.
     $items = @()
-    foreach ($path in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*')) {
-        # SilentlyContinue: One unreadable uninstall entry must not hide the others; Wow6432Node is absent on 32-bit Windows.
-        foreach ($entry in @(Get-ItemProperty $path -ErrorAction SilentlyContinue)) {
-            if ($entry.DisplayName -and -not $entry.SystemComponent) {
+    $script:AppReadFailures = 0
+    foreach ($path in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall','HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall')) {
+        # SilentlyContinue: Wow6432Node is absent on 32-bit Windows (absence is normal).
+        foreach ($key in @(Get-ChildItem -LiteralPath $path -ErrorAction SilentlyContinue)) {
+            $entry = $null
+            try { $entry = Get-ItemProperty -LiteralPath $key.PSPath -ErrorAction Stop } catch { $script:AppReadFailures++; Write-Swallowed $_; continue }
+            if ($entry -and $entry.PSObject.Properties['DisplayName'] -and $entry.DisplayName -and -not ($entry.PSObject.Properties['SystemComponent'] -and $entry.SystemComponent)) {
                 $items += [pscustomobject]@{
                     Name=[string]$entry.DisplayName; Version=[string]$entry.DisplayVersion
                     Publisher=[string]$entry.Publisher; InstallDate=[string]$entry.InstallDate
@@ -2555,6 +2570,9 @@ function Get-PkiTargetDecision {
     # upgrade. Kind is Allowed, TargetNotAllowed, NoAllowedPath or Unknown.
     param([string]$Source, [string]$Target, [string[]]$Allowed)
     $make = { param($k, $s, $t, $r) [pscustomobject]@{ Kind = $k; Status = $s; Text = $t; Recommendation = $r } }
+    $Allowed = @($Allowed | Where-Object { $_ })
+    # An empty list (#386) is not "nothing is forbidden".
+    if ($Allowed.Count -eq 0) { return (& $make 'Unknown' 'MANUAL' 'The PKI site policy (PkiAllowedTargets) names no release, so it cannot be checked.' 'Set PkiAllowedTargets to the releases the PKI team allows (for example 2019,2022) and run again, or ask the PKI team.') }
     $names = (@($Allowed | ForEach-Object { Get-ReleaseDisplayName $_ }) -join ' or ')
     if (-not $Source) { return (& $make 'Unknown' 'MANUAL' 'The source release is unknown, so the PKI site policy cannot be checked.' ('Check by hand: PKI servers are upgraded in place only to ' + $names + '.')) }
     $canReach = { param($t) $Source -eq $t -or ($script:SupportedUpgradePaths.ContainsKey($t) -and $script:SupportedUpgradePaths[$t] -contains $Source) }
@@ -2563,15 +2581,18 @@ function Get-PkiTargetDecision {
     $reachable = @($Allowed | Where-Object { $_ -ne $Source -and $script:SupportedUpgradePaths.ContainsKey($_) -and $script:SupportedUpgradePaths[$_] -contains $Source } | Sort-Object -Descending)
     $exception = ' An in-place upgrade to ' + (Get-ReleaseDisplayName $Target) + ' needs an exception agreed with the PKI team (for example for the last PKI server in the environment); building a new PKI on ' + (Get-ReleaseDisplayName $Target) + ' is a migration, not an in-place upgrade, and is outside this rule.'
     if (@($Allowed) -notcontains $Target) {
-        if (@($Allowed) -contains $Source) {
-            return (& $make 'TargetNotAllowed' 'BLOCKER' ('Site policy: PKI servers are not upgraded in place beyond ' + $names + ', and this server is already on ' + (Get-ReleaseDisplayName $Source) + '.') ('Leave the server on its current release.' + $exception))
-        }
+        # An allowed release that can still be reached comes first (#386): a
+        # server on 2019 with 2019 and 2022 allowed can go to 2022.
         if ($reachable.Count -gt 0) {
             return (& $make 'TargetNotAllowed' 'BLOCKER' ('Site policy: PKI servers are upgraded in place only to ' + $names + ', not to ' + (Get-ReleaseDisplayName $Target) + '.') ('Assess and upgrade against ' + (Get-ReleaseDisplayName $reachable[0]) + ' (-TargetServerVersion ' + $reachable[0] + ').' + $exception))
         }
-    } elseif ($reachable.Count -gt 0) {
-        # The target is allowed but not reachable; another allowed one is:
-        # the upgrade path row already says so.
+        if (@($Allowed) -contains $Source) {
+            return (& $make 'TargetNotAllowed' 'BLOCKER' ('Site policy: PKI servers are not upgraded in place beyond ' + $names + ', and this server is already on ' + (Get-ReleaseDisplayName $Source) + '.') ('Leave the server on its current release.' + $exception))
+        }
+    } elseif ($reachable.Count -gt 0 -or @($Allowed) -contains $Source) {
+        # The target is allowed but cannot be reached from here; another
+        # allowed release can, or the server is already on one. The upgrade
+        # path row says what is wrong with the target.
         return (& $make 'Allowed' 'OK' ('The PKI site policy allows ' + $names + '.') '')
     }
     return (& $make 'NoAllowedPath' 'BLOCKER' ('No in-place upgrade the PKI site policy allows: PKI servers go only to ' + $names + ', and Microsoft supports no direct in-place upgrade from ' + (Get-ReleaseDisplayName $Source) + ' to it.') 'Plan a migration to a new server with the PKI team (CA backup and restore, or a side-by-side CA migration) instead of an in-place upgrade.')
@@ -2670,10 +2691,13 @@ function Get-SqlSupportDecision {
         if ($min) {
             $parsed = $null
             $clean = ([regex]::Match([string]$Version, '^\d+(\.\d+){1,3}')).Value
-            if ($clean -and [version]::TryParse($clean, [ref]$parsed) -and $parsed -lt [version]$min.Build) {
+            # Compare the build number only (#386): the registry writes the
+            # service pack as the minor number (13.2.5026.0 is SP2), the
+            # minimum is in the product form (13.0.6300).
+            if ($clean -and [version]::TryParse($clean, [ref]$parsed) -and $parsed.Build -ge 0 -and $parsed.Build -lt ([version]$min.Build).Build) {
                 return [pscustomobject]@{ Status='ACTION'; Release=$label; Text=($label + ' ' + $clean + ' is below ' + $min.ServicePack + ' (' + $min.Build + '), which Microsoft requires on ' + (Get-ReleaseDisplayName $Target) + '. Install ' + $min.ServicePack + ' and the latest CU before IPU, and engage the DBA.') }
             }
-            if (-not $parsed) {
+            if (-not $parsed -or $parsed.Build -lt 0) {
                 return [pscustomobject]@{ Status='OK'; Release=$label; Text=($label + ' is supported on ' + (Get-ReleaseDisplayName $Target) + ' with ' + $min.ServicePack + ' or later. Confirm the service pack and the latest CU are installed, and engage the DBA.') }
             }
         }
@@ -4200,6 +4224,8 @@ function ConvertTo-RelaunchArgumentText {
         elseif ($v -is [bool]) { $text += ' -' + $key + ' $' + $v.ToString().ToLowerInvariant() }
         elseif ($v -is [int]) { $text += ' -' + $key + ' ' + $v.ToString([Globalization.CultureInfo]::InvariantCulture) }
         elseif ($v -is [string]) { $text += ' -' + $key + " '" + ($v -replace "'","''") + "'" }
+        # A list of text (#386, -PkiAllowedTargets): 'a','b'.
+        elseif ($v -is [string[]] -and $v.Count -gt 0) { $text += ' -' + $key + ' ' + (@($v | ForEach-Object { "'" + ($_ -replace "'","''") + "'" }) -join ',') }
         else {
             $typeName = '<null>'
             if ($null -ne $v) { $typeName = $v.GetType().FullName }
@@ -4452,6 +4478,9 @@ function Get-ProfileSettingDecision {
                 $msg = $_.Exception.Message; if ($_.Exception.InnerException) { $msg = $_.Exception.InnerException.Message }
                 $errors.Add(($name + ': value "' + [string]$s.Value + '" is not allowed. ' + $msg)); continue
             }
+            # An empty list passes the pattern of a list parameter, because
+            # there is no element to test (#386).
+            if ($s.Value -is [array] -and @($s.Value).Count -eq 0) { $errors.Add(($name + ': an empty list is not allowed. Name at least one value.')); continue }
             if ($Bound -contains $name) { $ignored.Add($name); continue }
             $settings[$name] = $probe.Value
         }
@@ -4765,7 +4794,10 @@ function Get-SpecialServerDecision {
 function Get-SpecialServerCheckId {
     # Pure (#152): the checks a SPECIAL short report keeps - what is needed
     # to describe the server and choose a plan.
-    return ,@('baseline','upgradepath','licensing','platform','performance','domain','cluster','special','storage')
+    # sql and pki (#386): a clustered SQL Server or a CA on a domain
+    # controller is common, and the fleet overview names the DBA and PKI
+    # teams from their rows.
+    return ,@('baseline','upgradepath','licensing','platform','performance','domain','cluster','special','storage','sql','pki')
 }
 
 function Get-SpecialServerContent {
@@ -4921,7 +4953,12 @@ function Invoke-BaselineCheck {
     if ($null -ne $script:Data.Features) { $script:Data.Snapshot.Features = @($script:Data.Features.Keys | Where-Object { $script:Data.Features[$_] } | Sort-Object) }
 
     if ($featureInventoryError) {
-        Add-Result 'ASSESSMENT' 'FeatureInventory' 'MANUAL' 'Get-WindowsFeature failed' $featureInventoryError -Recommendation 'List the installed roles and features by hand (Server Manager, or Get-WindowsFeature in an elevated session). Until then the cluster, IIS and RDS rows are MANUAL, not "not installed".' -Source 'ServerManager'
+        Add-Result 'ASSESSMENT' 'FeatureInventory' 'MANUAL' 'Get-WindowsFeature failed' $featureInventoryError -Recommendation 'List the installed roles and features by hand (Server Manager, or Get-WindowsFeature in an elevated session). Until then the cluster, IIS and RDS rows are MANUAL, not "not installed", and other role checks (for example the AD CS role services) can miss a role.' -Source 'ServerManager'
+    }
+    # Uninstall entries that could not be read (#386): the application list,
+    # and every check that looks for a product in it, may miss something.
+    if ($script:AppReadFailures -gt 0) {
+        Add-Result 'ASSESSMENT' 'ApplicationInventory' 'MANUAL' ($script:AppReadFailures.ToString() + ' uninstall entr' + $(if ($script:AppReadFailures -eq 1) { 'y' } else { 'ies' }) + ' could not be read') 'The list of installed applications may be incomplete, so a product (agent, antivirus, backup, database) can be missing from this report.' -Recommendation 'Compare the application rows with Programs and Features on the server. The log names each entry that failed.' -Kind 'Finding' -Source 'Uninstall registry keys'
     }
     if (-not $script:NumberCultureResolved.Known) {
         Add-Result 'ASSESSMENT' 'NumberCulture' 'INFO' ('Number format ''' + $NumberCultureName + ''' is not a culture on this server') 'Numbers use the invariant format (1,234.5).' -Recommendation 'Give -NumberCultureName a culture name that exists, for example da-DK or en-US.' -Source 'NumberCultureName'
@@ -5254,8 +5291,12 @@ function Invoke-CompatScanCheck {
         $mediaRoot = $TargetMediaPath
         if ($TargetMediaPath -match '\.iso$') {
             if (-not (Test-Path -LiteralPath $TargetMediaPath)) { throw ('ISO not found: ' + $TargetMediaPath) }
-            $mountedIso = Mount-DiskImage -ImagePath $TargetMediaPath -PassThru -ErrorAction Stop
-            $letter = ($mountedIso | Get-Volume -ErrorAction Stop).DriveLetter
+            # An ISO the operator had mounted before the run stays mounted (#386).
+            $wasAttached = $false
+            if (Test-CommandAvailable 'Get-DiskImage') { try { $wasAttached = [bool](Get-DiskImage -ImagePath $TargetMediaPath -ErrorAction Stop).Attached } catch { Write-Swallowed $_ } }
+            $image = Mount-DiskImage -ImagePath $TargetMediaPath -PassThru -ErrorAction Stop
+            if (-not $wasAttached) { $mountedIso = $image }
+            $letter = ($image | Get-Volume -ErrorAction Stop).DriveLetter
             if (-not $letter) { throw 'The mounted ISO received no drive letter.' }
             $mediaRoot = $letter + ':\'
         }
@@ -5408,8 +5449,10 @@ function Invoke-SqlCheck {
             foreach ($prop in @($names.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' })) {
                 # SilentlyContinue: A missing Setup key leaves the version empty, which is reported as MANUAL below.
                 $setup = Get-ItemProperty (Join-Path $root ([string]$prop.Value + '\Setup')) -ErrorAction SilentlyContinue
-                $version = [string]$setup.Version
-                if (-not $version) { $version = [string]$setup.PatchLevel }
+                # PatchLevel is what is installed now (service pack, CU, GDR);
+                # Version is the level of the last setup run (#386).
+                $version = [string]$setup.PatchLevel
+                if (-not $version) { $version = [string]$setup.Version }
                 $instances += [pscustomobject]@{ Instance=$prop.Name; Type=$type; Id=[string]$prop.Value; Version=$version; Edition=[string]$setup.Edition; Root=$root }
             }
         }
@@ -5501,6 +5544,9 @@ function Invoke-FileSharesCheck {
         $note = 'No shares besides the default administrative shares'
         if ($role -eq $true) { Add-Result 'FILE_SHARES' 'FileShares' 'INFO' $note 'The File Server role is installed but shares nothing.' -Source 'Get-SmbShare' }
         else { Add-Result 'FILE_SHARES' 'FileShares' 'INFO' $note -Source 'Get-SmbShare' }
+        # An empty list is still a list that was read (#386): without it the
+        # post-upgrade run says the shares could not be compared.
+        if ($script:Data.Snapshot) { $script:Data.Snapshot.Shares = @() }
         return
     }
     Add-Result 'FILE_SHARES' 'FileShares' 'WARNING' ('Count=' + $shares.Count) (@($shares | ForEach-Object { $_.Name }) -join ', ') -Recommendation 'Shared folders must be reachable again right after the upgrade. Test access from a client with the share owners, and keep this list (with permissions) for the comparison afterwards.' -Source 'Get-SmbShare'
@@ -7012,9 +7058,12 @@ function Get-CheckRunCount {
     # or does not apply (switched off, no media, not a print server, a SPECIAL
     # short report): it is not a gap.
     param([object[]]$CheckRuns)
-    $notCompleted = @((Get-CoverageNotice $CheckRuns).Problems).Count
-    $other = @(@($CheckRuns) | Where-Object { $_ -and $_.Outcome -ne 'Completed' }).Count
-    return [pscustomobject]@{ Total = @(@($CheckRuns) | Where-Object { $_ }).Count; NotCompleted = $notCompleted; Skipped = ($other - $notCompleted) }
+    # No list, or a list with an empty entry, counts as nothing (#386).
+    $runs = @(@($CheckRuns) | Where-Object { $_ })
+    if ($runs.Count -eq 0) { return [pscustomobject]@{ Total = 0; NotCompleted = 0; Skipped = 0 } }
+    $notCompleted = @((Get-CoverageNotice $runs).Problems).Count
+    $other = @($runs | Where-Object { $_.Outcome -ne 'Completed' }).Count
+    return [pscustomobject]@{ Total = $runs.Count; NotCompleted = $notCompleted; Skipped = ($other - $notCompleted) }
 }
 
 function New-RecommendationHtml {

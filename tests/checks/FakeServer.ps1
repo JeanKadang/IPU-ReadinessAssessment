@@ -321,6 +321,7 @@ function Get-WindowsImage {
     return @($script:Fake.Images)
 }
 function Mount-DiskImage { [CmdletBinding()] param([string]$ImagePath, [switch]$PassThru) $script:Fake.Mounted = $ImagePath; return [pscustomobject]@{ ImagePath = $ImagePath; DiskNumber = 99; PartitionNumber = 1 } }
+function Get-DiskImage { [CmdletBinding()] param([string]$ImagePath) return [pscustomobject]@{ ImagePath = $ImagePath; Attached = [bool]$script:Fake['IsoAttached'] } }
 function Dismount-DiskImage { [CmdletBinding()] param([string]$ImagePath) $script:Fake.Dismounted = $ImagePath }
 
 # ------------------------------------------------------------ the server

@@ -509,6 +509,11 @@ Describe 'SA line counts and fields (#261)' {
         $c = Get-CheckRunCount @()
         $c.Total | Should -Be 0; $c.NotCompleted | Should -Be 0; $c.Skipped | Should -Be 0
     }
+    It 'no list at all counts as nothing, not as one check that did not complete (#386)' {
+        foreach ($c in @((Get-CheckRunCount $null), (Get-CheckRunCount @($null)))) {
+            $c.Total | Should -Be 0; $c.NotCompleted | Should -Be 0; $c.Skipped | Should -Be 0
+        }
+    }
     It 'the LogPath field names the log only when it exists' {
         Get-SaLogPathField 'C:\x\SRV-IPU-Assessment.log' $true | Should -Be 'C:\x\SRV-IPU-Assessment.log'
         Get-SaLogPathField 'C:\x\SRV-IPU-Assessment.log' $false | Should -Be ''

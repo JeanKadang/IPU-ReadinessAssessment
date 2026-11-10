@@ -29,7 +29,7 @@ $script:TeamRules = @(
     @{ Team = 'Exchange';          Area = '^EXCHANGE$';           Item = '.';                         Status = @('BLOCKER', 'ACTION') }
     # Only backup infrastructure (server, proxy, storage agent, media agent);
     # a plain backup client is the Windows Team's.
-    @{ Team = 'Team Backup';       Area = '^BACKUP$';             Item = '^(?!VSS|GuestBackupAgent$)'; Status = @('INFO'); Details = 'Veeam Backup (&|and) Replication|Veeam Backup Proxy|Veeam Backup Transport|VeeamTransportSvc|VeeamProxySvc|VeeamBackupSvc|Spectrum Protect Server|Storage Protect Server|Tivoli Storage Manager Server|Storage Agent|dsmsta|MediaAgent|GxMMM' }
+    @{ Team = 'Team Backup';       Area = '^BACKUP$';             Item = '^(?!VSS|GuestBackupAgent$)'; Status = @('INFO'); Details = 'Veeam Backup (&|and) Replication|Veeam Backup Proxy|Veeam Backup Transport|VeeamTransportSvc|VeeamProxySvc|VeeamBackupSvc|Spectrum Protect Server|Storage Protect Server|Tivoli Storage Manager Server|Storage Agent|dsmsta|MediaAgent|GxMMM|CommServe' }
     # The agent is deployed by the Windows Team; the backend and policy are the Security Team's.
     @{ Team = 'Security Team (AV)'; Area = '^ANTIVIRUS$';         Item = '.';                         Status = @('WARNING') }
     @{ Team = 'Security Team (AV)'; Area = '^SECURITY$';          Item = '^(?!AppLocker$|SecureBoot$|TPM$|BitLocker|FileSystemFilterDrivers$)'; Status = @('WARNING') }

@@ -80,8 +80,10 @@ function Invoke-SqlCheck {
             foreach ($prop in @($names.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' })) {
                 # SilentlyContinue: A missing Setup key leaves the version empty, which is reported as MANUAL below.
                 $setup = Get-ItemProperty (Join-Path $root ([string]$prop.Value + '\Setup')) -ErrorAction SilentlyContinue
-                $version = [string]$setup.Version
-                if (-not $version) { $version = [string]$setup.PatchLevel }
+                # PatchLevel is what is installed now (service pack, CU, GDR);
+                # Version is the level of the last setup run (#386).
+                $version = [string]$setup.PatchLevel
+                if (-not $version) { $version = [string]$setup.Version }
                 $instances += [pscustomobject]@{ Instance=$prop.Name; Type=$type; Id=[string]$prop.Value; Version=$version; Edition=[string]$setup.Edition; Root=$root }
             }
         }
@@ -173,6 +175,9 @@ function Invoke-FileSharesCheck {
         $note = 'No shares besides the default administrative shares'
         if ($role -eq $true) { Add-Result 'FILE_SHARES' 'FileShares' 'INFO' $note 'The File Server role is installed but shares nothing.' -Source 'Get-SmbShare' }
         else { Add-Result 'FILE_SHARES' 'FileShares' 'INFO' $note -Source 'Get-SmbShare' }
+        # An empty list is still a list that was read (#386): without it the
+        # post-upgrade run says the shares could not be compared.
+        if ($script:Data.Snapshot) { $script:Data.Snapshot.Shares = @() }
         return
     }
     Add-Result 'FILE_SHARES' 'FileShares' 'WARNING' ('Count=' + $shares.Count) (@($shares | ForEach-Object { $_.Name }) -join ', ') -Recommendation 'Shared folders must be reachable again right after the upgrade. Test access from a client with the share owners, and keep this list (with permissions) for the comparison afterwards.' -Source 'Get-SmbShare'
