@@ -1,8 +1,8 @@
 <#
 ===============================================================================
  SCRIPT NAME : Windows-IPU-Readiness-Assessment.ps1
- VERSION     : 4.7.0
- RELEASE DATE: 2026-11-03
+ VERSION     : 4.8.0
+ RELEASE DATE: 2026-11-10
  PURPOSE     : Windows Server in-place upgrade (IPU) readiness assessment and
                post-upgrade verification, with a self-contained HTML report
                and a JSON result file written on the assessed server.
@@ -88,6 +88,13 @@
     load, nothing is collected. The Pester tests use this.
 
 .VERSION HISTORY
+    4.8.0 - Windows Server 2008 and 2008 R2 as a source, with the shortest
+            supported route. VMware Tools: how far behind the newest
+            release. Patch level from the newest security update. The
+            system drive instead of a fixed C:. Fixes from the review
+            before the release: PKI advice, SQL Server service pack,
+            end-of-life dates that cannot be read, file shares after the
+            upgrade. SPECIAL short reports keep the SQL and PKI checks.
     4.7.0 - Fleet overview names the other teams a server needs. VDI
             hosts (Citrix VDA, Horizon Agent) are a BLOCKER under the
             site policy BlockVdiIPU. PKI policy allows 2019 and 2022.
