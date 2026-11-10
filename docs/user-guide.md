@@ -38,7 +38,7 @@ sequenceDiagram
     Op->>S: Run (Pre)
     S->>Srv: Fast checks (registry, WMI, services, certs, ...)
     S->>Out: Checkpoint report (PARTIAL)
-    S->>Srv: Slow checks (DISM, SFC, optional Setup scan)
+    S->>Srv: Slow checks (DISM, SFC, optional print backup and Setup scan)
     S->>Out: Final HTML + JSON + log
     S-->>Op: One result line
     Note over Op,Srv: Upgrade happens
@@ -136,7 +136,8 @@ and an in-place upgrade never happens on them (#376). With `-BlockVdiIPU` (on by
 
 A SPECIAL server is not a standard in-place upgrade: it needs its own plan, extra time and coordination, and carries
 more risk. Tell the project and the customer: **expensive and risky**. The report is short on purpose. It runs only the
-checks that describe the server (baseline, upgrade path, activation, platform, storage, domain, cluster) and shows a
+checks that describe the server (baseline, upgrade path, activation, platform, CPU and memory, storage, domain, cluster,
+and from 4.8.0 SQL Server and PKI, so the fleet overview can name the DBA Team and the PKI Team) and shows a
 SPECIAL section with:
 
 - the facts needed to choose a plan (cluster: nodes, roles, SQL Server failover cluster instances, quorum, Cluster
@@ -212,8 +213,9 @@ script could not stop the process at all. The Setup scan is still run.
 
 Only one run can use a report folder at a time. A second run for the same server stops at once with a `FAILED` SA line
 ("another assessment run on this server is using ...") and writes nothing, so it cannot wipe the first run's log. The
-lock is an open file handle (`<Computer>-IPU-Assessment.log.lock`, empty), so a run that was killed releases it; a
-leftover file blocks nobody.
+lock is an open file handle on an empty file named after the run log (`<Computer>-IPU-Assessment.log.lock` for a Pre
+run, `<Computer>-IPU-PostUpgrade.log.lock` for a Post run), so a run that was killed releases it and a leftover file
+blocks nobody. The lock is per mode: a Pre run and a Post run for the same server do not block each other.
 
 ### Evidence copies
 
@@ -290,6 +292,7 @@ entries). Each category is a list of entries:
 | `Display` | Regular expression for the service display name |
 | `Driver` | Regular expression for a filter or kernel driver name |
 | `Disabled` | `true` **removes** the built-in entry with this label |
+| `Link`, `LinkTitle` | Optional. A documentation page (https) and its title, shown with the row of a match, for example the vendor's upgrade guidance |
 
 An entry needs at least one of `App`, `Service`, `Display`, `Driver` (unless it disables). Patterns are matched
 case-insensitively; keep them specific, because a broad word matches unrelated software.
@@ -308,10 +311,12 @@ case-insensitively; keep them specific, because a broad word matches unrelated s
 ```
 
 **Profile file** (`"Schema": "IPU-Profile/1"`). One object `Settings` with any of these parameters:
-`TargetMediaLanguage`, `BlockDomainControllerIPU`, `BlockVdiIPU`, `PkiAllowedTargets`, the thresholds, the slow-check settings, the RDP policy
-evidence settings, `WriteJson`, `RestrictOutputAcl` and `NumberCultureName`. Each value must pass the same
-checks as the parameter (range, type, absolute path). `AssessmentMode`, `TargetServerVersion`,
-`TargetMediaPath`, `ReportDirectory`, `RedactReport` and the two file parameters describe one run and cannot
+`TargetMediaLanguage`, `BlockDomainControllerIPU`, `BlockVdiIPU`, `PkiAllowedTargets`, the thresholds, the slow-check settings
+(DISM, SFC, the time budget and the timeouts), the evidence settings (`EvidenceRoot`, `EnableRDPPolicyEvidence`, `LgpoExe`,
+`PolicyEvidenceRoot`, `CreatePolicyEvidenceZip`, `EnableIISConfigEvidence`, `EnableNetworkEvidence`, `EnablePrintBackup`,
+`PrintBackupTimeoutMinutes`), `WriteJson`, `RestrictOutputAcl`, `NumberCultureName` and `WriteRedactionKey`. Each value must pass the same
+checks as the parameter (range, type, absolute path), and a list such as `PkiAllowedTargets` may not be empty. `AssessmentMode`, `TargetServerVersion`,
+`TargetMediaPath`, `ReportDirectory`, `RedactReport`, `RedactExisting`, `EolSnapshotPath` and the two file parameters describe one run and cannot
 be set in a profile. Settings passed as arguments win; the *Profile file* row names them. `RestrictOutputAcl` from a profile
 reaches the evidence folders only: the report folder is set up before the file is read, and the row says so (#261).
 
@@ -361,7 +366,7 @@ ComputerName;RunStatus;AssessmentStatus;ReportPath;LogPath;ReportSizeKB;Records;
 | Field | Values |
 |---|---|
 | `RunStatus` | `SUCCEEDED` or `FAILED` (the assessment script itself, not the server's readiness) |
-| `AssessmentStatus` | Overall: `BLOCKER`, `ACTION`, `WARNING`, `MANUAL`, `OK` |
+| `AssessmentStatus` | Overall: `SPECIAL`, `BLOCKER`, `ACTION`, `WARNING`, `MANUAL`, `OK` |
 | `LogPath` | The run log; empty when no log could be written (for example a report folder the account cannot write to) |
 | `Message` | `Mode=Pre, Checks=38, NotCompleted=0, Skipped=4, JSON=...`. **NotCompleted** counts the checks that left a gap: failed, ran out of time, or were not started because the slow-check budget was used up. **Skipped** counts checks not run by choice or that do not apply: DISM or SFC switched off, no installation media, not a print server, a SPECIAL short report. Before 4.7.0 both were counted as NotCompleted |
 
@@ -422,7 +427,7 @@ What changes with redaction:
 - The key to the placeholders is written next to the redacted copies (see below), and nowhere else.
 - The fleet overview shows each redacted file as its own row, marked `redacted`.
 
-**The redaction key.** With redaction, the script also writes a "translator" file that says which placeholder stands
+**The redaction key.** With redaction, the script also writes the redaction key, a file that says which placeholder stands
 for which original (#211), so the team can map answers about a redacted copy back to the real servers:
 
 - `-RedactExisting`: `DO-NOT-SHARE-REDACTION-KEY-<time>.csv` in the same folder, one file for all the copies made in
@@ -438,8 +443,8 @@ real names: keep it in the team, and share only the `REDACTED-*` files, never th
 ### JSON shape
 
 Schema id `IPU-Assessment/1`. Top-level keys: `Schema`, `CollectorVersion`, `ComputerName`, `Mode`,
-`TargetServerVersion`, `Started`, `Completed`, `Partial`, `Redacted`, `Overall`, `Counts`, `Facts`, `Results`,
-`CheckRuns`, `Snapshot`. `Results[]` has `CheckId, Area, Item, Status, Kind, Value, Details, Recommendation,
+`TargetServerVersion`, `Started`, `Completed`, `UtcOffset`, `Partial`, `Redacted`, `Overall`, `Counts`, `Facts`, `Special`,
+`Results`, `CheckRuns`, `Snapshot`, `EolCandidates` (each one is described in [result-schema.md](result-schema.md)). `Results[]` has `CheckId, Area, Item, Status, Kind, Value, Details, Recommendation,
 Source, Command, CommandKind, Link, LinkTitle`.
 The `Snapshot` field (the server snapshot) is what the post-upgrade run compares against. The fleet overview script (section 9) reads the same
 files and accepts only `Schema` = `IPU-Assessment/1`. Every field is described in
@@ -452,7 +457,7 @@ files and accepts only `Schema` = `IPU-Assessment/1`. Every field is described i
 
 ```mermaid
 flowchart LR
-    B[BLOCKER] --> A[ACTION] --> W[WARNING] --> M[MANUAL] --> O[OK]
+    S[SPECIAL] --> B[BLOCKER] --> A[ACTION] --> W[WARNING] --> M[MANUAL] --> O[OK]
     I[INFO]
     classDef bad fill:#7a1717,color:#fff
     classDef act fill:#b42318,color:#fff
@@ -473,7 +478,7 @@ Most severe on the left. The **overall status is the most severe *finding***.
 | Status | Do this |
 |---|---|
 | `SPECIAL` | Not a standard in-place upgrade (cluster node, domain controller): it needs its own plan, extra time and coordination, see *SPECIAL* above |
-| `BLOCKER` | Resolve before scheduling. Examples: unsupported path, clustered node, domain controller, unsupported SQL/Exchange combination |
+| `BLOCKER` | Resolve before scheduling. Examples: unsupported path, a VDI host, a PKI server whose target the site policy does not allow, unsupported SQL/Exchange combination |
 | `ACTION` | Complete as part of the change. Example: a feature that Setup will remove |
 | `WARNING` | Plan for it. Example: stale patch level, long uptime |
 | `MANUAL` | A person must check. Includes things a script cannot prove and **any check that failed to run** |
@@ -787,7 +792,7 @@ process).
 | Parameter | Default | Meaning |
 |---|---|---|
 | `InputFolder` | required | Folder with the `*-IPU-Assessment.json` and `*-IPU-PostUpgrade.json` files |
-| `OutputFolder` | the input folder | Where the three output files are written. A folder the merge creates gets access for SYSTEM, Administrators and you only; an existing folder is not changed, but you get a warning when Everyone, Authenticated Users or Users can read it (#128) |
+| `OutputFolder` | the input folder | Where the four output files are written. A folder the merge creates gets access for SYSTEM, Administrators and you only; an existing folder is not changed, but you get a warning when Everyone, Authenticated Users or Users can read it (#128) |
 | `Mode` | `All` | `Pre`, `Post` or `All`: which kind of result JSON to include |
 | `IncludeRedacted` | off | Redacted copies (`REDACTED-...`) have placeholder names, so they cannot be matched to their originals and would show the same server twice. When the folder also holds original results, the redacted copies are skipped and the console says how many; this switch keeps them. A folder with only redacted results is used as it is |
 | `Delimiter` | `;` | CSV separator. `;` opens in columns in Excel where the list separator is `;` (common in European regional settings); use `,` where it is `,` |
@@ -800,7 +805,7 @@ The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`
 |---|---|
 | `IPU-Fleet-Overview.html` | Cards with overall counts, a **Teams needed** summary (one row per team with the servers that need it, see below), a **Servers (worst first)** table with a *Teams needed* column, the **most common SPECIAL/BLOCKER/ACTION items** across the fleet with which servers have them, and a list of any files it could not read |
 | `IPU-Fleet-Servers.csv` | One row per server and mode: `ComputerName`, `Mode`, `Overall`, `Special`, `Blocker`, `Action`, `Warning`, `Manual`, `Target`, `CurrentOS`, `UpgradePath`, `InstallationMedia`, `Platform`, `DomainRole`, `SqlServer`, `CompatScan`, `CDrive`, `Activation`, `Nla`, `TopIssues`, `NotAssessed`, `Partial`, `Redacted`, `Completed`, `CollectorVersion`, `SourceFile`, `EndOfLifeProducts`, `TeamsNeeded` (one field, for example `PKI Team, DBA Team (SQL Server)`) |
-| `IPU-Fleet-Findings.csv` | One row per BLOCKER, ACTION, WARNING or MANUAL finding: `ComputerName`, `Mode`, `Status`, `Area`, `Item`, `Value`, `Details`, `Recommendation`, `Command`, `Link`, `SourceFile`. Filter and pivot it in Excel |
+| `IPU-Fleet-Findings.csv` | One row per SPECIAL, BLOCKER, ACTION, WARNING or MANUAL finding: `ComputerName`, `Mode`, `Status`, `Area`, `Item`, `Value`, `Details`, `Recommendation`, `Command`, `Link`, `SourceFile`. Filter and pivot it in Excel |
 | `IPU-Fleet-Eol.csv` | One row per product and version with an end-of-life date that the servers reported (4.6.0): `Status`, `Product`, `Version`, `Release`, `State`, `EndOfLife`, `DaysLeft`, `ServerCount`, `Servers`, `Text`. Checked against `eol-snapshot.json`; without it every row is MANUAL (not checked) |
 
 ### How it decides
@@ -969,7 +974,7 @@ Log lines are `Timestamp;Level;Phase;Message`. Each check logs `Started` and `Fi
 Invoke-Pester .\tests -Output Detailed
 ```
 
-Requires Pester 5 (CI uses 5.7.1) on Windows. The tests load the script in library mode by setting
+Requires Pester 5 or newer (CI uses 6.2.0) on Windows. The tests load the script in library mode by setting
 `IPU_ASSESSMENT_LIBRARY_ONLY=1`, so functions are defined but nothing is collected from the machine.
 
 | Folder or file | Covers |

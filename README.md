@@ -36,7 +36,7 @@ For many servers, `Merge-IPUAssessments.ps1` turns all the result JSON files int
 flowchart LR
     A[Run on server<br/>Mode Pre] --> B[Fast checks]
     B --> C[Checkpoint report<br/>PARTIAL]
-    C --> D[Slow checks<br/>DISM, SFC, Setup scan]
+    C --> D[Slow checks<br/>DISM, SFC, print backup, Setup scan]
     D --> E[Final report<br/>HTML + JSON + log]
     E --> F{Fix findings}
     F --> G[Upgrade]
@@ -154,7 +154,7 @@ The assessment is **non-remediating**. It never installs, removes or reconfigure
 flowchart TD
     R[IPU-ReadinessAssessment] --> S[src/<br/>assessment parts, built script, fleet merge]
     R --> B[build/<br/>build step, CI helpers, sample report]
-    R --> T[tests/<br/>Pester 5]
+    R --> T[tests/<br/>Pester]
     R --> D[docs/<br/>user guide, checks, schema, samples]
     R --> G[.github/<br/>CI, templates, Dependabot]
     R --> C[.claude/ and AGENTS.md<br/>shared AI workflow]
@@ -182,7 +182,7 @@ flowchart TD
 # Edit the parts in src/assessment/, then rebuild the single file (commit both)
 pwsh .\build\Build-Script.ps1
 
-# Run the tests (Pester 5)
+# Run the tests (Pester 5 or newer; CI uses 6.2.0)
 Invoke-Pester .\tests -Output Detailed
 
 # Or run the checks CI runs (lint and tests), with one summary

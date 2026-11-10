@@ -36,7 +36,7 @@ winget install --id Git.Git -e --source winget
 
 ```powershell
 git config --global user.name "Your Name"
-git config --global user.email "338514510+Micker71@users.noreply.github.com"
+git config --global user.email "12345678+your-login@users.noreply.github.com"
 ```
 
 Replace `Your Name` with the name you want shown on your commits.

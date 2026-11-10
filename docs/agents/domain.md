@@ -19,7 +19,8 @@ Single-context repo (most repos):
 ├── GLOSSARY.md
 ├── docs/adr/
 │   ├── 0001-single-file-script.md
-│   └── 0002-source-in-parts-built-into-one-file.md
+│   ├── 0002-source-in-parts-built-into-one-file.md
+│   └── 0003-end-of-life-lookup-architecture.md
 └── src/
 ```
 

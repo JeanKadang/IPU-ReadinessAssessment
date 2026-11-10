@@ -46,7 +46,7 @@ the manifest.
 The built file stays committed at its old path, so the tests, the smoke test, the release workflow, the checksums and
 every link in the documentation keep working unchanged. Tests and CI test exactly the file operators run.
 
-## Three more built scripts (ADR 0003, #275)
+## Two more built scripts (ADR 0003, #275)
 
 `Get-IPUEolStatus.ps1` and `Merge-IPUAssessments.ps1` are built the same way, from `src/eol/` and `src/merge/` (each
 with its own `manifest.txt`):
@@ -76,7 +76,8 @@ test derives the checks that read `baseline`'s data from the check bodies (also 
 so a new check that reads the inventory must be added to the table.
 
 A new check is a function `Invoke-<Name>Check` in the part of its chapter, one `Register-Check` line in `Register-AssessmentCheck` (the order of the lines is the run order), and a row in `docs/checks.md`. The tests find a check body through that line.
-## Later: a second script
+
+## Later: another script
 
 A dedicated cluster assessment (#153) can get its own manifest that lists the shared parts (report, redaction, JSON,
-logging, prerequisites) plus its own checks, built into a second single file.
+logging, prerequisites) plus its own checks, built into a single file of its own.

@@ -30,8 +30,8 @@ real script on Windows PowerShell 5.1 and PowerShell 7 and validates both files 
 | `UtcOffset` | `+02:00`, `-05:30`, optional | The server's offset from UTC when it finished, so results from different time zones can be sorted as dates. Files from before 4.5.4 have none; readers then compare the local times as they are |
 | `Partial` | boolean | `true` for the checkpoint written before the slow checks finished. If this is the newest file, the run was stopped early |
 | `Redacted` | boolean, optional | `true` when the run used `-RedactReport` (see the [user guide](user-guide.md#sharing-a-report-redaction)). A redacted file cannot be the post-upgrade baseline, and the fleet overview treats each redacted file as its own server |
-| `Overall` | `BLOCKER`, `ACTION`, `WARNING`, `MANUAL`, `OK` | Worst status among rows of kind `Finding` |
-| `Counts` | object | Number of `Finding` rows per status: `BLOCKER`, `ACTION`, `WARNING`, `MANUAL` |
+| `Overall` | `SPECIAL`, `BLOCKER`, `ACTION`, `WARNING`, `MANUAL`, `OK` | Worst status among rows of kind `Finding` |
+| `Counts` | object | Number of `Finding` rows per status: `SPECIAL` (from 4.5.0), `BLOCKER`, `ACTION`, `WARNING`, `MANUAL` |
 | `Facts` | object | The summary at the top of the report (below) |
 | `Results` | array | Every row of the report (below) |
 | `CheckRuns` | array | One entry per check: did it complete (below) |
@@ -69,7 +69,7 @@ Strings, empty or `null` when the check that sets them did not run.
 | `CheckId` | Check that wrote the row (see [checks reference](checks.md)); `core` or `postcompare` for rows written outside a check |
 | `Area` | Report area, upper case (for example `UPGRADE_PATH`, `STORAGE`) |
 | `Item` | What the row is about |
-| `Status` | `BLOCKER`, `ACTION`, `WARNING`, `MANUAL`, `OK`, `INFO` |
+| `Status` | `SPECIAL`, `BLOCKER`, `ACTION`, `WARNING`, `MANUAL`, `OK`, `INFO` |
 | `Kind` | `Finding` (counts towards `Overall`), `Observation` (status for visibility only), `Checklist` (standard change step), `Evidence` (inventory) |
 | `Value`, `Details` | What was found; `Details` joins several parts with ` \| ` |
 | `Recommendation` | What to do, empty when nothing is needed |
@@ -83,9 +83,9 @@ Strings, empty or `null` when the check that sets them did not run.
 |---|---|
 | `Id`, `Name` | Check id and display name |
 | `Phase` | `Fast` or `Slow` |
-| `Outcome` | `Completed`; `Failed` (the check threw; a `MANUAL` row explains it); `Skipped` (switched off, no media, or time budget used up); `TimedOut` (DISM, SFC or Setup stopped at its time limit) |
+| `Outcome` | `Completed`; `Failed` (the check threw; a `MANUAL` row explains it); `Skipped` (not run: switched off, no media, not applicable to this server or mode, a SPECIAL short report, the time budget used up, or a check it needs did not complete; `Message` says which); `TimedOut` (DISM, SFC or Setup stopped at its time limit) |
 | `Duration` | `hh:mm:ss`, or `d.hh:mm:ss` |
-| `Message` | Error message for a failed check |
+| `Message` | The error message of a failed check, or the reason a check was skipped or timed out. A skip because a needed check did not complete starts with `Needs` |
 
 ## `EolCandidates`
 

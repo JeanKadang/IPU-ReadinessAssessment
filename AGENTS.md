@@ -10,7 +10,7 @@ A read-only Windows Server in-place upgrade (IPU) readiness assessment: one Powe
 ## Commands
 
 ```powershell
-# Tests (Pester 5). Tests dot-source the script in library mode; nothing is collected.
+# Tests (Pester 5 or newer; CI pins the version in ci.yml). Tests dot-source the script in library mode; nothing is collected.
 Invoke-Pester .\tests -Output Detailed
 # Skip the tests that start real processes (tagged Integration):
 Invoke-Pester .\tests -Output Detailed -ExcludeTagFilter Integration
@@ -69,4 +69,4 @@ The five default triage roles, used next to the P0-P3 and category labels. See `
 
 ### Domain docs
 
-Single-context: `GLOSSARY.md` at the root (created when terms are settled) and `docs/adr/`. See `docs/agents/domain.md`.
+Single-context: `GLOSSARY.md` at the root and `docs/adr/`. See `docs/agents/domain.md`.
