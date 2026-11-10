@@ -4,6 +4,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [4.8.0] - 2026-11-10
+
 ### Added
 
 - VMware Tools: how far behind (#279). The `VMwareTools` row now says when the installed version was released and how many releases and months it is behind the newest one, for example *Released 2024-10-08: 11 release(s) and 24 month(s) behind 13.1.6 (2026-10-30)*. More than 24 months behind is a WARNING, and a version that is not in the release list is MANUAL instead of OK. The dates are a fact table from Broadcom's KB 304809 (11.0.0 to 13.1.6), with a `FactSources` entry so the six-month freshness test covers it. The ESXi host version is not read from the guest; the existing checklist row now also asks whether the host's ESXi version is itself still supported.
@@ -341,6 +343,7 @@ Restructure of the 3.x script (released as a script file only).
 Local Group Policy backup and RDP readiness. Superseded by 4.0.0.
 
 [Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.7.0...HEAD
+[4.8.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.8.0
 [4.7.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.7.0
 [4.6.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.6.0
 [4.5.4]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.5.4
