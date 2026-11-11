@@ -249,15 +249,19 @@ $sb = New-Object System.Text.StringBuilder
 [void]$sb.AppendLine('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>IPU Fleet Overview</title>')
 [void]$sb.AppendLine(@'
 <style>
-:root{--ink:#16202e;--muted:#5d6a79;--line:#dde3ea;--bg:#f3f5f8;--navy:#16365f;--special:#0f4c5c;--blocker:#7a1717;--action:#b42318;--warning:#9a5800;--manual:#5b47a0;--ok:#17703a}
+/* Colour tokens. Contrast (WCAG 2.1) is checked by the tests: text >= 4.5:1 in both themes. */
+:root{--ink:#16202e;--muted:#5d6a79;--line:#dde3ea;--bg:#f3f5f8;--panel:#ffffff;--navy:#16365f;--heading:#16365f;--th-bg:#eef2f7;--th-ink:#30475f;--special:#0f4c5c;--blocker:#7a1717;--action:#b42318;--warning:#9a5800;--manual:#5b47a0;--ok:#17703a}
+@media (prefers-color-scheme: dark){:root{--ink:#e6edf5;--muted:#a9b6c4;--line:#2c3947;--bg:#0e141b;--panel:#16202b;--heading:#a9c8f0;--th-bg:#1e2a37;--th-ink:#c5d3e0}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 "Segoe UI",Arial,sans-serif}
 .wrap{max-width:1600px;margin:auto;padding:24px 16px}h1{margin:0 0 4px;font-size:22px;color:#fff}.hero{background:var(--navy);color:#d5e1ee;padding:20px 24px;border-radius:12px}
-.cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:14px 0}.card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 14px}.card b{display:block;font-size:22px}.card small{color:var(--muted);text-transform:uppercase;font-size:11px;letter-spacing:.04em}
-section{background:#fff;border:1px solid var(--line);border-radius:10px;margin:14px 0;padding:16px 18px}h2{margin:0 0 10px;font-size:17px;color:var(--navy)}
-.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:1100px}th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--line);padding:6px 8px}th{background:#eef2f7;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#30475f}
+.cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:14px 0}.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px}.card b{display:block;font-size:22px}.card small{color:var(--muted);text-transform:uppercase;font-size:11px;letter-spacing:.04em}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:14px 0;padding:16px 18px}h2{margin:0 0 10px;font-size:17px;color:var(--heading)}
+.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:1100px}th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--line);padding:6px 8px}th{background:var(--th-bg);font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--th-ink)}
 .badge{display:inline-block;color:#fff;font-weight:700;font-size:11px;padding:2px 8px;border-radius:999px}.s-special{background:var(--special)}.s-blocker{background:var(--blocker)}.s-action{background:var(--action)}.s-warning{background:var(--warning)}.s-manual{background:var(--manual)}.s-ok{background:var(--ok)}
 .muted{color:var(--muted)}.nw{white-space:nowrap}
+.sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media(max-width:900px){.cards{grid-template-columns:repeat(2,1fr)}}
+@media print{:root{--ink:#16202e;--muted:#5d6a79;--line:#dde3ea;--bg:#ffffff;--panel:#ffffff;--heading:#16365f;--th-bg:#eef2f7;--th-ink:#30475f}body{background:#fff;color:#16202e}.wrap{max-width:none;padding:0}section{break-inside:avoid}.scroll{overflow:visible}table{min-width:0;font-size:10px}}
 </style></head><body><div class="wrap">
 '@)
 [void]$sb.AppendLine('<div class="hero"><h1>IPU Fleet Overview</h1><p>' + $latest.Count + ' servers &nbsp;|&nbsp; Generated ' + (Get-Date).ToString('yyyy-MM-dd HH:mm') + ' &nbsp;|&nbsp; Source: ' + (Encode $InputFolder) + '</p></div>')
@@ -269,14 +273,14 @@ foreach ($k in @('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL','OK')) { if ($k
 if ($teamRows.Count -eq 0) {
     [void]$sb.AppendLine('<p class="muted">No server needs another team, by the rules in the fleet overview (user guide, "Teams needed").</p>')
 } else {
-    [void]$sb.AppendLine('<div class="scroll"><table><thead><tr><th>Team</th><th>Servers</th><th>Which</th><th>Why</th></tr></thead><tbody>')
+    [void]$sb.AppendLine('<div class="scroll"><table><caption class="sr">Other teams needed per team, with the servers that need them</caption><thead><tr><th>Team</th><th>Servers</th><th>Which</th><th>Why</th></tr></thead><tbody>')
     foreach ($t in $teamRows) { [void]$sb.AppendLine('<tr><td class="nw"><b>' + (Encode $t.Team) + '</b></td><td>' + $t.ServerCount + '</td><td>' + (Encode $t.Servers) + '</td><td class="muted">' + (Encode $t.Why) + '</td></tr>') }
     [void]$sb.AppendLine('</tbody></table></div>')
 }
 [void]$sb.AppendLine('<p class="muted">Derived from each server''s findings and inventory rows; involve these teams before the upgrade. The rules are in the user guide, "Teams needed".</p></section>')
 if ($unreadable.Count -gt 0) { [void]$sb.AppendLine('<section><h2>Files not read</h2><p>' + (Encode ($unreadable -join ', ')) + '</p></section>') }
 
-[void]$sb.AppendLine('<section><h2>Servers (worst first)</h2><div class="scroll"><table><thead><tr><th>Server</th><th>Mode</th><th>Overall</th><th title="Number of BLOCKER, ACTION, WARNING and MANUAL findings">Findings<br><small>Blocker/Action/Warning/Manual</small></th><th>Teams needed</th><th>Current OS</th><th>Target</th><th>Media</th><th>Platform</th><th>RDP NLA</th><th>SQL</th><th>Top issues</th><th>Not assessed</th><th>Completed</th></tr></thead><tbody>')
+[void]$sb.AppendLine('<section><h2>Servers (worst first)</h2><div class="scroll"><table><caption class="sr">Servers, worst overall status first</caption><thead><tr><th>Server</th><th>Mode</th><th>Overall</th><th title="Number of BLOCKER, ACTION, WARNING and MANUAL findings">Findings<br><small>Blocker/Action/Warning/Manual</small></th><th>Teams needed</th><th>Current OS</th><th>Target</th><th>Media</th><th>Platform</th><th>RDP NLA</th><th>SQL</th><th>Top issues</th><th>Not assessed</th><th>Completed</th></tr></thead><tbody>')
 foreach ($s in $latest) {
     $badge = '<span class="badge s-' + ([string]$s.Overall).ToLowerInvariant() + '">' + (Encode $s.Overall) + '</span>'
     if ($s.Partial) { $badge += ' <span class="muted">partial</span>' }
@@ -292,7 +296,7 @@ foreach ($s in $latest) {
 if ($eolRows.Count -eq 0) {
     [void]$sb.AppendLine('<p class="muted">No server reported a product with an end-of-life date. Servers assessed before version 4.6.0 do not report them, and a product that is not found is not listed.</p>')
 } else {
-    [void]$sb.AppendLine('<div class="scroll"><table><thead><tr><th>Status</th><th>Product</th><th>Version</th><th>Release</th><th>End of life</th><th>Servers</th><th>Which</th><th>Verdict</th></tr></thead><tbody>')
+    [void]$sb.AppendLine('<div class="scroll"><table><caption class="sr">End-of-life products found on the servers, with a verdict for each</caption><thead><tr><th>Status</th><th>Product</th><th>Version</th><th>Release</th><th>End of life</th><th>Servers</th><th>Which</th><th>Verdict</th></tr></thead><tbody>')
     foreach ($row in $eolRows) {
         [void]$sb.AppendLine('<tr><td><span class="badge s-' + ([string]$row.Status).ToLowerInvariant() + '">' + (Encode $row.Status) + '</span></td><td>' + (Encode $row.Product) + '</td><td>' + (Encode $row.Version) + '</td><td>' + (Encode $row.Release) + '</td><td class="nw">' + (Encode $row.EndOfLife) + '</td><td>' + $row.ServerCount + '</td><td>' + (Encode $row.Servers) + '</td><td>' + (Encode $row.Text) + '</td></tr>')
     }
@@ -303,7 +307,7 @@ if ($eolData) { [void]$sb.AppendLine('<p class="muted">Snapshot from ' + (Encode
 [void]$sb.AppendLine('</section>')
 
 if ($common.Count -gt 0) {
-    [void]$sb.AppendLine('<section><h2>Most common SPECIAL/BLOCKER/ACTION items</h2><div class="scroll"><table><thead><tr><th>Status</th><th>Item</th><th>Servers</th><th>Which</th></tr></thead><tbody>')
+    [void]$sb.AppendLine('<section><h2>Most common SPECIAL/BLOCKER/ACTION items</h2><div class="scroll"><table><caption class="sr">Most common SPECIAL, BLOCKER and ACTION items across the servers</caption><thead><tr><th>Status</th><th>Item</th><th>Servers</th><th>Which</th></tr></thead><tbody>')
     foreach ($g in $common) {
         $first = $g.Group[0]
         $names = @($g.Group | ForEach-Object ComputerName | Sort-Object -Unique)
@@ -312,7 +316,9 @@ if ($common.Count -gt 0) {
     [void]$sb.AppendLine('</tbody></table></div></section>')
 }
 [void]$sb.AppendLine('<p class="muted">Details per server: open its own HTML report. All findings in one sheet: IPU-Fleet-Findings.csv.</p></div></body></html>')
-[IO.File]::WriteAllText($htmlPath, $sb.ToString(), (New-Object System.Text.UTF8Encoding($false)))
+# Every header cell is a column header: give it a scope (accessibility, #393). Data is HTML-encoded, so no data can contain '<th'.
+$htmlText = $sb.ToString() -replace '<th>', '<th scope="col">' -replace '<th title=', '<th scope="col" title='
+[IO.File]::WriteAllText($htmlPath, $htmlText, (New-Object System.Text.UTF8Encoding($false)))
 
 'Servers: {0} | Findings: {1} | Unreadable files: {2}' -f $latest.Count, $fleetFindings.Count, $unreadable.Count
 if ($skippedRedacted -gt 0) { 'Redacted files skipped: {0} (the folder has the original results; use -IncludeRedacted to keep them)' -f $skippedRedacted }

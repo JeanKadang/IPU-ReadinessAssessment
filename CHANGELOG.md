@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - The roadmap page no longer goes stale unnoticed (#395). The weekly workflow "Roadmap drift" (`build/Find-RoadmapDrift.ps1`) compares `docs/roadmap.md` with the open issues (listed or not, milestone, priority label, owner) and keeps one issue, "Roadmap page differs from the issues", up to date; it closes itself when the page agrees. The page went stale three times before (#302, #347, #395).
 
+### Changed
+
+- The fleet overview page is as accessible as the server report (#393): every table has a hidden caption and every header cell a column scope, the page follows a dark system theme, and it prints readably (colours back to light, tables wrap). Text contrast is at least 4.5:1 in both themes, checked by tests. The look in a light browser is unchanged. `Merge-IPUAssessments.ps1` is built from its parts again.
+
 ### Documentation
 
 - `docs/roadmap.md` brought in line with the issues: #349 is P2, #90 is closed, and the four issues of the 2026-11-10 repository review are listed (#393, #394, #396).
