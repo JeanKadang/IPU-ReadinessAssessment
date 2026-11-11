@@ -13,6 +13,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `docs/roadmap.md` brought in line with the issues: #349 is P2, #90 is closed, and the four issues of the 2026-11-10 repository review are listed (#393, #394, #396).
 - No more "not code-signed yet" (#398). Signing the scripts (#14) is closed as not planned: the project has no code-signing certificate and no signing authority to get one from. The README, the user guide and the notes of every release now say the scripts are not code-signed and that a download is checked against `SHA256SUMS.txt`; the advice for machines that enforce signed scripts (sign with your own certificate, or a process-scoped `-ExecutionPolicy Bypass`) is unchanged. Build provenance (#134) is the planned addition.
 - Five architecture decision records for decisions that were settled but unwritten (#264): the script only reads (0004), redaction is best effort with a key file (0005), the result file version and how the Post run handles older baselines (0006), failures are MANUAL (0007), neutral defaults with site values in data files (0008). `docs/adr/README.md` lists all eight records.
+- Fleet overview documentation (#413): the parameter table of the user guide lists `-EolSnapshot`, and both diagrams (user guide and README) show the fourth output file, `IPU-Fleet-Eol.csv`. The README options line names `-IncludeRedacted` and `-EolSnapshot`.
 
 ## [4.8.0] - 2026-11-10
 

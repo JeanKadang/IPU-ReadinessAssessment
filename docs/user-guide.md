@@ -772,6 +772,7 @@ flowchart LR
     M --> H[IPU-Fleet-Overview.html]
     M --> C1[IPU-Fleet-Servers.csv]
     M --> C2[IPU-Fleet-Findings.csv]
+    M --> C3[IPU-Fleet-Eol.csv]
 ```
 
 **Where it runs:** an admin workstation or jump host with Windows PowerShell 5.1 or PowerShell 7. **Not** on the
@@ -798,6 +799,7 @@ process).
 | `Mode` | `All` | `Pre`, `Post` or `All`: which kind of result JSON to include |
 | `IncludeRedacted` | off | Redacted copies (`REDACTED-...`) have placeholder names, so they cannot be matched to their originals and would show the same server twice. When the folder also holds original results, the redacted copies are skipped and the console says how many; this switch keeps them. A folder with only redacted results is used as it is |
 | `Delimiter` | `;` | CSV separator. `;` opens in columns in Excel where the list separator is `;` (common in European regional settings); use `,` where it is `,` |
+| `EolSnapshot` | blank | The end-of-life snapshot file (`eol-snapshot.json`). Blank = next to the script, then in the input folder. Without a snapshot the products are listed as *not checked* (see [End-of-life data](#end-of-life-data)) |
 
 The console prints a one-line summary (`Servers`, `Findings`, `Unreadable files`), a second line when redacted copies were skipped, and the paths written.
 

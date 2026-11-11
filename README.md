@@ -102,9 +102,10 @@ flowchart LR
     M --> H[Fleet overview HTML]
     M --> S[Servers CSV]
     M --> X[Findings CSV]
+    M --> E[End-of-life CSV]
 ```
 
-Options (`-OutputFolder`, `-Mode Pre|Post|All`, `-Delimiter`) are in the [user guide](docs/user-guide.md#9-combining-many-servers-fleet-overview).
+Options (`-OutputFolder`, `-Mode Pre|Post|All`, `-Delimiter`, `-IncludeRedacted`, `-EolSnapshot`) are in the [user guide](docs/user-guide.md#9-combining-many-servers-fleet-overview).
 
 Full parameter reference, status meanings, SA usage and troubleshooting: **[User guide](docs/user-guide.md)**.
 What each of the 38 checks looks at and can report: **[Checks reference](docs/checks.md)**. What a report looks like: [sample report](docs/samples/sample-report.html) (fictional server).
