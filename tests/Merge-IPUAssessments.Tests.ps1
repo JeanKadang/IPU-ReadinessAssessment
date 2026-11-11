@@ -52,7 +52,7 @@ Describe 'Merge-IPUAssessments.ps1' {
     }
 
     It 'names the finding counts in the server table and explains them (#324)' {
-        $script:Html | Should -Match '<th title="Number of BLOCKER, ACTION, WARNING and MANUAL findings">Findings<br><small>Blocker/Action/Warning/Manual</small></th>'
+        $script:Html | Should -Match '<th scope="col" title="Number of BLOCKER, ACTION, WARNING and MANUAL findings">Findings<br><small>Blocker/Action/Warning/Manual</small></th>'
         $script:Html | Should -Not -Match '<th>B/A/W/M</th>'
         $script:Html | Should -Match 'Observations and evidence rows are not counted'
     }
@@ -271,7 +271,7 @@ Describe 'Merge-IPUAssessments.ps1 - RDP NLA column (#174)' {
         $rows = @(Import-Csv -LiteralPath (Join-Path $out 'IPU-Fleet-Servers.csv') -Delimiter ';')
         @($rows | Where-Object { $_.ComputerName -eq 'SRV-NLA-OFF' })[0].Nla | Should -Be 'Off'
         @($rows | Where-Object { $_.ComputerName -eq 'SRV-OLD' })[0].Nla | Should -Be ''
-        [IO.File]::ReadAllText((Join-Path $out 'IPU-Fleet-Overview.html')) | Should -Match '<th>RDP NLA</th>'
+        [IO.File]::ReadAllText((Join-Path $out 'IPU-Fleet-Overview.html')) | Should -Match '<th scope="col">RDP NLA</th>'
     }
 }
 
@@ -582,7 +582,7 @@ Describe 'Teams needed in the fleet overview (#323, #374)' {
             ($script:TeamServers | Where-Object { $_.ComputerName -eq 'SRV-PLAIN' }).TeamsNeeded | Should -Be ''
         }
         It 'the overview has a Teams needed column and a summary per team' {
-            $script:TeamHtml | Should -Match '<th>Teams needed</th>'
+            $script:TeamHtml | Should -Match '<th scope="col">Teams needed</th>'
             $script:TeamHtml | Should -Match '<h2>Teams needed</h2>'
             $script:TeamHtml | Should -Match '<td class="nw"><b>PKI Team</b></td><td>1</td><td>SRV-CA</td>'
             $script:TeamHtml | Should -Match '<td class="nw"><b>DBA Team \(SQL Server\)</b></td>'
@@ -638,5 +638,74 @@ Describe 'Checks that were not assessed in the fleet overview (#360)' {
     It 'does not list a check skipped by design, nor one that completed' {
         $script:NaRow.NotAssessed | Should -Not -Match 'Failover cluster'
         $script:NaRow.NotAssessed | Should -Not -Match 'Windows activation'
+    }
+}
+
+Describe 'Fleet overview accessibility (#393)' {
+    BeforeAll {
+        $in = Join-Path $TestDrive 'a11y-in'
+        $out = Join-Path $TestDrive 'a11y-out'
+        New-Item -ItemType Directory -Path $in, $out | Out-Null
+        Save-Result (New-FakeResult 'SRV-A11Y' -Overall 'BLOCKER' -Results @((New-FakeFinding 'BLOCKER' 'Exchange Server'), (New-FakeFinding 'ACTION' 'C: free space'))) $in 'SRV-A11Y-IPU-Assessment.json'
+        Save-Result (New-FakeResult 'SRV-A11Y2' -Overall 'OK') $in 'SRV-A11Y2-IPU-Assessment.json'
+        $null = & $script:MergeScript -InputFolder $in -OutputFolder $out
+        $script:A11yHtml = Get-Content -LiteralPath (Join-Path $out 'IPU-Fleet-Overview.html') -Raw
+
+        function Get-Luminance([string]$Hex) {
+            $h = $Hex.TrimStart('#')
+            $c = foreach ($i in 0, 2, 4) {
+                $v = [Convert]::ToInt32($h.Substring($i, 2), 16) / 255
+                if ($v -le 0.03928) { $v / 12.92 } else { [math]::Pow(($v + 0.055) / 1.055, 2.4) }
+            }
+            return 0.2126 * $c[0] + 0.7152 * $c[1] + 0.0722 * $c[2]
+        }
+        function Get-ContrastRatio([string]$A, [string]$B) {
+            $la = Get-Luminance $A; $lb = Get-Luminance $B
+            return ([math]::Max($la, $lb) + 0.05) / ([math]::Min($la, $lb) + 0.05)
+        }
+        function Get-CssToken([string]$Block) {
+            $t = @{}
+            foreach ($m in [regex]::Matches($Block, '--([a-z-]+):(#[0-9a-fA-F]{6})')) { $t[$m.Groups[1].Value] = $m.Groups[2].Value }
+            return $t
+        }
+        $script:Light = Get-CssToken ([regex]::Match($script:A11yHtml, ':root\{[^}]*\}').Value)
+        $script:Dark = $script:Light.Clone()
+        $darkBlock = Get-CssToken ([regex]::Match($script:A11yHtml, '@media \(prefers-color-scheme: dark\)\{:root\{[^}]*\}').Value)
+        foreach ($k in $darkBlock.Keys) { $script:Dark[$k] = $darkBlock[$k] }
+    }
+
+    It 'every table has a caption and every header cell a column scope' {
+        $tables = [regex]::Matches($script:A11yHtml, '<table>').Count
+        $tables | Should -BeGreaterThan 1
+        [regex]::Matches($script:A11yHtml, '<table><caption class="sr">').Count | Should -Be $tables
+        [regex]::Matches($script:A11yHtml, '<th[\s>]').Count | Should -BeGreaterThan 10
+        [regex]::Matches($script:A11yHtml, '<th(?=[\s>])(?![^>]*scope="col")').Count | Should -Be 0
+    }
+    It 'the visually hidden caption style exists' {
+        $script:A11yHtml | Should -Match '\.sr\{position:absolute;'
+    }
+    It 'defines a dark theme that differs from the light one' {
+        $script:Light.Count | Should -BeGreaterThan 8
+        $script:Dark['bg'] | Should -Not -Be $script:Light['bg']
+        $script:Dark['panel'] | Should -Not -Be $script:Light['panel']
+    }
+    It 'text contrast is at least 4.5:1 in the <Theme> theme' -TestCases @(@{ Theme = 'light' }, @{ Theme = 'dark' }) {
+        $t = $script:Light; if ($Theme -eq 'dark') { $t = $script:Dark }
+        foreach ($pair in @(@('ink', 'panel'), @('ink', 'bg'), @('muted', 'panel'), @('muted', 'bg'), @('heading', 'panel'), @('th-ink', 'th-bg'))) {
+            Get-ContrastRatio $t[$pair[0]] $t[$pair[1]] | Should -BeGreaterOrEqual 4.5 -Because ($Theme + ': ' + ($pair -join ' on '))
+        }
+    }
+    It 'the header band text is readable on the navy band' {
+        Get-ContrastRatio '#ffffff' $script:Light['navy'] | Should -BeGreaterOrEqual 4.5
+        Get-ContrastRatio '#d5e1ee' $script:Light['navy'] | Should -BeGreaterOrEqual 4.5
+    }
+    It 'white badge text meets 4.5:1 on every status colour' {
+        foreach ($s in 'special', 'blocker', 'action', 'warning', 'manual', 'ok') {
+            Get-ContrastRatio '#ffffff' $script:Light[$s] | Should -BeGreaterOrEqual 4.5 -Because $s
+        }
+    }
+    It 'has a print style that returns to the light colours and lets tables wrap' {
+        $script:A11yHtml | Should -Match '@media print\{:root\{[^}]*--bg:#ffffff'
+        $script:A11yHtml | Should -Match '@media print\{[^\n]*\.scroll\{overflow:visible\}table\{min-width:0'
     }
 }
