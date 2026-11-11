@@ -68,6 +68,15 @@ The scripts are not code-signed: this project has no code-signing certificate. C
 above (`SHA256SUMS.txt` on the release). If your servers enforce signed scripts, sign them with your organisation's
 certificate after checking the hash.
 
+Releases built after 4.8.0 also carry a **build attestation**: proof that GitHub Actions built the file from this
+repository, not only that it matches a hash. On a workstation with the [GitHub CLI](https://cli.github.com/):
+
+```powershell
+gh attestation verify .\Windows-IPU-Readiness-Assessment.ps1 --repo JeanKadang/IPU-ReadinessAssessment
+```
+
+It needs no certificate of ours. It talks to GitHub, so run it where you download the file, not on the server.
+
 ## Quick start
 
 Run in an elevated session on the server (Windows PowerShell 4.0+):

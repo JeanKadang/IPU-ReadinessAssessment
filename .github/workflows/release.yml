@@ -34,6 +34,9 @@ jobs:
     permissions:
       contents: write
       actions: read   # to read the CI run of this commit
+      id-token: write            # build attestation (#134): the signing certificate
+      attestations: write        # build attestation (#134): store the attestation
+      artifact-metadata: write   # build attestation (#134): artifact storage record
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check the tag against the script version
@@ -118,7 +121,7 @@ jobs:
             echo
             echo '### Verify the download'
             echo
-            echo 'The scripts are not code-signed. Compare the download with `SHA256SUMS.txt`:'
+            echo 'The scripts are not code-signed. Compare the download with `SHA256SUMS.txt`, and check that this workflow built it with the GitHub CLI (`gh attestation verify <file> --repo ${{ github.repository }}`):'
             echo
             echo '```powershell'
             echo 'Get-FileHash .\Windows-IPU-Readiness-Assessment.ps1 -Algorithm SHA256'
@@ -128,6 +131,20 @@ jobs:
             cat dist/SHA256SUMS.txt
             echo '```'
           } >> dist/notes.md
+      - name: Attest build provenance
+        # Proves a file was built by this workflow from this repository (#134). No certificate of our own
+        # is needed. Skipped in a dry run: an attestation is public and permanent. Verify with
+        # gh attestation verify <file> --repo <owner>/<repo>. actions/attest is the maintained form of
+        # actions/attest-build-provenance (version 4 of which only wraps it).
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.dry_run }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            dist/IPU-ReadinessAssessment-${{ env.VERSION }}.zip
+            dist/Windows-IPU-Readiness-Assessment.ps1
+            dist/Merge-IPUAssessments.ps1
+            dist/Get-IPUEolStatus.ps1
+            dist/eol-snapshot.json
       - name: Publish the release
         if: ${{ github.event_name != 'workflow_dispatch' || !inputs.dry_run }}
         env:
