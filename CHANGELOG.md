@@ -14,6 +14,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - No more "not code-signed yet" (#398). Signing the scripts (#14) is closed as not planned: the project has no code-signing certificate and no signing authority to get one from. The README, the user guide and the notes of every release now say the scripts are not code-signed and that a download is checked against `SHA256SUMS.txt`; the advice for machines that enforce signed scripts (sign with your own certificate, or a process-scoped `-ExecutionPolicy Bypass`) is unchanged. Build provenance (#134) is the planned addition.
 - Five architecture decision records for decisions that were settled but unwritten (#264): the script only reads (0004), redaction is best effort with a key file (0005), the result file version and how the Post run handles older baselines (0006), failures are MANUAL (0007), neutral defaults with site values in data files (0008). `docs/adr/README.md` lists all eight records.
 
+### CI
+
+- The issue "CI failed on main" now names the result of `pester (unelevated)` too (#394); before, it listed only pester, smoke and lint, so a failure of that job had no name in the message. CONTRIBUTING.md says which jobs are required by the `main` ruleset and which are not.
+
 ## [4.8.0] - 2026-11-10
 
 ### Added

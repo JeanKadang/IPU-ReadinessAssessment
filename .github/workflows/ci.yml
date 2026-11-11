@@ -165,7 +165,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          RESULTS: 'pester=${{ needs.pester.result }}, smoke=${{ needs.smoke.result }}, lint=${{ needs.lint.result }}'
+          RESULTS: 'pester=${{ needs.pester.result }}, unelevated=${{ needs.pester-unelevated.result }}, smoke=${{ needs.smoke.result }}, lint=${{ needs.lint.result }}'
           TEST: ${{ github.event_name == 'workflow_dispatch' }}
           COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
         run: |
