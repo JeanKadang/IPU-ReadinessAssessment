@@ -6,6 +6,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Build provenance for releases (#134), instead of code signing (#14, closed as not planned: no certificate). The release workflow attests the zip, the three scripts and the end-of-life snapshot with `actions/attest` (the maintained form of `attest-build-provenance`, pinned to a commit), so `gh attestation verify <file> --repo JeanKadang/IPU-ReadinessAssessment` shows that GitHub Actions built the file from this repository. No attestation is made in a dry run. The first release built after 4.8.0 is the first to carry them; the README shows how to verify, and the release notes say so.
+
 - The roadmap page no longer goes stale unnoticed (#395). The weekly workflow "Roadmap drift" (`build/Find-RoadmapDrift.ps1`) compares `docs/roadmap.md` with the open issues (listed or not, milestone, priority label, owner) and keeps one issue, "Roadmap page differs from the issues", up to date; it closes itself when the page agrees. The page went stale three times before (#302, #347, #395).
 
 ### Changed
