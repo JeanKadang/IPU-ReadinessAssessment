@@ -18,7 +18,6 @@ Signing the script (#14) is closed as not planned: no certificate; build provena
 | Issue | Priority | Owner | Title |
 |---|---|---|---|
 | [#349](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/349) | P2 | Micker71 | Confirm the EOL candidates and verdicts on a real Windows Server |
-| [#393](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/393) | P2 | JeanKadang | Fleet overview lacks the accessibility work the server report has |
 | [#134](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/134) | P2 | JeanKadang | Releases have hashes but no build provenance |
 | [#153](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/153) | P3 | Micker71 | Dedicated cluster node assessment script |
 | [#394](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/394) | P3 | JeanKadang | CI job pester (unelevated) can fail without blocking a merge |
