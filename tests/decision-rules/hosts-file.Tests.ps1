@@ -111,7 +111,7 @@ Describe 'Get-HostsEntryDecision (#412)' {
             $e.Value | Should -Match 'pins the name of the domain'
         }
         It 'on a workgroup server (no domain name) only the computer name counts' {
-            $r = Get-HostsEntryDecision -Lines @('10.1.1.5 SRV01', '10.1.1.6 SRV01.corp.example.test') -ComputerName 'SRV01' -DomainName ''
+            $r = Get-HostsEntryDecision -Lines @('10.1.1.5 SRV01', '10.1.1.6 SRV01.corp.example.test') -ComputerName $script:Me -DomainName ''
             (Get-Entry $r 1).Status | Should -Be 'WARNING'
             (Get-Entry $r 2).Status | Should -Be 'INFO'
         }

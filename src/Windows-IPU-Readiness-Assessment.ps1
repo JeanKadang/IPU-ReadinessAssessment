@@ -2651,7 +2651,6 @@ function Get-HostsEntryDecision {
             $warn = $false; $block = $false; $dup = @()
             foreach ($n in $names) {
                 $key = $n.ToLowerInvariant()
-                $short = ($key -split '\.', 2)[0]
                 if ($own | Where-Object { $_ -ieq $n }) { $warn = $true; $reasons += 'pins the name of this server'; $recs += 'An entry for the name of this server keeps the old address after a change of address or a rename. Remove it unless an application needs it.' }
                 if ($DomainName -and $n -ieq $DomainName) { $warn = $true; $reasons += 'pins the name of the domain'; $recs += 'The domain name should come from DNS, so every domain controller answers. Remove the entry unless the domain team asked for it.' }
                 if ($dcs | Where-Object { $_ -ieq $n -or (($n -notmatch '\.') -and (($_ -split '\.', 2)[0] -ieq $n)) }) { $warn = $true; $reasons += 'pins the name of a domain controller'; $recs += 'A domain controller name should come from DNS. A pinned address breaks logon and Group Policy when the controller is replaced or moves. Remove the entry unless the domain team asked for it.' }
