@@ -6846,7 +6846,10 @@ function Add-RdpVerdictResult {
 function Close-RdpPolicyEvidence {
     param($root, $zip)
     try {
-        @($script:Results | Where-Object { $_.Area -in @('RDP','POLICY_EVIDENCE') }) | Export-Csv -LiteralPath (Join-Path $root 'RDP-Policy-Assessment.csv') -Delimiter ';' -NoTypeInformation -Encoding UTF8
+        # -NoTypeInformation only on Windows PowerShell: obsolete, and warns, on 7.4+ (#430).
+        $typeArgs = @{}
+        if ($PSVersionTable.PSVersion.Major -lt 6) { $typeArgs['NoTypeInformation'] = $true }
+        @($script:Results | Where-Object { $_.Area -in @('RDP','POLICY_EVIDENCE') }) | Export-Csv -LiteralPath (Join-Path $root 'RDP-Policy-Assessment.csv') -Delimiter ';' -Encoding UTF8 @typeArgs
     } catch { Write-Swallowed $_ }
     if ($CreatePolicyEvidenceZip) {
         try {

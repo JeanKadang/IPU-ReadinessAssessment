@@ -14,6 +14,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - The fleet overview page is as accessible as the server report (#393): every table has a hidden caption and every header cell a column scope, the page follows a dark system theme, and it prints readably (colours back to light, tables wrap). Text contrast is at least 4.5:1 in both themes, checked by tests. The look in a light browser is unchanged. `Merge-IPUAssessments.ps1` is built from its parts again.
 
+### Fixed
+
+- `-NoTypeInformation` no longer warns on PowerShell 7.4 and newer (#430). It is passed only on Windows PowerShell, where it is still needed to keep the `#TYPE` line out of the CSV files (`RDP-Policy-Assessment.csv` and the fleet overview files). This also fixes the permissions test in `Merge-IPUAssessments.Tests.ps1`, which failed on 7.4+ because of the warning.
+
 ### Documentation
 
 - `docs/roadmap.md` brought in line with the issues: #349 is P2, #90 is closed, and the four issues of the 2026-11-10 repository review are listed (#393, #394, #396).

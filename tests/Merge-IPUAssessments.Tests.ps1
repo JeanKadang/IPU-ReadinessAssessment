@@ -327,6 +327,15 @@ Describe 'Merge-IPUAssessments.ps1 - CSV encoding and time zones (#252)' {
         $bytes = [IO.File]::ReadAllBytes((Join-Path $script:Out3 $_))
         ($bytes[0..2] -join ',') | Should -Be '239,187,191'
     }
+    It 'the CSV files have no #TYPE line and the merge warns about nothing (#430)' {
+        $w2 = $null
+        $o2 = Join-Path $TestDrive 'out3b'
+        $null = & $script:MergeScript -InputFolder $script:In3 -OutputFolder $o2 -WarningVariable w2 -WarningAction SilentlyContinue
+        @($w2) | Should -BeNullOrEmpty
+        foreach ($f in 'IPU-Fleet-Servers.csv', 'IPU-Fleet-Findings.csv') {
+            [IO.File]::ReadAllText((Join-Path $o2 $f)) | Should -Not -Match '#TYPE'
+        }
+    }
     It 'letters outside ASCII survive in the CSV' {
         [IO.File]::ReadAllText((Join-Path $script:Out3 'IPU-Fleet-Servers.csv'), [Text.Encoding]::UTF8) | Should -Match ('SRV-' + $script:Nordic)
     }

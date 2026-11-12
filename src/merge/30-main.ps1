@@ -91,7 +91,10 @@ function Save-CsvFile {
     # No rows (for example no findings) gives an empty file, as Export-Csv did.
     $lines = @()
     $list = @($Rows | Where-Object { $null -ne $_ })
-    if ($list.Count -gt 0) { $lines = @($list | ConvertTo-Csv -Delimiter $Delimiter -NoTypeInformation) }
+    # -NoTypeInformation is needed on Windows PowerShell (else a #TYPE line) but obsolete, and warns, on 7.4+ (#430).
+    $typeArgs = @{}
+    if ($PSVersionTable.PSVersion.Major -lt 6) { $typeArgs['NoTypeInformation'] = $true }
+    if ($list.Count -gt 0) { $lines = @($list | ConvertTo-Csv -Delimiter $Delimiter @typeArgs) }
     [IO.File]::WriteAllLines($Path, $lines, (New-Object System.Text.UTF8Encoding($true)))
 }
 
