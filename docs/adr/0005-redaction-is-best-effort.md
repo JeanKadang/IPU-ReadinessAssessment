@@ -1,7 +1,7 @@
 # ADR 0005: Redaction is opt-in, best effort, and comes with a key
 
 - **Status:** Accepted (recorded afterwards, 2026-11-10; redaction added 2026-10-06, key file in 4.5.3)
-- **Decided by:** maintainers; written down from the user guide (*Sharing a report: redaction*), the parameter help and issues #100, #101, #211, #329, for issue #264. To be confirmed when this record is merged.
+- **Decided by:** maintainers; written down from the user guide (*Sharing a report: redaction*), the parameter help and issues #100, #101, #211, #329, for issue #264. Confirmed by the repository owner (JeanKadang), 2026-11-12.
 
 ## Context
 

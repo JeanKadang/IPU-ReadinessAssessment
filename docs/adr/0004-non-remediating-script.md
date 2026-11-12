@@ -1,7 +1,7 @@
 # ADR 0004: The assessment only reads; it never changes the server
 
 - **Status:** Accepted (recorded afterwards, 2026-11-10; in force since the first version, 2026-10-06)
-- **Decided by:** maintainers; written down from the hard rule in `AGENTS.md`, the script header (`.SAFETY`) and the code, for issue #264. To be confirmed when this record is merged.
+- **Decided by:** maintainers; written down from the hard rule in `AGENTS.md`, the script header (`.SAFETY`) and the code, for issue #264. Confirmed by the repository owner (JeanKadang), 2026-11-12.
 
 ## Context
 

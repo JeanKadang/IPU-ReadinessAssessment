@@ -1,7 +1,7 @@
 # ADR 0006: The result file has a version, and the Post run compares only what both runs read
 
 - **Status:** Accepted (recorded afterwards, 2026-11-10; `IPU-Assessment/1` since 2026-10-06)
-- **Decided by:** maintainers; written down from `docs/result-schema.md` (*Compatibility rules*), the code and issues #306 and #361, for issue #264. To be confirmed when this record is merged.
+- **Decided by:** maintainers; written down from `docs/result-schema.md` (*Compatibility rules*), the code and issues #306 and #361, for issue #264. Confirmed by the repository owner (JeanKadang), 2026-11-12.
 
 ## Context
 
