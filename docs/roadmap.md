@@ -33,7 +33,6 @@ No date: needs a decision first, or depends on something outside the repo.
 | [#404](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/404) | P2 | Micker71 | Read the explicit protocol, cipher, SMB and NTLM settings (read-only check) |
 | [#405](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/405) | P2 | Micker71 | Post-upgrade run: compare protocol, cipher, SMB and NTLM settings with the Pre run |
 | [#427](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/427) | P2 | JeanKadang | Confirm the TLS 1.0 and 1.1 default on a clean Windows Server 2025 |
-| [#265](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/265) | P3 | JeanKadang | User guide is one 839-line file |
 | [#267](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/267) | P3 | JeanKadang | Identify the installed cumulative update by build and UBR, and say how many months behind it is |
 | [#388](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/388) | P3 | Micker71 | End-of-life cycle match takes the first of two equal matches |
 | [#406](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/406) | P3 | Micker71 | Evidence file with the raw protocol, cipher, SMB and NTLM settings |
