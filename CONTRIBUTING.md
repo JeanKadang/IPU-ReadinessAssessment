@@ -87,7 +87,7 @@ pwsh ./build/Invoke-Local.ps1 -Task All -Coverage    # everything; Test with the
 
 Pester and PSScriptAnalyzer are installed by `build/Install-CiModule.ps1` at the versions pinned in `ci.yml`. It tries three times, five seconds apart, and writes one log line per attempt, so a truncated download from the PowerShell Gallery no longer turns a required check red (#141).
 
-A newer push cancels the run still in progress on the same branch. Job names are stable, so the ruleset on `main` requires them by name: **required** are `pester (Windows PowerShell 5.1)`, `pester (PowerShell 7)`, the four `smoke` jobs and `lint (PSScriptAnalyzer)`. **Not required** (a pull request can merge while they are red, so look at them): `pester (unelevated)` (#394), `pester (strict-mode finder)` (a finder by design) and the workflows that only keep an issue up to date. The "CI failed on main" issue names the result of `pester`, `unelevated`, `smoke` and `lint`. When GitHub retires or adds a Windows Server image, change
+A newer push cancels the run still in progress on the same branch. Job names are stable, so the ruleset on `main` requires them by name: **required** are `pester (Windows PowerShell 5.1)`, `pester (PowerShell 7)`, `pester (unelevated)` (#394), the four `smoke` jobs and `lint (PSScriptAnalyzer)`. **Not required** (a pull request can merge while they are red, so look at them): `pester (strict-mode finder)` (a finder by design) and the workflows that only keep an issue up to date. The "CI failed on main" issue names the result of `pester`, `unelevated`, `smoke` and `lint`. When GitHub retires or adds a Windows Server image, change
 the `smoke` matrix in `.github/workflows/ci.yml` and this table in the same pull request.
 
 ## Release checklist

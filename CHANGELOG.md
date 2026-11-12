@@ -23,6 +23,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### CI
 
+- `pester (unelevated)` is a required check on `main` (#394): a pull request can no longer merge while the suite fails for a standard user. CONTRIBUTING.md lists the required jobs. (The ruleset itself is a repository setting, changed by the owner.)
+
 - The issue "CI failed on main" now names the result of `pester (unelevated)` too (#394); before, it listed only pester, smoke and lint, so a failure of that job had no name in the message. CONTRIBUTING.md says which jobs are required by the `main` ruleset and which are not.
 
 ## [4.8.0] - 2026-11-10
