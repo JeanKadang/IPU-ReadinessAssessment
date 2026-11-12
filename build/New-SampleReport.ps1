@@ -91,9 +91,11 @@ Add-Result 'STORAGE' 'Disk1' 'INFO' 'SizeGB=30,00' @('BusType=SAS', 'Style=GPT',
 Add-Run 'storage' 'Storage'
 Set-Check 'network'
 Add-Result 'NETWORK' 'Ethernet0' 'INFO' 'IPv4=10.20.30.40 / 255.255.255.0' @('Gateway=10.20.30.1', 'DNS=10.20.1.10,10.20.1.11', 'DHCP=False', 'MAC=00:50:56:00:00:01', 'DNS suffix=corp.example.test', 'Register in DNS=Yes, with suffix=No', 'WINS=(none)', 'NetBIOS over TCP/IP=Default (set by DHCP)', 'Metric=15')
-Add-Result 'NETWORK' 'NetworkEvidence' 'OK' 'C:\Temp\IPU-Evidence\Network\SRV-APP01-IPU-Network-20261006-094431.zip' 'Files=ipconfig-all.txt, route-print.txt, netsh-ipv4-show-config.txt, netsh-interface-dump.txt, adapter-advanced-properties.txt' -Recommendation 'Copy it off the server before the change: it holds the full IP configuration, is not redacted and must not be shared outside the team. netsh-interface-dump.txt is a netsh script that can put the configuration back (read it first; see the user guide).'
+Add-Result 'NETWORK' 'NetworkEvidence' 'OK' 'C:\Temp\IPU-Evidence\Network\SRV-APP01-IPU-Network-20261006-094431.zip' @('Files=ipconfig-all.txt, route-print.txt, netsh-ipv4-show-config.txt, netsh-interface-dump.txt, hosts.txt, adapter-advanced-properties.txt', 'hosts.txt SHA-256=9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F') -Recommendation 'Copy it off the server before the change: it holds the full IP configuration, is not redacted and must not be shared outside the team. netsh-interface-dump.txt is a netsh script that can put the configuration back (read it first; see the user guide).'
 Add-Result 'NETWORK' 'NICTeaming' 'OK' 'No LBFO team detected'
-Add-Result 'NETWORK_DEPENDENCY' 'HostsFile' 'MANUAL' 'ActiveEntries=1' 'C:\Windows\System32\drivers\etc\hosts' -Recommendation 'Confirm owner and purpose of each hosts entry and test the affected name resolution after IPU.'
+Add-Result 'NETWORK_DEPENDENCY' 'Hosts line 3' 'INFO' 'Address=10.20.40.5' 'Names=legacy-app.corp.example.test' -Source 'C:\Windows\System32\drivers\etc\hosts'
+Add-Result 'NETWORK_DEPENDENCY' 'Hosts line 4' 'WARNING' 'Address=10.20.30.41; pins the name of this server' 'Names=SRV-APP01' -Recommendation 'An entry for the name of this server keeps the old address after a change of address or a rename. Remove it unless an application needs it.' -Source 'C:\Windows\System32\drivers\etc\hosts'
+Add-Result 'NETWORK_DEPENDENCY' 'HostsFile' 'MANUAL' 'ActiveEntries=2' 'C:\Windows\System32\drivers\etc\hosts' -Recommendation 'Confirm owner and purpose of each hosts entry and test the affected name resolution after IPU.' -Source 'C:\Windows\System32\drivers\etc\hosts'
 Add-Run 'network' 'Network, teaming, hosts and routes'
 
 # --- domain and compatibility scan

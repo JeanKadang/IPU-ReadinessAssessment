@@ -160,7 +160,7 @@ function Save-IISConfigEvidence {
 function Save-NetworkEvidence {
     param([string]$Destination, [bool]$Zip = $true, [int]$TimeoutSeconds = 60)
     if ($script:Fake.NetEvidenceError) { throw $script:Fake.NetEvidenceError }
-    return [pscustomobject]@{ Location = ($Destination + '.zip'); Folder = $Destination; Files = @('ipconfig-all.txt', 'route-print.txt', 'netsh-ipv4-show-config.txt', 'netsh-interface-dump.txt'); Failed = @($script:Fake.NetEvidenceFailed | Where-Object { $_ }) }
+    return [pscustomobject]@{ Location = ($Destination + '.zip'); Folder = $Destination; Files = @('ipconfig-all.txt', 'route-print.txt', 'netsh-ipv4-show-config.txt', 'netsh-interface-dump.txt', 'hosts.txt'); Failed = @($script:Fake.NetEvidenceFailed | Where-Object { $_ }); HostsSha256 = ('CD' * 32) }
 }
 function Initialize-EvidenceFolder {
     # Real folders only under the test drive; the default root stays fake.
@@ -223,6 +223,7 @@ function Get-Item {
 function Get-Content {
     [CmdletBinding()] param([Parameter(Position = 0)][string]$Path, [string]$LiteralPath, [switch]$Raw, [string]$Encoding)
     $p = Get-PathArg $Path $LiteralPath
+    if ($script:Fake.ContentError -and $script:Fake.ContentError[$p]) { throw $script:Fake.ContentError[$p] }
     if (Test-RealPath $p) {
         if ($Raw) { return Microsoft.PowerShell.Management\Get-Content -LiteralPath $p -Raw }
         return Microsoft.PowerShell.Management\Get-Content -LiteralPath $p
