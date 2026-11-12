@@ -1,7 +1,7 @@
 # ADR 0008: Defaults and wording stay neutral; a site keeps its own values in data files
 
 - **Status:** Accepted (recorded afterwards, 2026-11-10; decided on issue #131, 2026-10-13)
-- **Decided by:** a maintainer, on issue #131 (option 1: kept the defaults, neutralised the wording); recorded here for issue #264. To be confirmed when this record is merged.
+- **Decided by:** a maintainer, on issue #131 (option 1: kept the defaults, neutralised the wording); recorded here for issue #264. Confirmed by the repository owner (JeanKadang), 2026-11-12.
 
 ## Context
 

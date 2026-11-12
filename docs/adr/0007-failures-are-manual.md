@@ -1,7 +1,7 @@
 # ADR 0007: A failure is reported as MANUAL, never as a clean result
 
 - **Status:** Accepted (recorded afterwards, 2026-11-10; in force since 2026-10-06, extended in #242, #306 and #360)
-- **Decided by:** maintainers; written down from `AGENTS.md`, the check runner and issues #242, #306 and #360, for issue #264. To be confirmed when this record is merged.
+- **Decided by:** maintainers; written down from `AGENTS.md`, the check runner and issues #242, #306 and #360, for issue #264. Confirmed by the repository owner (JeanKadang), 2026-11-12.
 
 ## Context
 
