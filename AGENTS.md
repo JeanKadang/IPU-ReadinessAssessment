@@ -8,7 +8,7 @@ A read-only Windows Server in-place upgrade (IPU) readiness assessment. The scri
 `src/Windows-IPU-Readiness-Assessment.ps1`. Two more scripts run on an analysis machine, never on a server:
 `src/Merge-IPUAssessments.ps1` (fleet overview from the result files) and `src/Get-IPUEolStatus.ps1` (end-of-life
 status from the shipped `src/eol-snapshot.json`). All three are built from parts (below). Pester tests are in `tests/`.
-See `README.md` and `docs/user-guide.md`.
+See `README.md` and `docs/user-guide.md` (the index of the user guide, split by reader into `docs/user-guide-*.md`).
 
 ## Commands
 

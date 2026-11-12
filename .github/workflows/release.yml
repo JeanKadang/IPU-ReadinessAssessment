@@ -109,7 +109,7 @@ jobs:
           name="IPU-ReadinessAssessment-$VERSION"
           mkdir -p "dist/$name/docs"
           cp src/Windows-IPU-Readiness-Assessment.ps1 src/Merge-IPUAssessments.ps1 src/Get-IPUEolStatus.ps1 src/eol-snapshot.json README.md CHANGELOG.md LICENSE SECURITY.md "dist/$name/"
-          cp docs/user-guide.md docs/checks.md docs/result-schema.md docs/result-schema.json "dist/$name/docs/"
+          cp docs/user-guide.md docs/user-guide-run.md docs/user-guide-read-result.md docs/user-guide-fleet.md docs/user-guide-develop.md docs/checks.md docs/result-schema.md docs/result-schema.json "dist/$name/docs/"
           cp -r docs/examples "dist/$name/docs/"
           cp -r docs/samples "dist/$name/docs/"
           (cd dist && zip -r -X "$name.zip" "$name")
