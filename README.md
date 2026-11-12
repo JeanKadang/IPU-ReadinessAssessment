@@ -52,7 +52,7 @@ It answers four questions:
 3. **Is Windows healthy enough?** Pending reboot, patch age, activation, disk space, DISM component store, SFC.
 4. **Did anything get lost afterwards?** Services, ports, routes, network adapters, printers, shares, Group Policy, hosts entries, applications, features and tasks, compared with the pre-upgrade baseline.
 
-Cluster nodes and domain controllers are not a standard in-place upgrade. They get a short report with the facts needed to choose a plan, and the status `SPECIAL` (see the [user guide](docs/user-guide.md#special-cluster-nodes-and-domain-controllers)).
+Cluster nodes and domain controllers are not a standard in-place upgrade. They get a short report with the facts needed to choose a plan, and the status `SPECIAL` (see the [user guide](docs/user-guide-run.md#special-cluster-nodes-and-domain-controllers)).
 
 ## Get the script
 
@@ -114,7 +114,7 @@ flowchart LR
     M --> E[End-of-life CSV]
 ```
 
-Options (`-OutputFolder`, `-Mode Pre|Post|All`, `-Delimiter`, `-IncludeRedacted`, `-EolSnapshot`) are in the [user guide](docs/user-guide.md#9-combining-many-servers-fleet-overview).
+Options (`-OutputFolder`, `-Mode Pre|Post|All`, `-Delimiter`, `-IncludeRedacted`, `-EolSnapshot`) are in the [user guide](docs/user-guide-fleet.md#combining-many-servers-fleet-overview).
 
 Full parameter reference, status meanings, SA usage and troubleshooting: **[User guide](docs/user-guide.md)**.
 What each of the 38 checks looks at and can report: **[Checks reference](docs/checks.md)**. What a report looks like: [sample report](docs/samples/sample-report.html) (fictional server).
@@ -145,7 +145,7 @@ Reports describe a server in detail, so redact a copy before it leaves the team:
 .\src\Windows-IPU-Readiness-Assessment.ps1 -RedactExisting 'D:\IPU\Results'
 ```
 
-Both write a `DO-NOT-SHARE-...-REDACTION-KEY.csv` that maps each placeholder (`HOST-1`) back to the real name, so questions about a shared copy can be answered. Keep the key in the team and share only the `REDACTED-*` files. Redaction is best effort: read the copy before sharing it. The evidence copies are never redacted. Details: [user guide, Sharing a report](docs/user-guide.md#sharing-a-report-redaction).
+Both write a `DO-NOT-SHARE-...-REDACTION-KEY.csv` that maps each placeholder (`HOST-1`) back to the real name, so questions about a shared copy can be answered. Keep the key in the team and share only the `REDACTED-*` files. Redaction is best effort: read the copy before sharing it. The evidence copies are never redacted. Details: [user guide, Sharing a report](docs/user-guide-read-result.md#sharing-a-report-redaction).
 
 ## Safety
 
@@ -178,7 +178,7 @@ flowchart TD
 | `build/` | `Build-Script.ps1` (parts to single file), CI helpers (tests, lint, smoke test), `New-SampleReport.ps1`, `Sync-Skills.ps1` |
 | `docs/build.md` | How the build works, in plain words |
 | `tests/` | Pester tests: decision rules, every check against a simulated server, reports, redaction, and the fleet merge |
-| `docs/user-guide.md` | How to run the assessment script and read its report |
+| `docs/user-guide.md` | The user guide, split by reader: the index, with [run the assessment](docs/user-guide-run.md), [read the result](docs/user-guide-read-result.md), [fleet overview](docs/user-guide-fleet.md) and [test and contribute](docs/user-guide-develop.md) |
 | `docs/checks.md` | What every check looks at and can report |
 | `docs/result-schema.md`, `docs/result-schema.json` | Result JSON format (`IPU-Assessment/1`) and its JSON Schema |
 | `docs/samples/` | Synthetic sample report and result, built by `build/New-SampleReport.ps1` |
@@ -209,7 +209,7 @@ Tests load the script in library mode (`IPU_ASSESSMENT_LIBRARY_ONLY=1`): functio
 from the machine. They need Windows and run the same in an elevated or a normal (unelevated) session: CI runs the
 whole suite both ways (#126). Add `-ExcludeTagFilter Integration` to skip the tests that
 start real processes. If your machine enforces a signed-script policy, start the session with
-`pwsh -ExecutionPolicy Bypass` (process scope only). Details: [user guide, Running the tests](docs/user-guide.md#13-running-the-tests).
+`pwsh -ExecutionPolicy Bypass` (process scope only). Details: [user guide, Running the tests](docs/user-guide-develop.md#running-the-tests).
 
 New contributor? Start with the [Git setup guide](docs/git-setup.md). Contributing workflow and conventions: [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md](SECURITY.md).
 Version history: [CHANGELOG.md](CHANGELOG.md).

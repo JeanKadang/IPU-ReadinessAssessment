@@ -17,8 +17,8 @@ How to read the tables:
   backup when it is switched on, DISM, SFC, Setup compatibility scan) run last, inside a time budget.
 - **Possible results** lists the statuses a check can produce and when. Only rows of kind *Finding* count
   towards the overall status; *Observation*, *Checklist* and *Evidence* rows do not
-  (see [result kinds](user-guide.md#result-kinds)).
-- Thresholds in italics are parameters (see the [user guide](user-guide.md#4-parameters)).
+  (see [result kinds](user-guide-read-result.md#result-kinds)).
+- Thresholds in italics are parameters (see the [user guide](user-guide-run.md#parameters)).
 
 Every check has tests in `tests/checks/` (one file per chapter below) that run it against a fake server; a test fails if a
 check is added without one.
