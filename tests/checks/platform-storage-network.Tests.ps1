@@ -323,6 +323,41 @@ Describe 'Checks on a fake server: platform storage network' -Skip:($env:OS -ne 
             $script:Data.Snapshot.IPv4 | Should -Contain '10.20.30.40'
             $script:Data.Snapshot.Routes | Should -Contain '10.50.0.0/16 via 10.20.30.1'
         }
+        It 'hosts entries are judged: own name, duplicate name and a malformed line (#412)' {
+            $savedName = $script:ComputerName; $script:ComputerName = 'SRV01'
+            $hosts = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+            $script:Fake.Content[$hosts] = @('127.0.0.1 localhost', '10.9.9.9 SRV01', '10.9.9.8 dup.example.test', '10.9.9.7 dup.example.test', '10.9.9.6')
+            try { $null = Invoke-TestCheck 'network' } finally { $script:ComputerName = $savedName }
+            (Get-Row 'NETWORK_DEPENDENCY' 'Hosts line 1')[0].Status | Should -Be 'INFO'
+            $own = (Get-Row 'NETWORK_DEPENDENCY' 'Hosts line 2')[0]
+            $own.Status | Should -Be 'WARNING'
+            $own.Kind | Should -Be 'Finding'
+            $own.Value | Should -Match 'pins the name of this server'
+            (Get-Row 'NETWORK_DEPENDENCY' 'Hosts line 4')[0].Status | Should -Be 'WARNING'
+            (Get-Row 'NETWORK_DEPENDENCY' 'Hosts line 5')[0].Status | Should -Be 'MANUAL'
+            (Get-Row 'NETWORK_DEPENDENCY' 'HostsFile')[0].Value | Should -Be 'ActiveEntries=5'
+            $script:Data.Snapshot.Hosts | Should -Contain '10.9.9.9 SRV01'
+            $script:Data.Snapshot.Hosts | Should -Contain '10.9.9.6'
+        }
+        It 'a hosts file that cannot be read is MANUAL, and the routes are still checked (#412)' {
+            $hosts = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+            $script:Fake.ContentError = @{ $hosts = 'Access to the path is denied.' }
+            (Invoke-TestCheck 'network').Outcome | Should -Be 'Completed'
+            $row = (Get-Row 'NETWORK_DEPENDENCY' 'HostsFile')[0]
+            $row.Status | Should -Be 'MANUAL'
+            $row.Kind | Should -Be 'Finding'
+            $row.Value | Should -Match 'could not be read'
+            $row.Details | Should -Match 'denied'
+            (Get-Row 'NETWORK_DEPENDENCY' 'StaticRoutes').Count | Should -Be 1
+        }
+        It 'a missing hosts file is not reported as "no active entries" (#412)' {
+            $hosts = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+            $script:Fake.Paths[$hosts] = $false
+            $null = Invoke-TestCheck 'network'
+            $row = (Get-Row 'NETWORK_DEPENDENCY' 'HostsFile')[0]
+            $row.Status | Should -Be 'INFO'
+            $row.Value | Should -Match 'no hosts file'
+        }
         It 'an LBFO team under a Hyper-V switch is an ACTION' {
             $script:Fake.MissingCommands = @('Get-Cluster')
             $script:Fake.LbfoTeams = @([pscustomobject]@{ Name = 'Team1'; Status = 'Up'; TeamingMode = 'SwitchIndependent'; LoadBalancingAlgorithm = 'Dynamic'; Members = @('NIC1', 'NIC2') })
@@ -367,6 +402,7 @@ Describe 'Checks on a fake server: platform storage network' -Skip:($env:OS -ne 
             $row.Recommendation | Should -Match 'off the server'
             $row.Recommendation | Should -Match 'not redacted'
             $script:Data.NetworkEvidence | Should -Be $row.Value
+            (@($row.Details) -join ' ') | Should -Match 'hosts\.txt SHA-256=(CD){32}'
         }
         It 'a command that failed makes the evidence MANUAL, listing it (#149)' {
             $script:Fake.NetEvidenceFailed = @('route print: no answer within 60 seconds')

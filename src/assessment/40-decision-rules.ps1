@@ -368,6 +368,95 @@ function Get-VdiPolicyDecision {
     return [pscustomobject]@{ Status = 'WARNING'; Text = ('VDI host (' + $Agent + ')'); Recommendation = 'This server belongs to the VDI / Endpoint Team. Agree with them whether and how it is upgraded, and confirm the agent version supports the target.' }
 }
 
+function Get-HostsAddressFamily {
+    # Pure (#412): 'IPv4', 'IPv6' or '' for text that is not an address. A
+    # bare number such as '1' is not an address here, although
+    # [IPAddress]::TryParse reads it as 0.0.0.1.
+    param([string]$Address)
+    $a = ([string]$Address).Trim()
+    $ip = $null
+    if ($a -match '^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$') {
+        foreach ($i in 1..4) { if ([int]$Matches[$i] -gt 255) { return '' } }
+        if ([System.Net.IPAddress]::TryParse($a, [ref]$ip)) { return 'IPv4' }
+        return ''
+    }
+    $bare = ($a -split '%', 2)[0]
+    if ($bare.Contains(':') -and [System.Net.IPAddress]::TryParse($bare, [ref]$ip)) { return 'IPv6' }
+    return ''
+}
+
+function Get-HostsEntryDecision {
+    # Pure (#412): judges the active lines of the hosts file. Offline: no name
+    # resolution and no reachability test. State is Unreadable (the read
+    # failed, ReadError says why), Missing (no file), Empty or Entries.
+    # Entries has one item per active line: Status is INFO, WARNING, or MANUAL
+    # for a line that is not an address followed by a name. Reasons says why;
+    # Text is the line as the Post comparison stores it (single blanks), and
+    # LineNo counts every line of the file, comments included. The summary
+    # (Status, Value, Details, Recommendation) is the HostsFile row.
+    # DomainName is empty on a workgroup server. DomainControllers may be
+    # empty: the run does not collect them on an ordinary member server.
+    param(
+        [string[]]$Lines = @(),
+        [bool]$FileExists = $true,
+        [string]$ReadError = '',
+        [string]$ComputerName = '',
+        [string]$DomainName = '',
+        [string[]]$DomainControllers = @()
+    )
+    $make = { param($state, $status, $value, $details, $rec, $entries) [pscustomobject]@{ State = $state; Status = $status; Value = $value; Details = $details; Recommendation = $rec; Entries = @($entries) } }
+    if ($ReadError) {
+        return (& $make 'Unreadable' 'MANUAL' 'The hosts file could not be read' $ReadError 'Open the hosts file (C:\Windows\System32\drivers\etc\hosts) by hand, and confirm owner and purpose of each active entry. An entry silently overrides DNS.' @())
+    }
+    if (-not $FileExists) {
+        return (& $make 'Missing' 'INFO' 'There is no hosts file' '' 'Without the file no name is overridden. Nothing to carry over.' @())
+    }
+    $own = @(); if ($ComputerName) { $own += $ComputerName; if ($DomainName) { $own += ($ComputerName + '.' + $DomainName) } }
+    $dcs = @($DomainControllers | Where-Object { $_ })
+    $loopNames = @('localhost', 'localhost.localdomain')
+    $entries = @(); $seen = @{}; $lineNo = 0
+    foreach ($line in @($Lines)) {
+        $lineNo++
+        $active = (([string]$line -split '#', 2)[0]).Trim()
+        if (-not $active) { continue }
+        $tokens = @($active -split '\s+')
+        $names = @($tokens | Select-Object -Skip 1)
+        $address = [string]$tokens[0]
+        $family = Get-HostsAddressFamily $address
+        $reasons = @(); $recs = @(); $status = 'INFO'
+        if (-not $family) {
+            $status = 'MANUAL'; $reasons += 'the first word is not an IP address'
+            $recs += 'Fix or remove the line; Windows ignores a line it cannot read.'
+        } elseif ($names.Count -eq 0) {
+            $status = 'MANUAL'; $reasons += 'no name follows the address'
+            $recs += 'Fix or remove the line; Windows ignores a line without a name.'
+        } else {
+            $ip = [System.Net.IPAddress]::Parse(($address -split '%', 2)[0])
+            $canon = $ip.ToString()
+            $blocks = ([System.Net.IPAddress]::IsLoopback($ip) -or $canon -eq '0.0.0.0' -or $canon -eq '::')
+            $warn = $false; $block = $false; $dup = @()
+            foreach ($n in $names) {
+                $key = $n.ToLowerInvariant()
+                if ($own | Where-Object { $_ -ieq $n }) { $warn = $true; $reasons += 'pins the name of this server'; $recs += 'An entry for the name of this server keeps the old address after a change of address or a rename. Remove it unless an application needs it.' }
+                if ($DomainName -and $n -ieq $DomainName) { $warn = $true; $reasons += 'pins the name of the domain'; $recs += 'The domain name should come from DNS, so every domain controller answers. Remove the entry unless the domain team asked for it.' }
+                if ($dcs | Where-Object { $_ -ieq $n -or (($n -notmatch '\.') -and (($_ -split '\.', 2)[0] -ieq $n)) }) { $warn = $true; $reasons += 'pins the name of a domain controller'; $recs += 'A domain controller name should come from DNS. A pinned address breaks logon and Group Policy when the controller is replaced or moves. Remove the entry unless the domain team asked for it.' }
+                if ($blocks -and $loopNames -notcontains $key -and -not ($own | Where-Object { $_ -ieq $n })) { $block = $true }
+                $dkey = $family + '|' + $key
+                if ($seen.ContainsKey($dkey) -and $seen[$dkey].Address -ne $canon) { $warn = $true; $dup += $seen[$dkey].LineNo }
+                elseif (-not $seen.ContainsKey($dkey)) { $seen[$dkey] = @{ Address = $canon; LineNo = $lineNo } }
+            }
+            if ($dup.Count -gt 0) { $reasons += ('the name is also on line ' + (($dup | Sort-Object -Unique) -join ', ') + ' with another address; Windows uses the first line'); $recs += 'Remove the line that is not wanted.' }
+            if ($block) { $reasons += 'blocks the name (loopback or 0.0.0.0)'; $recs += 'Confirm the block is intended and still needed.' }
+            if ($warn) { $status = 'WARNING' }
+        }
+        $reasons = @($reasons | Select-Object -Unique)
+        $value = 'Address=' + $address; if ($reasons.Count -gt 0) { $value += '; ' + ($reasons -join '; ') }
+        $entries += [pscustomobject]@{ LineNo = $lineNo; Address = $address; Names = $names; Text = ($active -replace '\s+', ' '); Status = $status; Reasons = $reasons; Value = $value; Details = ('Names=' + ($names -join ',')); Recommendation = (@($recs | Select-Object -Unique) -join ' ') }
+    }
+    if ($entries.Count -eq 0) { return (& $make 'Empty' 'OK' 'No active entries' '' '' @()) }
+    return (& $make 'Entries' 'MANUAL' ('ActiveEntries=' + $entries.Count) '' 'Confirm owner and purpose of each hosts entry and test the affected name resolution after IPU.' $entries)
+}
+
 function Get-PkiTargetDecision {
     # Pure (#322, #338): the site policy for PKI servers. The PKI team allows
     # an in-place upgrade only to the releases in $Allowed; another target
@@ -1459,6 +1548,12 @@ function Compare-IPUSnapshot {
             $lost = @($lost | Where-Object { $explainedPorts -notcontains $_ })
         }
         if ($lost.Count -gt 0) { $diff += (& $make $l.Status ($l.Name + ' missing after upgrade') ('Count=' + $lost.Count) ($lost -join ', ') $l.Rec) }
+        # A hosts entry that is new after the upgrade overrides DNS too (#412). Only
+        # when the Pre run has the list; a changed entry is one missing and one new.
+        if ($l.Prop -eq 'Hosts' -and $null -ne $Before.($l.Prop)) {
+            $added = @($a | Where-Object { $b -notcontains $_ } | Sort-Object -Unique)
+            if ($added.Count -gt 0) { $diff += (& $make 'INFO' 'Hosts file entries new after upgrade' ('Count=' + $added.Count) ($added -join ', ') 'These entries were not in the hosts file before the upgrade. Confirm each one is intended (a changed entry shows as one missing and one new entry).') }
+        }
     }
     # Printers that now use another driver (#148).
     if ($null -ne $Before.PrinterDrivers -and $null -ne $After.PrinterDrivers) {

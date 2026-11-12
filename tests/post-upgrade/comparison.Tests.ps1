@@ -116,7 +116,9 @@ Describe 'Compare-IPUSnapshot - every category (#35)' {
         { Compare-IPUSnapshot $empty $empty } | Should -Not -Throw
         { Compare-IPUSnapshot (New-Snapshot) $empty } | Should -Not -Throw
         { Compare-IPUSnapshot $empty (New-Snapshot) } | Should -Not -Throw
-        (Compare-IPUSnapshot $empty (New-Snapshot)).Count | Should -Be 0
+        # An empty Pre list has nothing that can be lost; the hosts entry that is new is the one INFO row (#412).
+        $d = Compare-IPUSnapshot $empty (New-Snapshot)
+        @($d | Where-Object { $_.Item -notlike 'Hosts file entries new*' }).Count | Should -Be 0
     }
     It 'a snapshot missing whole properties does not throw' {
         { Compare-IPUSnapshot ([pscustomobject]@{}) ([pscustomobject]@{}) } | Should -Not -Throw

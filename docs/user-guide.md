@@ -571,7 +571,7 @@ mindmap
 | Hardware and Virtualization | Physical or virtual, VMware Tools and vSphere versions, non-Microsoft drivers, CPU and memory |
 | Storage | Volumes, free space, system and recovery partitions |
 | Clustering | Failover cluster membership |
-| Network | Adapters (IPv4 and IPv6, gateway, DNS servers and suffix, DNS registration, WINS, NetBIOS over TCP/IP, metric, VLAN), teaming, hosts file, static routes, listening ports; a local copy of the network configuration |
+| Network | Adapters (IPv4 and IPv6, gateway, DNS servers and suffix, DNS registration, WINS, NetBIOS over TCP/IP, metric, VLAN), teaming, hosts file (each active line is judged: see [Hosts file](#hosts-file)), static routes, listening ports; a local copy of the network configuration and the hosts file |
 | Access and Remote Desktop | Domain or workgroup membership, secure channel, UAC, local administrators, Group Policy (applied and filtered GPOs, OS-dependent WMI filters, last applied), the computer's AD groups and OU path, RDP and NLA, local policy evidence |
 | IIS and Remote Desktop Services | IIS, RDS roles |
 | PKI and Certificates | CA role, certificates and TLS bindings |
@@ -603,6 +603,27 @@ and start IIS again. Or copy them into a new folder under `%windir%\System32\ine
 `appcmd restore backup <folder name>`. If the server uses **shared configuration** (`redirection.config` points to a
 share), the report says so: back up the files on that share as well.
 
+### Hosts file
+
+A hosts entry silently overrides DNS, so after an upgrade, or when a server is replaced, a wrong one is among the first
+things to break. The `network` check reads the file (read-only, offline: no name is resolved and nothing is pinged)
+and judges every active line (#412). One row per line, `Hosts line <n>`, where `<n>` counts all lines of the file:
+
+| Line | Status |
+|---|---|
+| A name of this server (bare, or with the domain), the name of the domain, or the name of a domain controller | `WARNING` |
+| The same name with another address on an earlier line (Windows uses the first line only; an IPv4 and an IPv6 address for one name are fine) | `WARNING` |
+| A name sent to loopback or `0.0.0.0` ("blocks the name"; `localhost` itself is normal) | `INFO` |
+| The first word is not an IP address, or no name follows the address | `MANUAL` |
+| Any other line | `INFO` |
+
+The row `HostsFile` stays `MANUAL` while there is at least one active entry (confirm owner and purpose), is `OK` when
+there is none, `INFO` when the file does not exist, and `MANUAL` when it cannot be read. Domain controller names are
+checked only when the run has them; an ordinary member server does not collect them, so there such an entry is listed
+but not flagged. The reasons never repeat the name; the names are in the details of the row, which redaction handles
+as before. The post-upgrade run reports entries that are gone (`WARNING`) and entries that are new (`INFO`); a changed
+entry shows as one of each.
+
 ### Network configuration copy
 
 The `network` check saves the output of read-only commands into `<EvidenceRoot>\Network\<Computer>-IPU-Network-<time>`
@@ -614,6 +635,7 @@ and zips it (#149):
 | `route-print.txt` | `route print` |
 | `netsh-ipv4-show-config.txt` | `netsh interface ipv4 show config` |
 | `netsh-interface-dump.txt` | `netsh -c interface dump` |
+| `hosts.txt` | a copy of the hosts file (`drivers\etc\hosts`); its SHA-256 is in the `NetworkEvidence` row (#412) |
 | `adapter-advanced-properties.txt` | `Get-NetAdapterAdvancedProperty` (offloads, jumbo frames, VLAN), when the NetAdapter module is there |
 
 Each command has a 60-second timeout. A command that fails or times out makes the row `MANUAL` and is named in it; the

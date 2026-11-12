@@ -10,6 +10,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - The roadmap page no longer goes stale unnoticed (#395). The weekly workflow "Roadmap drift" (`build/Find-RoadmapDrift.ps1`) compares `docs/roadmap.md` with the open issues (listed or not, milestone, priority label, owner) and keeps one issue, "Roadmap page differs from the issues", up to date; it closes itself when the page agrees. The page went stale three times before (#302, #347, #395).
 
+- The hosts file is judged, not only listed (#412). Each active line is read offline by the new pure function `Get-HostsEntryDecision`: `WARNING` for an entry that pins the name of this server, of the domain or of a domain controller, or the same name with two addresses (Windows uses the first line); `INFO` for a name sent to loopback or `0.0.0.0`; `MANUAL` for a line that is not an address followed by a name, and for a hosts file that cannot be read. A missing file is `INFO`, no longer "no active entries". The post-upgrade run reports hosts entries that are new (`INFO`) next to the lost ones. The network configuration copy now includes `hosts.txt` and its SHA-256. Domain controller names are checked only where the run has them; an ordinary member server has none, so there they are listed but not flagged.
+
 ### Changed
 
 - The fleet overview page is as accessible as the server report (#393): every table has a hidden caption and every header cell a column scope, the page follows a dark system theme, and it prints readably (colours back to light, tables wrap). Text contrast is at least 4.5:1 in both themes, checked by tests. The look in a light browser is unchanged. `Merge-IPUAssessments.ps1` is built from its parts again.

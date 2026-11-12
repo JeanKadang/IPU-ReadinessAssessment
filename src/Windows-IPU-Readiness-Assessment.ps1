@@ -1420,7 +1420,8 @@ function Save-NetworkEvidence {
     param(
         [Parameter(Mandatory=$true)][string]$Destination,
         [bool]$Zip = $true,
-        [int]$TimeoutSeconds = 60
+        [int]$TimeoutSeconds = 60,
+        [string]$HostsPath = (Join-Path $env:windir 'System32\drivers\etc\hosts')
     )
     $sys = Join-Path $env:windir 'System32'
     $commands = @(
@@ -1454,6 +1455,17 @@ function Save-NetworkEvidence {
             $saved += 'adapter-advanced-properties.txt'
         } catch { $failed += ('Get-NetAdapterAdvancedProperty: ' + $_.Exception.Message) }
     }
+    # The hosts file (#412): a plain copy with its SHA-256, so the entries can
+    # be put back by hand. A server without a hosts file has nothing to copy.
+    $hostsSha = ''
+    if (Test-Path -LiteralPath $HostsPath -PathType Leaf) {
+        $hostsCopy = Join-Path $Destination 'hosts.txt'
+        try {
+            Copy-Item -LiteralPath $HostsPath -Destination $hostsCopy -Force -ErrorAction Stop
+            $saved += 'hosts.txt'
+            try { $hostsSha = (Get-FileHash -LiteralPath $hostsCopy -Algorithm SHA256 -ErrorAction Stop).Hash } catch { $failed += ('hosts.txt SHA-256: ' + $_.Exception.Message) }
+        } catch { $failed += ('hosts file: ' + $_.Exception.Message) }
+    }
     if ($saved.Count -eq 0) { throw ('No network command output could be saved: ' + ($failed -join '; ')) }
     $location = $Destination
     if ($Zip) {
@@ -1462,7 +1474,7 @@ function Save-NetworkEvidence {
         New-ZipFromFolder $Destination $zipPath
         $location = $zipPath
     }
-    return [pscustomobject]@{ Location = $location; Folder = $Destination; Files = $saved; Failed = $failed }
+    return [pscustomobject]@{ Location = $location; Folder = $Destination; Files = $saved; Failed = $failed; HostsSha256 = $hostsSha }
 }
 
 # Print servers (#148): read-only helpers for the printers and printbackup
@@ -2570,6 +2582,95 @@ function Get-VdiPolicyDecision {
     return [pscustomobject]@{ Status = 'WARNING'; Text = ('VDI host (' + $Agent + ')'); Recommendation = 'This server belongs to the VDI / Endpoint Team. Agree with them whether and how it is upgraded, and confirm the agent version supports the target.' }
 }
 
+function Get-HostsAddressFamily {
+    # Pure (#412): 'IPv4', 'IPv6' or '' for text that is not an address. A
+    # bare number such as '1' is not an address here, although
+    # [IPAddress]::TryParse reads it as 0.0.0.1.
+    param([string]$Address)
+    $a = ([string]$Address).Trim()
+    $ip = $null
+    if ($a -match '^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$') {
+        foreach ($i in 1..4) { if ([int]$Matches[$i] -gt 255) { return '' } }
+        if ([System.Net.IPAddress]::TryParse($a, [ref]$ip)) { return 'IPv4' }
+        return ''
+    }
+    $bare = ($a -split '%', 2)[0]
+    if ($bare.Contains(':') -and [System.Net.IPAddress]::TryParse($bare, [ref]$ip)) { return 'IPv6' }
+    return ''
+}
+
+function Get-HostsEntryDecision {
+    # Pure (#412): judges the active lines of the hosts file. Offline: no name
+    # resolution and no reachability test. State is Unreadable (the read
+    # failed, ReadError says why), Missing (no file), Empty or Entries.
+    # Entries has one item per active line: Status is INFO, WARNING, or MANUAL
+    # for a line that is not an address followed by a name. Reasons says why;
+    # Text is the line as the Post comparison stores it (single blanks), and
+    # LineNo counts every line of the file, comments included. The summary
+    # (Status, Value, Details, Recommendation) is the HostsFile row.
+    # DomainName is empty on a workgroup server. DomainControllers may be
+    # empty: the run does not collect them on an ordinary member server.
+    param(
+        [string[]]$Lines = @(),
+        [bool]$FileExists = $true,
+        [string]$ReadError = '',
+        [string]$ComputerName = '',
+        [string]$DomainName = '',
+        [string[]]$DomainControllers = @()
+    )
+    $make = { param($state, $status, $value, $details, $rec, $entries) [pscustomobject]@{ State = $state; Status = $status; Value = $value; Details = $details; Recommendation = $rec; Entries = @($entries) } }
+    if ($ReadError) {
+        return (& $make 'Unreadable' 'MANUAL' 'The hosts file could not be read' $ReadError 'Open the hosts file (C:\Windows\System32\drivers\etc\hosts) by hand, and confirm owner and purpose of each active entry. An entry silently overrides DNS.' @())
+    }
+    if (-not $FileExists) {
+        return (& $make 'Missing' 'INFO' 'There is no hosts file' '' 'Without the file no name is overridden. Nothing to carry over.' @())
+    }
+    $own = @(); if ($ComputerName) { $own += $ComputerName; if ($DomainName) { $own += ($ComputerName + '.' + $DomainName) } }
+    $dcs = @($DomainControllers | Where-Object { $_ })
+    $loopNames = @('localhost', 'localhost.localdomain')
+    $entries = @(); $seen = @{}; $lineNo = 0
+    foreach ($line in @($Lines)) {
+        $lineNo++
+        $active = (([string]$line -split '#', 2)[0]).Trim()
+        if (-not $active) { continue }
+        $tokens = @($active -split '\s+')
+        $names = @($tokens | Select-Object -Skip 1)
+        $address = [string]$tokens[0]
+        $family = Get-HostsAddressFamily $address
+        $reasons = @(); $recs = @(); $status = 'INFO'
+        if (-not $family) {
+            $status = 'MANUAL'; $reasons += 'the first word is not an IP address'
+            $recs += 'Fix or remove the line; Windows ignores a line it cannot read.'
+        } elseif ($names.Count -eq 0) {
+            $status = 'MANUAL'; $reasons += 'no name follows the address'
+            $recs += 'Fix or remove the line; Windows ignores a line without a name.'
+        } else {
+            $ip = [System.Net.IPAddress]::Parse(($address -split '%', 2)[0])
+            $canon = $ip.ToString()
+            $blocks = ([System.Net.IPAddress]::IsLoopback($ip) -or $canon -eq '0.0.0.0' -or $canon -eq '::')
+            $warn = $false; $block = $false; $dup = @()
+            foreach ($n in $names) {
+                $key = $n.ToLowerInvariant()
+                if ($own | Where-Object { $_ -ieq $n }) { $warn = $true; $reasons += 'pins the name of this server'; $recs += 'An entry for the name of this server keeps the old address after a change of address or a rename. Remove it unless an application needs it.' }
+                if ($DomainName -and $n -ieq $DomainName) { $warn = $true; $reasons += 'pins the name of the domain'; $recs += 'The domain name should come from DNS, so every domain controller answers. Remove the entry unless the domain team asked for it.' }
+                if ($dcs | Where-Object { $_ -ieq $n -or (($n -notmatch '\.') -and (($_ -split '\.', 2)[0] -ieq $n)) }) { $warn = $true; $reasons += 'pins the name of a domain controller'; $recs += 'A domain controller name should come from DNS. A pinned address breaks logon and Group Policy when the controller is replaced or moves. Remove the entry unless the domain team asked for it.' }
+                if ($blocks -and $loopNames -notcontains $key -and -not ($own | Where-Object { $_ -ieq $n })) { $block = $true }
+                $dkey = $family + '|' + $key
+                if ($seen.ContainsKey($dkey) -and $seen[$dkey].Address -ne $canon) { $warn = $true; $dup += $seen[$dkey].LineNo }
+                elseif (-not $seen.ContainsKey($dkey)) { $seen[$dkey] = @{ Address = $canon; LineNo = $lineNo } }
+            }
+            if ($dup.Count -gt 0) { $reasons += ('the name is also on line ' + (($dup | Sort-Object -Unique) -join ', ') + ' with another address; Windows uses the first line'); $recs += 'Remove the line that is not wanted.' }
+            if ($block) { $reasons += 'blocks the name (loopback or 0.0.0.0)'; $recs += 'Confirm the block is intended and still needed.' }
+            if ($warn) { $status = 'WARNING' }
+        }
+        $reasons = @($reasons | Select-Object -Unique)
+        $value = 'Address=' + $address; if ($reasons.Count -gt 0) { $value += '; ' + ($reasons -join '; ') }
+        $entries += [pscustomobject]@{ LineNo = $lineNo; Address = $address; Names = $names; Text = ($active -replace '\s+', ' '); Status = $status; Reasons = $reasons; Value = $value; Details = ('Names=' + ($names -join ',')); Recommendation = (@($recs | Select-Object -Unique) -join ' ') }
+    }
+    if ($entries.Count -eq 0) { return (& $make 'Empty' 'OK' 'No active entries' '' '' @()) }
+    return (& $make 'Entries' 'MANUAL' ('ActiveEntries=' + $entries.Count) '' 'Confirm owner and purpose of each hosts entry and test the affected name resolution after IPU.' $entries)
+}
+
 function Get-PkiTargetDecision {
     # Pure (#322, #338): the site policy for PKI servers. The PKI team allows
     # an in-place upgrade only to the releases in $Allowed; another target
@@ -3661,6 +3762,12 @@ function Compare-IPUSnapshot {
             $lost = @($lost | Where-Object { $explainedPorts -notcontains $_ })
         }
         if ($lost.Count -gt 0) { $diff += (& $make $l.Status ($l.Name + ' missing after upgrade') ('Count=' + $lost.Count) ($lost -join ', ') $l.Rec) }
+        # A hosts entry that is new after the upgrade overrides DNS too (#412). Only
+        # when the Pre run has the list; a changed entry is one missing and one new.
+        if ($l.Prop -eq 'Hosts' -and $null -ne $Before.($l.Prop)) {
+            $added = @($a | Where-Object { $b -notcontains $_ } | Sort-Object -Unique)
+            if ($added.Count -gt 0) { $diff += (& $make 'INFO' 'Hosts file entries new after upgrade' ('Count=' + $added.Count) ($added -join ', ') 'These entries were not in the hosts file before the upgrade. Confirm each one is intended (a changed entry shows as one missing and one new entry).') }
+        }
     }
     # Printers that now use another driver (#148).
     if ($null -ne $Before.PrinterDrivers -and $null -ne $After.PrinterDrivers) {
@@ -6190,10 +6297,11 @@ function Invoke-NetworkCheck {
             $copy = Save-NetworkEvidence -Destination $dest -Zip $CreatePolicyEvidenceZip
             $script:Data.NetworkEvidence = $copy.Location
             $keep = 'Copy it off the server before the change: it holds the full IP configuration, is not redacted and must not be shared outside the team. netsh-interface-dump.txt is a netsh script that can put the configuration back (read it first; see the user guide).'
+            $hostsHash = @(); if ($copy.HostsSha256) { $hostsHash = @('hosts.txt SHA-256=' + $copy.HostsSha256) }
             if (@($copy.Failed).Count -gt 0) {
-                Add-Result 'NETWORK' 'NetworkEvidence' 'MANUAL' $copy.Location (@(('Saved=' + ($copy.Files -join ', '))) + @($copy.Failed | ForEach-Object { 'Failed: ' + $_ })) -Recommendation ('Run the failed commands by hand and keep their output with the file. ' + $keep) -Kind 'Finding' -Source 'ipconfig, route, netsh (read-only)'
+                Add-Result 'NETWORK' 'NetworkEvidence' 'MANUAL' $copy.Location (@(('Saved=' + ($copy.Files -join ', '))) + $hostsHash + @($copy.Failed | ForEach-Object { 'Failed: ' + $_ })) -Recommendation ('Run the failed commands by hand and keep their output with the file. ' + $keep) -Kind 'Finding' -Source 'ipconfig, route, netsh, hosts file (read-only)'
             } else {
-                Add-Result 'NETWORK' 'NetworkEvidence' 'OK' $copy.Location ('Files=' + ($copy.Files -join ', ')) -Recommendation $keep -Source 'ipconfig, route, netsh (read-only)'
+                Add-Result 'NETWORK' 'NetworkEvidence' 'OK' $copy.Location (@(('Files=' + ($copy.Files -join ', '))) + $hostsHash) -Recommendation $keep -Source 'ipconfig, route, netsh, hosts file (read-only)'
             }
         } catch {
             Add-Result 'NETWORK' 'NetworkEvidence' 'MANUAL' 'Could not save the network configuration' $_.Exception.Message -Recommendation 'Before the change, save the output of "ipconfig /all", "route print" and "netsh -c interface dump" by hand and keep it off the server.' -Kind 'Finding' -Source 'ipconfig, route, netsh'
@@ -6236,25 +6344,28 @@ function Invoke-NetworkCheck {
         Add-Result 'NETWORK' 'NICTeaming' 'MANUAL' 'LBFO teams could not be read' $lbfoError -Recommendation 'Run Get-NetLbfoTeam (or look in Server Manager > NIC Teaming) by hand. Microsoft requires NIC Teaming to be disabled before IPU.' -Kind 'Finding' -Source 'Get-NetLbfoTeam'
     } elseif ($teams.Count -eq 0) { Add-Result 'NETWORK' 'NICTeaming' 'OK' 'No LBFO team detected' -Source 'Get-NetLbfoTeam' }
 
-    # Hosts file - active (non-comment) entries.
+    # Hosts file (#412): every active line is judged offline by
+    # Get-HostsEntryDecision (own name, domain, domain controller, duplicate,
+    # block, malformed line). A file that cannot be read is MANUAL, and the
+    # checks below still run. The run does not collect the domain controllers
+    # of an ordinary member server, so none are passed.
     $hostsPath = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
-    $entries = 0; $lineNo = 0
-    $hostsLines = @()
-    if (Test-Path -LiteralPath $hostsPath) { $hostsLines = @(Get-Content -LiteralPath $hostsPath) }
-    foreach ($line in $hostsLines) {
-        $lineNo++
-        $active = (([string]$line -split '#',2)[0]).Trim()
-        if (-not $active) { continue }
-        $entries++
-        $script:Data.Snapshot.Hosts += ($active -replace '\s+',' ')
-        $tokens = @($active -split '\s+')
-        Add-Result 'NETWORK_DEPENDENCY' ('Hosts line ' + $lineNo) 'INFO' ('Address=' + $tokens[0]) ('Names=' + (@($tokens | Select-Object -Skip 1) -join ',')) -Source $hostsPath
+    $hostsExists = Test-Path -LiteralPath $hostsPath
+    $hostsLines = @(); $hostsError = ''
+    if ($hostsExists) {
+        try { $hostsLines = @(Get-Content -LiteralPath $hostsPath -ErrorAction Stop) }
+        catch { $hostsError = $_.Exception.Message; Write-Swallowed $_ }
     }
-    if ($entries -gt 0) {
-        Add-Result 'NETWORK_DEPENDENCY' 'HostsFile' 'MANUAL' ('ActiveEntries=' + $entries) $hostsPath -Recommendation 'Confirm owner and purpose of each hosts entry and test the affected name resolution after IPU.' -Source 'hosts file'
-    } else {
-        Add-Result 'NETWORK_DEPENDENCY' 'HostsFile' 'OK' 'No active entries' -Source $hostsPath
+    $hostsDomain = ''
+    if ($script:Data.CS -and $script:Data.CS.PartOfDomain) { $hostsDomain = [string]$script:Data.CS.Domain }
+    $hostsJudged = Get-HostsEntryDecision -Lines $hostsLines -FileExists $hostsExists -ReadError $hostsError -ComputerName $script:ComputerName -DomainName $hostsDomain -DomainControllers @()
+    foreach ($e in @($hostsJudged.Entries)) {
+        $script:Data.Snapshot.Hosts += $e.Text
+        Add-Result 'NETWORK_DEPENDENCY' ('Hosts line ' + $e.LineNo) $e.Status $e.Value $e.Details -Recommendation $e.Recommendation -Source $hostsPath
     }
+    $hostsDetails = $hostsJudged.Details
+    if ($hostsJudged.State -eq 'Entries') { $hostsDetails = $hostsPath }
+    Add-Result 'NETWORK_DEPENDENCY' 'HostsFile' $hostsJudged.Status $hostsJudged.Value $hostsDetails -Recommendation $hostsJudged.Recommendation -Source $hostsPath
 
     # Static routes - persistent and active manual (NetMgmt), excluding defaults.
     if (-not (Test-CommandAvailable 'Get-NetRoute')) {

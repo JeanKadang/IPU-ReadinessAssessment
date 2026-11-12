@@ -189,10 +189,11 @@ function Invoke-NetworkCheck {
             $copy = Save-NetworkEvidence -Destination $dest -Zip $CreatePolicyEvidenceZip
             $script:Data.NetworkEvidence = $copy.Location
             $keep = 'Copy it off the server before the change: it holds the full IP configuration, is not redacted and must not be shared outside the team. netsh-interface-dump.txt is a netsh script that can put the configuration back (read it first; see the user guide).'
+            $hostsHash = @(); if ($copy.HostsSha256) { $hostsHash = @('hosts.txt SHA-256=' + $copy.HostsSha256) }
             if (@($copy.Failed).Count -gt 0) {
-                Add-Result 'NETWORK' 'NetworkEvidence' 'MANUAL' $copy.Location (@(('Saved=' + ($copy.Files -join ', '))) + @($copy.Failed | ForEach-Object { 'Failed: ' + $_ })) -Recommendation ('Run the failed commands by hand and keep their output with the file. ' + $keep) -Kind 'Finding' -Source 'ipconfig, route, netsh (read-only)'
+                Add-Result 'NETWORK' 'NetworkEvidence' 'MANUAL' $copy.Location (@(('Saved=' + ($copy.Files -join ', '))) + $hostsHash + @($copy.Failed | ForEach-Object { 'Failed: ' + $_ })) -Recommendation ('Run the failed commands by hand and keep their output with the file. ' + $keep) -Kind 'Finding' -Source 'ipconfig, route, netsh, hosts file (read-only)'
             } else {
-                Add-Result 'NETWORK' 'NetworkEvidence' 'OK' $copy.Location ('Files=' + ($copy.Files -join ', ')) -Recommendation $keep -Source 'ipconfig, route, netsh (read-only)'
+                Add-Result 'NETWORK' 'NetworkEvidence' 'OK' $copy.Location (@(('Files=' + ($copy.Files -join ', '))) + $hostsHash) -Recommendation $keep -Source 'ipconfig, route, netsh, hosts file (read-only)'
             }
         } catch {
             Add-Result 'NETWORK' 'NetworkEvidence' 'MANUAL' 'Could not save the network configuration' $_.Exception.Message -Recommendation 'Before the change, save the output of "ipconfig /all", "route print" and "netsh -c interface dump" by hand and keep it off the server.' -Kind 'Finding' -Source 'ipconfig, route, netsh'
@@ -235,25 +236,28 @@ function Invoke-NetworkCheck {
         Add-Result 'NETWORK' 'NICTeaming' 'MANUAL' 'LBFO teams could not be read' $lbfoError -Recommendation 'Run Get-NetLbfoTeam (or look in Server Manager > NIC Teaming) by hand. Microsoft requires NIC Teaming to be disabled before IPU.' -Kind 'Finding' -Source 'Get-NetLbfoTeam'
     } elseif ($teams.Count -eq 0) { Add-Result 'NETWORK' 'NICTeaming' 'OK' 'No LBFO team detected' -Source 'Get-NetLbfoTeam' }
 
-    # Hosts file - active (non-comment) entries.
+    # Hosts file (#412): every active line is judged offline by
+    # Get-HostsEntryDecision (own name, domain, domain controller, duplicate,
+    # block, malformed line). A file that cannot be read is MANUAL, and the
+    # checks below still run. The run does not collect the domain controllers
+    # of an ordinary member server, so none are passed.
     $hostsPath = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
-    $entries = 0; $lineNo = 0
-    $hostsLines = @()
-    if (Test-Path -LiteralPath $hostsPath) { $hostsLines = @(Get-Content -LiteralPath $hostsPath) }
-    foreach ($line in $hostsLines) {
-        $lineNo++
-        $active = (([string]$line -split '#',2)[0]).Trim()
-        if (-not $active) { continue }
-        $entries++
-        $script:Data.Snapshot.Hosts += ($active -replace '\s+',' ')
-        $tokens = @($active -split '\s+')
-        Add-Result 'NETWORK_DEPENDENCY' ('Hosts line ' + $lineNo) 'INFO' ('Address=' + $tokens[0]) ('Names=' + (@($tokens | Select-Object -Skip 1) -join ',')) -Source $hostsPath
+    $hostsExists = Test-Path -LiteralPath $hostsPath
+    $hostsLines = @(); $hostsError = ''
+    if ($hostsExists) {
+        try { $hostsLines = @(Get-Content -LiteralPath $hostsPath -ErrorAction Stop) }
+        catch { $hostsError = $_.Exception.Message; Write-Swallowed $_ }
     }
-    if ($entries -gt 0) {
-        Add-Result 'NETWORK_DEPENDENCY' 'HostsFile' 'MANUAL' ('ActiveEntries=' + $entries) $hostsPath -Recommendation 'Confirm owner and purpose of each hosts entry and test the affected name resolution after IPU.' -Source 'hosts file'
-    } else {
-        Add-Result 'NETWORK_DEPENDENCY' 'HostsFile' 'OK' 'No active entries' -Source $hostsPath
+    $hostsDomain = ''
+    if ($script:Data.CS -and $script:Data.CS.PartOfDomain) { $hostsDomain = [string]$script:Data.CS.Domain }
+    $hostsJudged = Get-HostsEntryDecision -Lines $hostsLines -FileExists $hostsExists -ReadError $hostsError -ComputerName $script:ComputerName -DomainName $hostsDomain -DomainControllers @()
+    foreach ($e in @($hostsJudged.Entries)) {
+        $script:Data.Snapshot.Hosts += $e.Text
+        Add-Result 'NETWORK_DEPENDENCY' ('Hosts line ' + $e.LineNo) $e.Status $e.Value $e.Details -Recommendation $e.Recommendation -Source $hostsPath
     }
+    $hostsDetails = $hostsJudged.Details
+    if ($hostsJudged.State -eq 'Entries') { $hostsDetails = $hostsPath }
+    Add-Result 'NETWORK_DEPENDENCY' 'HostsFile' $hostsJudged.Status $hostsJudged.Value $hostsDetails -Recommendation $hostsJudged.Recommendation -Source $hostsPath
 
     # Static routes - persistent and active manual (NetMgmt), excluding defaults.
     if (-not (Test-CommandAvailable 'Get-NetRoute')) {

@@ -195,7 +195,7 @@ Describe 'Save-NetworkEvidence (#149)' {
     It 'saves each command output into the folder and zips it' {
         Mock Invoke-NativeCapture { [pscustomobject]@{ ExitCode = 0; Output = ('output of ' + ($ArgumentList -join ' ')); Lines = @('x'); TimedOut = $false; Error = '' } }
         $dest = Join-Path $TestDrive 'evidence\SRV-IPU-Network-1'
-        $r = Save-NetworkEvidence -Destination $dest
+        $r = Save-NetworkEvidence -Destination $dest -HostsPath (Join-Path $TestDrive 'no-such-hosts')
         ($r.Files -join ',') | Should -Be 'ipconfig-all.txt,route-print.txt,netsh-ipv4-show-config.txt,netsh-interface-dump.txt'
         @($r.Failed).Count | Should -Be 0
         $r.Location | Should -Be ($dest + '.zip')
@@ -205,7 +205,7 @@ Describe 'Save-NetworkEvidence (#149)' {
     }
     It 'runs only read-only commands, each with a timeout' {
         Mock Invoke-NativeCapture { [pscustomobject]@{ ExitCode = 0; Output = 'x'; Lines = @('x'); TimedOut = $false; Error = '' } }
-        $null = Save-NetworkEvidence -Destination (Join-Path $TestDrive 'ro') -Zip $false -TimeoutSeconds 30
+        $null = Save-NetworkEvidence -Destination (Join-Path $TestDrive 'ro') -Zip $false -TimeoutSeconds 30 -HostsPath (Join-Path $TestDrive 'no-such-hosts')
         Should -Invoke Invoke-NativeCapture -Times 4 -Exactly -ParameterFilter {
             $TimeoutSeconds -eq 30 -and (($ArgumentList -join ' ') -in @('/all', 'print', 'interface ipv4 show config', '-c interface dump'))
         }
@@ -213,13 +213,35 @@ Describe 'Save-NetworkEvidence (#149)' {
     It 'a command that times out is listed in Failed; the rest is saved' {
         Mock Invoke-NativeCapture { [pscustomobject]@{ ExitCode = $null; Output = ''; Lines = @(); TimedOut = $true; Error = '' } } -ParameterFilter { $FilePath -like '*route.exe' }
         Mock Invoke-NativeCapture { [pscustomobject]@{ ExitCode = 0; Output = 'x'; Lines = @('x'); TimedOut = $false; Error = '' } } -ParameterFilter { $FilePath -notlike '*route.exe' }
-        $r = Save-NetworkEvidence -Destination (Join-Path $TestDrive 'partial') -Zip $false
+        $r = Save-NetworkEvidence -Destination (Join-Path $TestDrive 'partial') -Zip $false -HostsPath (Join-Path $TestDrive 'no-such-hosts')
         @($r.Files).Count | Should -Be 3
         ($r.Failed -join ' ') | Should -Match 'route print: no answer within 60 seconds'
     }
     It 'throws when nothing could be saved' {
         Mock Invoke-NativeCapture { [pscustomobject]@{ ExitCode = 1; Output = ''; Lines = @(); TimedOut = $false; Error = '' } }
-        { Save-NetworkEvidence -Destination (Join-Path $TestDrive 'none') -Zip $false } | Should -Throw '*No network command output*'
+        { Save-NetworkEvidence -Destination (Join-Path $TestDrive 'none') -Zip $false -HostsPath (Join-Path $TestDrive 'no-such-hosts') } | Should -Throw '*No network command output*'
+    }
+    It 'copies the hosts file as it is, with its SHA-256 (#412)' {
+        Mock Invoke-NativeCapture { [pscustomobject]@{ ExitCode = 0; Output = 'x'; Lines = @('x'); TimedOut = $false; Error = '' } }
+        $src = Join-Path $TestDrive 'hosts-source'
+        [IO.File]::WriteAllText($src, "# test`r`n127.0.0.1 localhost`r`n10.1.1.5 app.example.test`r`n")
+        $dest = Join-Path $TestDrive 'with-hosts'
+        $r = Save-NetworkEvidence -Destination $dest -Zip $false -HostsPath $src
+        $r.Files | Should -Contain 'hosts.txt'
+        @($r.Failed).Count | Should -Be 0
+        [IO.File]::ReadAllText((Join-Path $dest 'hosts.txt')) | Should -Be ([IO.File]::ReadAllText($src))
+        $r.HostsSha256 | Should -Be (Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash
+    }
+    It 'a hosts file that cannot be copied is listed in Failed; the rest is saved (#412)' {
+        Mock Invoke-NativeCapture { [pscustomobject]@{ ExitCode = 0; Output = 'x'; Lines = @('x'); TimedOut = $false; Error = '' } }
+        $src = Join-Path $TestDrive 'hosts-locked'
+        [IO.File]::WriteAllText($src, '10.1.1.5 app.example.test')
+        Mock Copy-Item { throw 'The process cannot access the file' }
+        $r = Save-NetworkEvidence -Destination (Join-Path $TestDrive 'locked') -Zip $false -HostsPath $src
+        ($r.Failed -join ' ') | Should -Match 'hosts file: The process cannot access the file'
+        $r.Files | Should -Not -Contain 'hosts.txt'
+        @($r.Files).Count | Should -Be 4
+        $r.HostsSha256 | Should -Be ''
     }
     It '-RedactExisting leaves the evidence alone: it is not a report' {
         $dir = Join-Path $TestDrive 'share'

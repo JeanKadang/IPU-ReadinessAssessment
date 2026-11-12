@@ -704,7 +704,8 @@ function Save-NetworkEvidence {
     param(
         [Parameter(Mandatory=$true)][string]$Destination,
         [bool]$Zip = $true,
-        [int]$TimeoutSeconds = 60
+        [int]$TimeoutSeconds = 60,
+        [string]$HostsPath = (Join-Path $env:windir 'System32\drivers\etc\hosts')
     )
     $sys = Join-Path $env:windir 'System32'
     $commands = @(
@@ -738,6 +739,17 @@ function Save-NetworkEvidence {
             $saved += 'adapter-advanced-properties.txt'
         } catch { $failed += ('Get-NetAdapterAdvancedProperty: ' + $_.Exception.Message) }
     }
+    # The hosts file (#412): a plain copy with its SHA-256, so the entries can
+    # be put back by hand. A server without a hosts file has nothing to copy.
+    $hostsSha = ''
+    if (Test-Path -LiteralPath $HostsPath -PathType Leaf) {
+        $hostsCopy = Join-Path $Destination 'hosts.txt'
+        try {
+            Copy-Item -LiteralPath $HostsPath -Destination $hostsCopy -Force -ErrorAction Stop
+            $saved += 'hosts.txt'
+            try { $hostsSha = (Get-FileHash -LiteralPath $hostsCopy -Algorithm SHA256 -ErrorAction Stop).Hash } catch { $failed += ('hosts.txt SHA-256: ' + $_.Exception.Message) }
+        } catch { $failed += ('hosts file: ' + $_.Exception.Message) }
+    }
     if ($saved.Count -eq 0) { throw ('No network command output could be saved: ' + ($failed -join '; ')) }
     $location = $Destination
     if ($Zip) {
@@ -746,7 +758,7 @@ function Save-NetworkEvidence {
         New-ZipFromFolder $Destination $zipPath
         $location = $zipPath
     }
-    return [pscustomobject]@{ Location = $location; Folder = $Destination; Files = $saved; Failed = $failed }
+    return [pscustomobject]@{ Location = $location; Folder = $Destination; Files = $saved; Failed = $failed; HostsSha256 = $hostsSha }
 }
 
 # Print servers (#148): read-only helpers for the printers and printbackup
