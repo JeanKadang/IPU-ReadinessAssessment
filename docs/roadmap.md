@@ -20,7 +20,6 @@ Signing the script (#14) is closed as not planned: no certificate; build provena
 | [#349](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/349) | P2 | Micker71 | Confirm the EOL candidates and verdicts on a real Windows Server |
 | [#134](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/134) | P2 | JeanKadang | Releases have hashes but no build provenance |
 | [#153](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/153) | P3 | Micker71 | Dedicated cluster node assessment script |
-| [#413](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/413) | P3 | Micker71 | docs: fleet overview lacks -EolSnapshot and the fourth file |
 
 ## Future
 
@@ -33,6 +32,7 @@ No date: needs a decision first, or depends on something outside the repo.
 | [#403](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/403) | P2 | Micker71 | Crypto and protocol defaults per release, as dated facts |
 | [#404](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/404) | P2 | Micker71 | Read the explicit protocol, cipher, SMB and NTLM settings (read-only check) |
 | [#405](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/405) | P2 | Micker71 | Post-upgrade run: compare protocol, cipher, SMB and NTLM settings with the Pre run |
+| [#427](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/427) | P2 | JeanKadang | Confirm the TLS 1.0 and 1.1 default on a clean Windows Server 2025 |
 | [#265](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/265) | P3 | JeanKadang | User guide is one 839-line file |
 | [#267](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/267) | P3 | JeanKadang | Identify the installed cumulative update by build and UBR, and say how many months behind it is |
 | [#388](https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/388) | P3 | Micker71 | End-of-life cycle match takes the first of two equal matches |
