@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-20T00:00:00Z",
+  "title": "Design System: IPU Readiness Assessment",
+  "extensions": {
+    "colorMeta": {
+      "navy": { "role": "primary", "displayName": "Inspection Navy", "canonical": "#16365f" },
+      "page": { "role": "neutral", "displayName": "Pale Paper", "canonical": "#f3f5f8" },
+      "status-blocker": { "role": "status", "displayName": "Blocker Oxblood", "canonical": "#7a1717" },
+      "status-ok": { "role": "status", "displayName": "OK Green", "canonical": "#17703a" }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Masthead title." },
+      "label": { "displayName": "Label", "purpose": "Table heads, card captions, badges." }
+    },
+    "shadows": [],
+    "motion": [],
+    "breakpoints": [ { "name": "narrow", "value": "900px" } ]
+  },
+  "components": [
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "refersTo": "status-badge",
+      "description": "Labelled pill; the only filled use of status color.",
+      "html": "<span class=\"ds-badge\">ACTION</span>",
+      "css": ".ds-badge{display:inline-block;background:#b42318;color:#fff;font:700 11px 'Segoe UI',Arial,sans-serif;letter-spacing:.03em;padding:3px 8px;border-radius:999px;white-space:nowrap}"
+    },
+    {
+      "name": "Summary Card",
+      "kind": "card",
+      "refersTo": "summary-card",
+      "description": "Caption plus large figure, linking to its section.",
+      "html": "<a class=\"ds-card\" href=\"#\"><small>Blockers</small><b>3</b></a>",
+      "css": ".ds-card{display:block;background:#fff;border:1px solid #dde3ea;border-radius:10px;padding:12px 14px;color:#16202e;text-decoration:none;font:14px 'Segoe UI',Arial,sans-serif}.ds-card b{display:block;font-size:24px;font-weight:650}.ds-card small{color:#5d6a79;font-size:12px;text-transform:uppercase;letter-spacing:.04em}.ds-card:hover{border-color:#16365f}.ds-card:focus-visible{outline:3px solid #16365f;outline-offset:2px}"
+    },
+    {
+      "name": "Caution Banner",
+      "kind": "custom",
+      "refersTo": "caution-banner",
+      "description": "Partial or incomplete-coverage notice.",
+      "html": "<div class=\"ds-caution\">PARTIAL REPORT - slow checks had not finished.</div>",
+      "css": ".ds-caution{background:#fff4d6;border:1px solid #e6c46a;color:#5c4400;border-radius:10px;padding:12px 16px;font:600 14px 'Segoe UI',Arial,sans-serif}"
+    },
+    {
+      "name": "Command Box",
+      "kind": "custom",
+      "refersTo": "command-box",
+      "description": "Mono command with copy button.",
+      "html": "<div class=\"ds-cmd\"><code>Get-Service Spooler</code><button class=\"ds-copy\">Copy</button></div>",
+      "css": ".ds-cmd{display:flex;gap:6px;align-items:flex-start}.ds-cmd code{flex:1;font:12px/1.45 Consolas,monospace;background:#eef2f7;color:#16202e;border:1px solid #dde3ea;border-radius:6px;padding:4px 6px}.ds-copy{font:12px 'Segoe UI',Arial,sans-serif;border:1px solid #dde3ea;background:#fff;color:#16202e;border-radius:6px;padding:2px 8px;cursor:pointer}.ds-copy:focus-visible{outline:3px solid #16365f;outline-offset:2px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Field Report",
+    "overview": "Inspection-document feel: navy masthead, white bordered panels, status color only where it means something. Single self-contained file, light/dark/print.",
+    "keyCharacteristics": ["Flat, bordered, tonal; no shadows", "Status carried by a labelled pill, never color alone", "Native system font stack", "Print is a first-class theme"],
+    "rules": [
+      { "name": "The Status-Is-Labelled Rule", "body": "A status color always travels with its text label in a pill.", "section": "colors" },
+      { "name": "The Contrast-Is-Tested Rule", "body": "Text meets 4.5:1 and focus 3:1 in both themes; tests enforce it.", "section": "colors" },
+      { "name": "The Honest-Manual Rule", "body": "An errored check is Manual Violet, never OK Green.", "section": "colors" },
+      { "name": "The System-Font Rule", "body": "No web fonts: the file must be self-contained.", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "Do not add shadows; use a border or tint step.", "section": "elevation" }
+    ],
+    "dos": ["Do lead with the verdict and worst items first.", "Do pair every status color with its text label.", "Do keep the file single and self-contained.", "Do verify light, dark and print themes.", "Do edit the parts and rebuild; never edit built scripts."],
+    "donts": ["Don't add shadows, gradients, animation or decorative imagery.", "Don't introduce web fonts, icon fonts or external assets.", "Don't show an errored check as OK.", "Don't convey state by color alone."]
+  }
+}
