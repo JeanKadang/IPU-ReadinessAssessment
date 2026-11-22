@@ -297,6 +297,69 @@ Describe 'Recovery partition after C: (#161)' {
         }
         (Get-RecoveryPartitionDecision @() 2 $null 'Pre').Kind | Should -Be 'Unknown'
     }
+    Context 'Get-DataVolumeDecision (#443)' {
+    BeforeAll {
+        function New-Vol { param($Name, $SizeGB, $FreeGB, $Label = 'Data', $FileSystem = 'NTFS')
+            $cap = $null; if ($null -ne $SizeGB) { $cap = [uint64]($SizeGB * 1GB) }
+            $free = $null; if ($null -ne $FreeGB) { $free = [uint64]($FreeGB * 1GB) }
+            [pscustomobject]@{ Name = $Name; Label = $Label; FileSystem = $FileSystem; Capacity = $cap; FreeSpace = $free }
+        }
+    }
+    It 'free space <FreeGB> of 100 GB at a 20 percent threshold is <Kind>' -TestCases @(
+        @{ FreeGB = 5;     Kind = 'Low'; Status = 'WARNING' }
+        @{ FreeGB = 19.96; Kind = 'Low'; Status = 'WARNING' }
+        @{ FreeGB = 20;    Kind = 'Ok';  Status = 'OK' }
+        @{ FreeGB = 80;    Kind = 'Ok';  Status = 'OK' }
+        @{ FreeGB = 0;     Kind = 'Low'; Status = 'WARNING' }
+    ) {
+        $d = @(Get-DataVolumeDecision @((New-Vol 'D:\' 100 $FreeGB)) 'C:' 20)
+        $d.Count | Should -Be 1
+        $d[0].Kind | Should -Be $Kind
+        $d[0].Status | Should -Be $Status
+        $d[0].Name | Should -Be 'D:'
+    }
+    It 'a value just below the threshold is not shown as the threshold' {
+        (Get-DataVolumeDecision @((New-Vol 'D:\' 100 19.96)) 'C:' 20)[0].FreePercent | Should -Be 19.9
+    }
+    It 'says how much to add to be at the threshold again' {
+        # 100 GB with 10 free: +13 GB gives 23 of 113 = 20,4 %; +12 gives 19,6 %.
+        $d = (Get-DataVolumeDecision @((New-Vol 'D:\' 100 10)) 'C:' 20)[0]
+        $d.ExtendGB | Should -Be 13
+        (($d.FreeGB + $d.ExtendGB) / ($d.SizeGB + $d.ExtendGB)) | Should -BeGreaterOrEqual 0.2
+        (($d.FreeGB + $d.ExtendGB - 1) / ($d.SizeGB + $d.ExtendGB - 1)) | Should -BeLessThan 0.2
+        (Get-DataVolumeDecision @((New-Vol 'D:\' 100 50)) 'C:' 20)[0].ExtendGB | Should -Be 0
+    }
+    It 'the threshold is a setting' {
+        (Get-DataVolumeDecision @((New-Vol 'D:\' 100 25)) 'C:' 30)[0].Kind | Should -Be 'Low'
+        (Get-DataVolumeDecision @((New-Vol 'D:\' 100 25)) 'C:' 10)[0].Kind | Should -Be 'Ok'
+    }
+    It 'leaves the system drive to CFreeSpace, whatever its letter' {
+        $vols = @((New-Vol 'C:\' 100 1), (New-Vol 'D:\' 100 1))
+        @(Get-DataVolumeDecision $vols 'C:' 20 | ForEach-Object { $_.Name }) | Should -Be @('D:')
+        @(Get-DataVolumeDecision $vols 'D:' 20 | ForEach-Object { $_.Name }) | Should -Be @('C:')
+    }
+    It 'a mount point counts, also one under the system drive; a volume with no letter and no mount point does not' {
+        $vols = @((New-Vol 'E:\Mounts\Log\' 100 5), (New-Vol 'C:\ClusterStorage\Volume1\' 100 5), (New-Vol '\\?\Volume{11111111-2222-3333-4444-555555555555}\' 0.5 0.1 'Recovery'))
+        $d = @(Get-DataVolumeDecision $vols 'C:' 20)
+        @($d | ForEach-Object { $_.Name }) | Should -Be @('C:\ClusterStorage\Volume1', 'E:\Mounts\Log')
+        @($d | Where-Object { $_.Kind -ne 'Low' }).Count | Should -Be 0
+    }
+    It 'a size that cannot be read is MANUAL, never fine: <Case>' -TestCases @(
+        @{ Case = 'no capacity (RAW or locked)'; SizeGB = $null; FreeGB = $null }
+        @{ Case = 'no free space value';         SizeGB = 100;   FreeGB = $null }
+        @{ Case = 'capacity zero';               SizeGB = 0;     FreeGB = 0 }
+        @{ Case = 'more free than size';         SizeGB = 10;    FreeGB = 20 }
+    ) {
+        $d = (Get-DataVolumeDecision @((New-Vol 'F:\' $SizeGB $FreeGB)) 'C:' 20)[0]
+        $d.Kind | Should -Be 'Unknown'
+        $d.Status | Should -Be 'MANUAL'
+    }
+    It 'no volumes gives no rows, and the rows are sorted by name' {
+        @(Get-DataVolumeDecision @() 'C:' 20).Count | Should -Be 0
+        @(Get-DataVolumeDecision $null 'C:' 20).Count | Should -Be 0
+        @(Get-DataVolumeDecision @((New-Vol 'G:\' 10 5), (New-Vol 'D:\' 10 5)) 'C:' 20 | ForEach-Object { $_.Name }) | Should -Be @('D:', 'G:')
+    }
+    }
     It 'names the partition after C:, prefers the one WinRE is on, and warns about reagentc /disable' {
         $parts = @((New-Part 1 1 500 $true), (New-Part 2 600 100 $false), (New-Part 5 800 800000 $false), (New-Part 6 801000 901 $true))
         $d = Get-RecoveryPartitionDecision $parts 5 6 'Post'
