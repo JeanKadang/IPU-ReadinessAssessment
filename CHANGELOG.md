@@ -4,6 +4,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [4.9.0] - 2026-11-22
+
+### Security
+
+Four findings reported privately by Micker71 against 4.8.0 and earlier, now fixed. Each has a GitHub security advisory.
+
+- Passwords and tokens in a scheduled task's command line are masked before the task is written to the report, the JSON and the fleet CSV, whether or not redaction is on (GHSA-3xmq-62gm-6hxj). `Hide-CommandLineSecret` covers `-P`, `-Password`, `/p:`, `pwd=`, `password=`, `ConvertTo-SecureString`, `net use` (the password before or after `/user:`), `schtasks /rp` and `user:password@host` links; the row says when it masked something. Over-masking is accepted. Reports made with earlier versions still hold the text, and `-RedactExisting` does not mask it: run the assessment again, or check old reports by hand before they are shared.
+- A report or evidence folder that already exists is used only when it is safe (GHSA-38wc-349v-wg27). A junction or symbolic link is refused, and so is a local folder owned by anyone but SYSTEM, Administrators, TrustedInstaller or the account that runs the assessment. The run stops with a message that names the reason; give `-ReportDirectory` a new folder name. A network path is checked for links, not for its owner.
+- Redaction no longer lets names through (GHSA-232q-x6hc-mm39). The HTML report is redacted after its text and attribute values are decoded, so a name with `&`, `'`, `"`, `<`, `>` or a letter such as æ, ø or å is found, gets the same placeholder as in the JSON, and goes into the redaction key as it was written. Also redacted now: an address at the end of a sentence, UNC host names, links to a host with no domain, more top-level domains (`.io`, `.app`, `.dev`, `.fo`, `.gl` and others), the short name of a host that has a full name (when it contains a digit), `C:\Users\<name>` paths, Azure AD SIDs, MAC addresses written `0050.56ab.cdef` or `005056ABCDEF`, accounts with a space in a known domain, and scheduled-task folder names. Redaction is still best effort ([ADR 0005](docs/adr/0005-redaction-is-best-effort.md)): the name of another server in free text, application and service display names that contain a customer name, and a domain the run does not know can still pass.
+- The fleet overview takes the status of each server and finding only from the known set (SPECIAL, BLOCKER, ACTION, WARNING, MANUAL, OK, INFO) when it builds the badge class; anything else is shown as MANUAL (GHSA-j498-r6cv-g44g). A result file that was edited could put script in the page.
+
 ### Added
 
 - C: extension and low drives in the Summary and the fleet overview (#448). The Summary of the Pre and the Post report has two new facts under *C: drive*: **C: extension** says whether a partition is in the way (`Blocked by P3 (recovery partition, 480 MB) after C:`, or that nothing is, or that Setup will likely add a recovery partition there), and **Other drives low on space** names every other drive or mount point below `DataVolumeMinFreePercent` with its free percent and size. Both are in the result JSON (`Facts.CExtension`, `Facts.LowDataVolumes`) and in `IPU-Fleet-Servers.csv`; the fleet overview's server table gets a *Low drives* column that is empty when no drive is low.
@@ -376,7 +387,8 @@ Restructure of the 3.x script (released as a script file only).
 
 Local Group Policy backup and RDP readiness. Superseded by 4.0.0.
 
-[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.7.0...HEAD
+[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.9.0...HEAD
+[4.9.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.9.0
 [4.8.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.8.0
 [4.7.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.7.0
 [4.6.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.6.0

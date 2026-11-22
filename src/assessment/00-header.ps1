@@ -1,8 +1,8 @@
 <#
 ===============================================================================
  SCRIPT NAME : Windows-IPU-Readiness-Assessment.ps1
- VERSION     : 4.8.0
- RELEASE DATE: 2026-11-10
+ VERSION     : 4.9.0
+ RELEASE DATE: 2026-11-22
  PURPOSE     : Windows Server in-place upgrade (IPU) readiness assessment and
                post-upgrade verification, with a self-contained HTML report
                and a JSON result file written on the assessed server.
@@ -88,6 +88,12 @@
     load, nothing is collected. The Pester tests use this.
 
 .VERSION HISTORY
+    4.9.0 - Security fixes: passwords in scheduled-task command lines are
+            masked; an existing output folder that is a junction or is
+            owned by an ordinary user is refused; redaction finds names
+            that are HTML encoded in the page and more hosts, addresses,
+            paths and SIDs. Data volumes low on space, C: extension.
+            Post run: pre-upgrade advice is not a finding.
     4.8.0 - Windows Server 2008 and 2008 R2 as a source, with the shortest
             supported route. VMware Tools: how far behind the newest
             release. Patch level from the newest security update. The
