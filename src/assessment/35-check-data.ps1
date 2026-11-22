@@ -22,7 +22,7 @@ $script:CheckDataOwners = [ordered]@{
     KmsEndpoint = 'licensing'; ActivationKind = 'licensing'; ActivationSummary = 'licensing'
     DomainRoleText = 'domain'; UacSummary = 'domain'
     AdLocation = 'grouppolicy'
-    CSummary = 'storage'; NetworkEvidence = 'network'; SqlSummary = 'sql'
+    CSummary = 'storage'; CExtension = 'storage'; DataVolumeSummary = 'storage'; NetworkEvidence = 'network'; SqlSummary = 'sql'
     EndpointProducts = 'antivirus'
     # other checks
     PrintServer = 'printers'; PrintInventoryFailed = 'printers'; Special = 'special'; EolCandidates = 'eolcandidates'

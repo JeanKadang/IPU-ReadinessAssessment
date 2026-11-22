@@ -97,3 +97,16 @@ function Get-TeamsSummary {
     }
     return $rows
 }
+
+function Get-LowDriveCell {
+    # Pure (#448): what the server table shows for the other drives. Only what
+    # needs attention: the volumes below the threshold, and volumes that could
+    # not be read. "None below ..." and results from before 4.9.0 show nothing.
+    param([string]$Text)
+    if (-not $Text) { return '' }
+    if ($Text -match '^(None below|No other local volume)') {
+        if ($Text -match '(not readable: .+)$') { return $Matches[1] }
+        return ''
+    }
+    return $Text
+}

@@ -59,6 +59,8 @@ function Invoke-StorageCheck {
     $freeGB = [math]::Round(([double]$c.FreeSpace / 1GB),2)
     $script:Data.CSummary = 'Size ' + (Format-Number $sizeGB) + ' GB, free ' + (Format-Number $freeGB) + ' GB'
     if ($sys -ne 'C:') { $script:Data.CSummary += ' (system drive ' + $sys + ')' }
+    # For the Summary (#448). Replaced below once the layout has been read.
+    $script:Data.CExtension = Get-CExtensionSummary $sys @() '' $false
     if ($freeGB -lt $MinimumCFreeGB) {
         $needed = [math]::Ceiling(($MinimumCFreeGB - $freeGB) / $ExtendBlockGB) * $ExtendBlockGB
         Add-Result 'STORAGE' 'CFreeSpace' 'ACTION' $script:Data.CSummary ('RequiredExpansionGB=' + $needed) -Recommendation ('Extend ' + $sys + ' by at least ' + $needed + ' GB to reach the ' + $MinimumCFreeGB + ' GB free-space target.') -Source 'Win32_LogicalDisk' -Command (Get-RecommendationCommand 'CFreeSpace').Command -CommandKind 'Check'
@@ -69,7 +71,9 @@ function Invoke-StorageCheck {
     # Data volumes (#443): drive letters and mount points other than the
     # system drive. A failed query stops the check (not completed), so a
     # missing list never reads as "no volume is low".
-    foreach ($dv in @(Get-DataVolumeDecision (Get-CimRequired 'Win32_Volume' 'DriveType=3') $sys $DataVolumeMinFreePercent)) {
+    $dataVolumes = @(Get-DataVolumeDecision (Get-CimRequired 'Win32_Volume' 'DriveType=3') $sys $DataVolumeMinFreePercent)
+    $script:Data.DataVolumeSummary = (Get-DataVolumeSummary $dataVolumes $DataVolumeMinFreePercent $script:NumberCulture).Text
+    foreach ($dv in $dataVolumes) {
         $item = 'DataVolume ' + $dv.Name
         $about = @(); if ($dv.Label) { $about += ('Label=' + $dv.Label) }; if ($dv.FileSystem) { $about += ('FileSystem=' + $dv.FileSystem) }
         if ($dv.Kind -eq 'Unknown') {
@@ -117,6 +121,7 @@ function Invoke-StorageCheck {
     })
     $wrePart = $null; if ($winRe -and $winRe.Disk -eq $cp.DiskNumber) { $wrePart = $winRe.Partition }
     $rd = Get-RecoveryPartitionDecision $layout ([int]$cp.PartitionNumber) $wrePart $AssessmentMode
+    $script:Data.CExtension = Get-CExtensionSummary $sys @($layout | Where-Object { $_.Offset -gt [double]$cp.Offset } | Sort-Object Offset) $rd.Kind $true
     if ($rd.Kind -eq 'AfterC') {
         Add-Result 'STORAGE' 'RecoveryPartitionAfterC' $rd.Status $rd.Value -Recommendation $rd.Text -Source 'Get-Partition, reagentc /info' -Command (Get-RecommendationCommand 'RemoveRecoveryPartition' @{ Disk = $cp.DiskNumber; Partition = $rd.PartitionNumber }).Command -CommandKind 'Change' -Link $script:DocLinks.WinReResize.Url -LinkTitle $script:DocLinks.WinReResize.Title
     } elseif ($rd.Kind -eq 'LikelyNew') {

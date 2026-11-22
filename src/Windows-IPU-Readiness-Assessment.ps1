@@ -2092,7 +2092,7 @@ $script:CheckDataOwners = [ordered]@{
     KmsEndpoint = 'licensing'; ActivationKind = 'licensing'; ActivationSummary = 'licensing'
     DomainRoleText = 'domain'; UacSummary = 'domain'
     AdLocation = 'grouppolicy'
-    CSummary = 'storage'; NetworkEvidence = 'network'; SqlSummary = 'sql'
+    CSummary = 'storage'; CExtension = 'storage'; DataVolumeSummary = 'storage'; NetworkEvidence = 'network'; SqlSummary = 'sql'
     EndpointProducts = 'antivirus'
     # other checks
     PrintServer = 'printers'; PrintInventoryFailed = 'printers'; Special = 'special'; EolCandidates = 'eolcandidates'
@@ -4103,6 +4103,48 @@ function Get-DataVolumeDecision {
         $rows += [pscustomobject]$row
     }
     return @($rows | Sort-Object Name)
+}
+
+function Get-DataVolumeSummary {
+    # Pure (#448): the rows of Get-DataVolumeDecision -> one line for the
+    # Summary and the fleet overview. Names every volume below the threshold
+    # with its free percent and size; a volume that could not be read is named
+    # too, so "none is low" is never said about a volume nobody measured.
+    param([object[]]$Rows, [int]$MinFreePercent = 20, [Globalization.CultureInfo]$Culture = [Globalization.CultureInfo]::InvariantCulture)
+    $rows = @($Rows | Where-Object { $_ })
+    if ($rows.Count -eq 0) { return [pscustomobject]@{ Text = 'No other local volume'; Low = @(); Unknown = @() } }
+    $low = @($rows | Where-Object { $_.Kind -eq 'Low' })
+    $unknown = @($rows | Where-Object { $_.Kind -eq 'Unknown' } | ForEach-Object { [string]$_.Name })
+    $measured = $rows.Count - $unknown.Count
+    if ($low.Count -gt 0) {
+        $text = (@($low | ForEach-Object { [string]$_.Name + ' ' + ([double]$_.FreePercent).ToString('N1', $Culture) + ' % free of ' + ([double]$_.SizeGB).ToString('N0', $Culture) + ' GB' }) -join '; ')
+        $text += ' (threshold ' + $MinFreePercent + ' %, ' + $measured + ' volume' + $(if ($measured -eq 1) { '' } else { 's' }) + ' checked)'
+    } else {
+        $text = 'None below ' + $MinFreePercent + ' % free (' + $measured + ' volume' + $(if ($measured -eq 1) { '' } else { 's' }) + ' checked)'
+    }
+    if ($unknown.Count -gt 0) { $text += '; not readable: ' + ($unknown -join ', ') }
+    return [pscustomobject]@{ Text = $text; Low = @($low | ForEach-Object { [string]$_.Name }); Unknown = $unknown }
+}
+
+function Get-CExtensionSummary {
+    # Pure (#448): can the system drive be extended, in one line for the
+    # Summary. After = the partitions that follow it on the disk
+    # (PartitionNumber, SizeMB, IsRecovery), nearest first. RecoveryKind is
+    # the Kind of Get-RecoveryPartitionDecision: Unknown = the layout could
+    # not be judged, LikelyNew = Setup will probably add a recovery partition.
+    param([string]$SystemDrive = 'C:', [object[]]$After, [string]$RecoveryKind = '', [bool]$Checked = $true)
+    if (-not $Checked) { return 'Not checked (the partition layout could not be read)' }
+    if ($RecoveryKind -eq 'Unknown') { return 'Not checked (the system partition is not in the partition list)' }
+    $parts = @($After | Where-Object { $_ })
+    if ($parts.Count -eq 0) {
+        if ($RecoveryKind -eq 'LikelyNew') { return ('Nothing in the way now: no partition after ' + $SystemDrive + '. Setup will likely add a recovery partition there (see Storage)') }
+        return ('Nothing in the way: no partition after ' + $SystemDrive)
+    }
+    $names = @($parts | ForEach-Object {
+        $size = [math]::Round([double]$_.SizeMB)
+        'P' + $_.PartitionNumber + ' (' + $(if ($_.IsRecovery) { 'recovery partition, ' } else { '' }) + $size + ' MB)'
+    })
+    return ('Blocked by ' + ($names -join ', ') + ' after ' + $SystemDrive)
 }
 
 function Get-RecoveryPartitionDecision {
@@ -6284,6 +6326,8 @@ function Invoke-StorageCheck {
     $freeGB = [math]::Round(([double]$c.FreeSpace / 1GB),2)
     $script:Data.CSummary = 'Size ' + (Format-Number $sizeGB) + ' GB, free ' + (Format-Number $freeGB) + ' GB'
     if ($sys -ne 'C:') { $script:Data.CSummary += ' (system drive ' + $sys + ')' }
+    # For the Summary (#448). Replaced below once the layout has been read.
+    $script:Data.CExtension = Get-CExtensionSummary $sys @() '' $false
     if ($freeGB -lt $MinimumCFreeGB) {
         $needed = [math]::Ceiling(($MinimumCFreeGB - $freeGB) / $ExtendBlockGB) * $ExtendBlockGB
         Add-Result 'STORAGE' 'CFreeSpace' 'ACTION' $script:Data.CSummary ('RequiredExpansionGB=' + $needed) -Recommendation ('Extend ' + $sys + ' by at least ' + $needed + ' GB to reach the ' + $MinimumCFreeGB + ' GB free-space target.') -Source 'Win32_LogicalDisk' -Command (Get-RecommendationCommand 'CFreeSpace').Command -CommandKind 'Check'
@@ -6294,7 +6338,9 @@ function Invoke-StorageCheck {
     # Data volumes (#443): drive letters and mount points other than the
     # system drive. A failed query stops the check (not completed), so a
     # missing list never reads as "no volume is low".
-    foreach ($dv in @(Get-DataVolumeDecision (Get-CimRequired 'Win32_Volume' 'DriveType=3') $sys $DataVolumeMinFreePercent)) {
+    $dataVolumes = @(Get-DataVolumeDecision (Get-CimRequired 'Win32_Volume' 'DriveType=3') $sys $DataVolumeMinFreePercent)
+    $script:Data.DataVolumeSummary = (Get-DataVolumeSummary $dataVolumes $DataVolumeMinFreePercent $script:NumberCulture).Text
+    foreach ($dv in $dataVolumes) {
         $item = 'DataVolume ' + $dv.Name
         $about = @(); if ($dv.Label) { $about += ('Label=' + $dv.Label) }; if ($dv.FileSystem) { $about += ('FileSystem=' + $dv.FileSystem) }
         if ($dv.Kind -eq 'Unknown') {
@@ -6342,6 +6388,7 @@ function Invoke-StorageCheck {
     })
     $wrePart = $null; if ($winRe -and $winRe.Disk -eq $cp.DiskNumber) { $wrePart = $winRe.Partition }
     $rd = Get-RecoveryPartitionDecision $layout ([int]$cp.PartitionNumber) $wrePart $AssessmentMode
+    $script:Data.CExtension = Get-CExtensionSummary $sys @($layout | Where-Object { $_.Offset -gt [double]$cp.Offset } | Sort-Object Offset) $rd.Kind $true
     if ($rd.Kind -eq 'AfterC') {
         Add-Result 'STORAGE' 'RecoveryPartitionAfterC' $rd.Status $rd.Value -Recommendation $rd.Text -Source 'Get-Partition, reagentc /info' -Command (Get-RecommendationCommand 'RemoveRecoveryPartition' @{ Disk = $cp.DiskNumber; Partition = $rd.PartitionNumber }).Command -CommandKind 'Change' -Link $script:DocLinks.WinReResize.Url -LinkTitle $script:DocLinks.WinReResize.Title
     } elseif ($rd.Kind -eq 'LikelyNew') {
@@ -7392,6 +7439,8 @@ function Get-ReportFact {
         @('RDP access', (Get-RdpAccessFact)),
         @('RDP drive redirection', $script:Data.DriveRedirection),
         @('C: drive', $script:Data.CSummary),
+        @('C: extension', $script:Data.CExtension),
+        @('Other drives low on space', $script:Data.DataVolumeSummary),
         @('Memory GB / logical CPUs', ((Get-ResultText $Results 'PERFORMANCE' 'MemoryGB') + ' / ' + (Get-ResultText $Results 'PERFORMANCE' 'LogicalProcessors'))),
         @('Evidence copies (unredacted)', $EvidenceRoot),
         @('Policy evidence', $script:Data.PolicyEvidence),
@@ -7408,6 +7457,8 @@ function Get-ReportFact {
             @('RDP access', (Get-RdpAccessFact)),
             @('UAC', $script:Data.UacSummary),
             @('C: drive', $script:Data.CSummary),
+            @('C: extension', $script:Data.CExtension),
+            @('Other drives low on space', $script:Data.DataVolumeSummary),
             @('Endpoint protection', (& $factValue $epp 'antivirus'))
         )
     }
@@ -7739,6 +7790,8 @@ function New-AssessmentJsonObject {
             SqlServer        = $script:Data.SqlSummary
             Activation       = $script:Data.ActivationSummary
             CDrive           = $script:Data.CSummary
+            CExtension       = [string]$script:Data.CExtension
+            LowDataVolumes   = [string]$script:Data.DataVolumeSummary
             CompatScan       = (Get-ResultText $Results 'COMPAT_SCAN' 'SetupCompatibilityScan')
         }
         Results             = @($Results | Select-Object CheckId,Area,Item,Status,Kind,Value,Details,Recommendation,Source,Command,CommandKind,Link,LinkTitle)

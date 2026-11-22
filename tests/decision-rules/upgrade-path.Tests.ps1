@@ -297,6 +297,50 @@ Describe 'Recovery partition after C: (#161)' {
         }
         (Get-RecoveryPartitionDecision @() 2 $null 'Pre').Kind | Should -Be 'Unknown'
     }
+    Context 'Summary lines for storage (#448)' {
+        BeforeAll {
+            function New-Row { param($Name, $Kind, $Percent, $SizeGB) [pscustomobject]@{ Name = $Name; Kind = $Kind; FreePercent = $Percent; SizeGB = $SizeGB } }
+            function New-After { param($Number, $SizeMB, $Recovery) [pscustomobject]@{ PartitionNumber = $Number; SizeMB = $SizeMB; IsRecovery = [bool]$Recovery } }
+            $script:Danish = [Globalization.CultureInfo]::GetCultureInfo('da-DK')
+        }
+        It 'no data volume' {
+            (Get-DataVolumeSummary @() 20).Text | Should -Be 'No other local volume'
+            (Get-DataVolumeSummary $null 20).Text | Should -Be 'No other local volume'
+        }
+        It 'none low says how many were checked' {
+            (Get-DataVolumeSummary @((New-Row 'D:' 'Ok' 55.5 100), (New-Row 'E:' 'Ok' 30 50)) 20).Text | Should -Be 'None below 20 % free (2 volumes checked)'
+            (Get-DataVolumeSummary @((New-Row 'D:' 'Ok' 55.5 100)) 20).Text | Should -Be 'None below 20 % free (1 volume checked)'
+        }
+        It 'one low volume is named with its percent and size, in the number format of the report' {
+            $s = Get-DataVolumeSummary @((New-Row 'D:' 'Low' 10 200), (New-Row 'E:' 'Ok' 60 100)) 20 $script:Danish
+            $s.Text | Should -Be 'D: 10,0 % free of 200 GB (threshold 20 %, 2 volumes checked)'
+            $s.Low | Should -Be @('D:')
+        }
+        It 'several low volumes, mount points included' {
+            $s = Get-DataVolumeSummary @((New-Row 'D:' 'Low' 10 200), (New-Row 'E:\Mounts\Log' 'Low' 4.9 1500), (New-Row 'F:' 'Ok' 60 100)) 20
+            $s.Text | Should -Be 'D: 10.0 % free of 200 GB; E:\Mounts\Log 4.9 % free of 1,500 GB (threshold 20 %, 3 volumes checked)'
+            $s.Low.Count | Should -Be 2
+        }
+        It 'a volume that could not be read is named, also when none is low' {
+            (Get-DataVolumeSummary @((New-Row 'D:' 'Ok' 60 100), (New-Row 'F:' 'Unknown' $null $null)) 20).Text | Should -Be 'None below 20 % free (1 volume checked); not readable: F:'
+            (Get-DataVolumeSummary @((New-Row 'D:' 'Low' 5 100), (New-Row 'F:' 'Unknown' $null $null)) 20).Text | Should -Match '^D: 5\.0 % free of 100 GB \(threshold 20 %, 1 volume checked\); not readable: F:$'
+        }
+        It 'C: extension: <Case>' -TestCases @(
+            @{ Case = 'nothing after C:';                  After = @();                    Kind = 'None';      Checked = $true;  Expected = 'Nothing in the way: no partition after C:' }
+            @{ Case = 'nothing now, Setup will add one';   After = @();                    Kind = 'LikelyNew'; Checked = $true;  Expected = 'Nothing in the way now: no partition after C:. Setup will likely add a recovery partition there (see Storage)' }
+            @{ Case = 'recovery partition after C:';       After = @('3,480,1');           Kind = 'AfterC';    Checked = $true;  Expected = 'Blocked by P3 (recovery partition, 480 MB) after C:' }
+            @{ Case = 'a data partition after C:';         After = @('3,102400,0');        Kind = 'None';      Checked = $true;  Expected = 'Blocked by P3 (102400 MB) after C:' }
+            @{ Case = 'two partitions after C:';           After = @('3,480,1', '4,2048,0'); Kind = 'AfterC';  Checked = $true;  Expected = 'Blocked by P3 (recovery partition, 480 MB), P4 (2048 MB) after C:' }
+            @{ Case = 'system partition not in the list';  After = @();                    Kind = 'Unknown';   Checked = $true;  Expected = 'Not checked (the system partition is not in the partition list)' }
+            @{ Case = 'layout not read';                   After = @();                    Kind = '';          Checked = $false; Expected = 'Not checked (the partition layout could not be read)' }
+        ) {
+            $parts = @($After | ForEach-Object { $f = $_ -split ','; New-After ([int]$f[0]) ([double]$f[1]) ($f[2] -eq '1') })
+            Get-CExtensionSummary 'C:' $parts $Kind $Checked | Should -Be $Expected
+        }
+        It 'names the system drive when it is not C:' {
+            Get-CExtensionSummary 'D:' @() 'None' $true | Should -Be 'Nothing in the way: no partition after D:'
+        }
+    }
     Context 'Get-DataVolumeDecision (#443)' {
     BeforeAll {
         function New-Vol { param($Name, $SizeGB, $FreeGB, $Label = 'Data', $FileSystem = 'NTFS')
