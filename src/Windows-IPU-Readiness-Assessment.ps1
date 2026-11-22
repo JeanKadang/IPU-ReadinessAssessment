@@ -4877,6 +4877,37 @@ function Test-FourPartVersionContext {
     return $false
 }
 
+function Hide-CommandLineSecret {
+    # Pure: masks passwords and tokens in a command line before it is stored in
+    # a result (scheduled-task actions). Runs whether or not redaction is on,
+    # because a masked secret is never worth reporting. Over-masking is fine;
+    # a leaked secret is not. Returns the text and whether anything changed.
+    param([string]$Text)
+    $mask = '********'
+    $out = $Text
+    if ($out) {
+        $value = '("[^"]*"|''[^'']*''|\S+)'
+        $rules = @(
+            # -P x, -Password:x, -pwd=x, -Credential x
+            ('(?i)((?<![\w-])-(?:p|pw|pwd|pass|passwd|password|secret|token|apikey|credential)(?:\s+|[:=]))' + $value),
+            # /p:x, /password:x, /pwd x, /rp x (schtasks)
+            ('(?i)((?<![\w/])/(?:p|pw|pwd|pass|passwd|password|rp)(?:\s+|[:=]))' + $value),
+            # Password=x; Pwd=x; in connection strings and key=value text
+            '(?i)(\b(?:pwd|password|passwd|secret|token|apikey|accountkey|sharedaccesskey)\s*=\s*)([^;"'']+)',
+            # ConvertTo-SecureString 'x' -AsPlainText
+            ('(?i)(ConvertTo-SecureString\s+)' + $value),
+            # net use \\srv\share x /user:d\u   (password before the switches)
+            ('(?i)(\bnet(?:\.exe)?"?\s+use\s+(?:[A-Za-z]:\s+)?\\\\\S+\s+)(?![/*-])' + $value),
+            # net use \\srv\share /user:d\u x   (password after the switches)
+            ('(?i)(\bnet(?:\.exe)?"?\s+use\s+[^;]*?/user:\S+\s+)(?![/*-])' + $value),
+            # scheme://user:x@host
+            '(?i)(://[^/\s:@]+:)([^/\s@]+)(?=@)'
+        )
+        foreach ($rule in $rules) { $out = [regex]::Replace($out, $rule, ('${1}' + $mask)) }
+    }
+    [pscustomobject]@{ Text = $out; Masked = ($out -ne $Text) }
+}
+
 function Protect-ReportText {
     # Best-effort redaction of one text. Well-known names (BUILTIN, NT
     # AUTHORITY, S-1-5-32-*, 127.0.0.1, 0.0.0.0), versions and file paths are
@@ -7249,13 +7280,18 @@ function Invoke-TasksCheck {
         $user = [string]$t.Principal.UserId
         if (-not $user) { $user = [string]$t.Principal.GroupId }
         $actions = @($t.Actions | ForEach-Object { (([string]$_.Execute) + ' ' + ([string]$_.Arguments)).Trim() } | Where-Object { $_ }) -join '; '
+        # Credentials on a task's command line never go into a report (GHSA-3xmq-62gm-6hxj).
+        $hidden = Hide-CommandLineSecret $actions
+        $actions = $hidden.Text
         $fullName = $t.TaskPath + $t.TaskName
         $isBuiltIn = Test-BuiltInTaskAccount $user ([string]$t.Principal.LogonType)
         if ($user -and -not $isBuiltIn) { Add-RedactionLiteral $user 'ACCOUNT' }
         $script:Data.Snapshot.Tasks += $fullName
         # Windows' own per-user feed tasks: one line for all of them (#214).
         if (Test-WindowsPerUserTask $fullName) { $perUser++; continue }
-        Add-Result 'TASKS' $fullName 'INFO' ('RunAs=' + $user) @(('State=' + $t.State),('Action=' + $actions)) -Source 'Get-ScheduledTask'
+        $detail = @(('State=' + $t.State),('Action=' + $actions))
+        if ($hidden.Masked) { $detail += 'Note=A password or token in the arguments was masked.' }
+        Add-Result 'TASKS' $fullName 'INFO' ('RunAs=' + $user) $detail -Source 'Get-ScheduledTask'
         if ($user -and -not $isBuiltIn) { $named += ($fullName + ' (' + $user + ')') }
     }
     if ($perUser -gt 0) {
