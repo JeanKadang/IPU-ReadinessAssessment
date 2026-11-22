@@ -65,6 +65,15 @@ if (-not (Test-Path -LiteralPath $OutputFolder)) {
 $rank = @{ SPECIAL=0; BLOCKER=1; ACTION=2; WARNING=3; MANUAL=4; OK=5 }
 function Encode([object]$v) { if ($null -eq $v) { return '' }; return [System.Net.WebUtility]::HtmlEncode([string]$v) }
 
+# The value of a badge class (GHSA-j498-r6cv-g44g): only a known status, else
+# manual. A result file can be edited, so its status is never put into markup
+# as it is.
+function Get-StatusClass([object]$v) {
+    $s = ([string]$v).Trim().ToUpperInvariant()
+    if (@('SPECIAL','BLOCKER','ACTION','WARNING','MANUAL','OK','INFO') -contains $s) { return $s.ToLowerInvariant() }
+    return 'manual'
+}
+
 # CSV cells are opened in Excel. A value taken from a server (application
 # name, task, hostname) that starts with = + - @ or a tab/CR would be run as
 # a formula, so it is prefixed with an apostrophe (OWASP CSV injection).
@@ -288,7 +297,7 @@ if ($unreadable.Count -gt 0) { [void]$sb.AppendLine('<section><h2>Files not read
 
 [void]$sb.AppendLine('<section><h2>Servers (worst first)</h2><div class="scroll"><table><caption class="sr">Servers, worst overall status first</caption><thead><tr><th>Server</th><th>Mode</th><th>Overall</th><th title="Number of BLOCKER, ACTION, WARNING and MANUAL findings">Findings<br><small>Blocker/Action/Warning/Manual</small></th><th>Teams needed</th><th>Current OS</th><th>Target</th><th>Media</th><th>Platform</th><th>RDP NLA</th><th>SQL</th><th title="Other local volumes below the free-space threshold; they cannot be extended while the fallback snapshot exists">Low drives</th><th>Top issues</th><th>Not assessed</th><th>Completed</th></tr></thead><tbody>')
 foreach ($s in $latest) {
-    $badge = '<span class="badge s-' + ([string]$s.Overall).ToLowerInvariant() + '">' + (Encode $s.Overall) + '</span>'
+    $badge = '<span class="badge s-' + (Get-StatusClass $s.Overall) + '">' + (Encode $s.Overall) + '</span>'
     if ($s.Partial) { $badge += ' <span class="muted">partial</span>' }
     if ($s.Redacted) { $badge += ' <span class="muted">redacted</span>' }
     [void]$sb.AppendLine('<tr><td class="nw"><b>' + (Encode $s.ComputerName) + '</b></td><td>' + (Encode $s.Mode) + '</td><td class="nw">' + $badge + '</td><td class="nw">' + $s.Blocker + '/' + $s.Action + '/' + $s.Warning + '/' + $s.Manual + '</td><td>' + (Encode $s.TeamsNeeded) + '</td><td>' + (Encode $s.CurrentOS) + '</td><td class="nw">' + (Encode $s.Target) + '</td><td>' + (Encode $s.InstallationMedia) + '</td><td>' + (Encode $s.Platform) + '</td><td class="nw">' + (Encode $s.Nla) + '</td><td>' + (Encode $s.SqlServer) + '</td><td>' + (Encode (Get-LowDriveCell $s.LowDataVolumes)) + '</td><td>' + (Encode $s.TopIssues) + '</td><td>' + (Encode $s.NotAssessed) + '</td><td class="nw muted">' + (Encode $s.Completed) + '</td></tr>')
@@ -304,7 +313,7 @@ if ($eolRows.Count -eq 0) {
 } else {
     [void]$sb.AppendLine('<div class="scroll"><table><caption class="sr">End-of-life products found on the servers, with a verdict for each</caption><thead><tr><th>Status</th><th>Product</th><th>Version</th><th>Release</th><th>End of life</th><th>Servers</th><th>Which</th><th>Verdict</th></tr></thead><tbody>')
     foreach ($row in $eolRows) {
-        [void]$sb.AppendLine('<tr><td><span class="badge s-' + ([string]$row.Status).ToLowerInvariant() + '">' + (Encode $row.Status) + '</span></td><td>' + (Encode $row.Product) + '</td><td>' + (Encode $row.Version) + '</td><td>' + (Encode $row.Release) + '</td><td class="nw">' + (Encode $row.EndOfLife) + '</td><td>' + $row.ServerCount + '</td><td>' + (Encode $row.Servers) + '</td><td>' + (Encode $row.Text) + '</td></tr>')
+        [void]$sb.AppendLine('<tr><td><span class="badge s-' + (Get-StatusClass $row.Status) + '">' + (Encode $row.Status) + '</span></td><td>' + (Encode $row.Product) + '</td><td>' + (Encode $row.Version) + '</td><td>' + (Encode $row.Release) + '</td><td class="nw">' + (Encode $row.EndOfLife) + '</td><td>' + $row.ServerCount + '</td><td>' + (Encode $row.Servers) + '</td><td>' + (Encode $row.Text) + '</td></tr>')
     }
     [void]$sb.AppendLine('</tbody></table></div>')
 }
@@ -317,7 +326,7 @@ if ($common.Count -gt 0) {
     foreach ($g in $common) {
         $first = $g.Group[0]
         $names = @($g.Group | ForEach-Object ComputerName | Sort-Object -Unique)
-        [void]$sb.AppendLine('<tr><td><span class="badge s-' + ([string]$first.Status).ToLowerInvariant() + '">' + (Encode $first.Status) + '</span></td><td>' + (Encode $first.Item) + '</td><td>' + $names.Count + '</td><td>' + (Encode ($names -join ', ')) + '</td></tr>')
+        [void]$sb.AppendLine('<tr><td><span class="badge s-' + (Get-StatusClass $first.Status) + '">' + (Encode $first.Status) + '</span></td><td>' + (Encode $first.Item) + '</td><td>' + $names.Count + '</td><td>' + (Encode ($names -join ', ')) + '</td></tr>')
     }
     [void]$sb.AppendLine('</tbody></table></div></section>')
 }

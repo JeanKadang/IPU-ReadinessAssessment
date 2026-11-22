@@ -766,3 +766,31 @@ Describe 'Fleet overview accessibility (#393)' {
         $script:A11yHtml | Should -Match '@media print\{[^\n]*\.scroll\{overflow:visible\}table\{min-width:0'
     }
 }
+
+Describe 'Merge-IPUAssessments.ps1 - status values in markup (GHSA-j498-r6cv-g44g)' {
+    BeforeAll {
+        $script:Evil = 'x" onmouseover="alert(1)'
+        $script:InEvil = Join-Path $TestDrive 'evil'
+        New-Item -ItemType Directory -Path $script:InEvil | Out-Null
+        $finding = New-FakeFinding 'WARNING' 'Crafted item'
+        $finding.Status = $script:Evil
+        Save-Result (New-FakeResult 'SRV-EVIL' -Overall $script:Evil -Results @($finding)) $script:InEvil 'SRV-EVIL-IPU-Assessment.json'
+        Save-Result (New-FakeResult 'SRV-GOOD' -Overall 'WARNING') $script:InEvil 'SRV-GOOD-IPU-Assessment.json'
+        $null = & $script:MergeScript -InputFolder $script:InEvil
+        $script:Html = Get-Content -LiteralPath (Join-Path $script:InEvil 'IPU-Fleet-Overview.html') -Raw
+    }
+
+    It 'does not put the crafted status into an attribute' {
+        $script:Html | Should -Not -Match 'onmouseover="'
+        $script:Html | Should -Not -Match 'class="badge s-x'
+    }
+
+    It 'shows an unknown status as manual and keeps a known one' {
+        $script:Html | Should -Match 'class="badge s-manual"'
+        $script:Html | Should -Match 'class="badge s-warning"'
+    }
+
+    It 'still encodes the status text inside the badge' {
+        $script:Html | Should -Match 'onmouseover=&quot;alert'
+    }
+}

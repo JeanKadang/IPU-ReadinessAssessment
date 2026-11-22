@@ -4,7 +4,7 @@ For the administrator who combines the results of many servers into one overview
 
 ## Combining many servers: fleet overview
 
-`src/Merge-IPUAssessments.ps1` (version 1.4.1, for assessment 4.0.1 and later) reads the result JSON of every
+`src/Merge-IPUAssessments.ps1` (version 1.4.2, for assessment 4.0.1 and later) reads the result JSON of every
 server in a folder and writes **one overview** for the whole estate. It is read-only for the input files.
 
 ```mermaid

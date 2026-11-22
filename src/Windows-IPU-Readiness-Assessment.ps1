@@ -1,8 +1,8 @@
 <#
 ===============================================================================
  SCRIPT NAME : Windows-IPU-Readiness-Assessment.ps1
- VERSION     : 4.8.0
- RELEASE DATE: 2026-11-10
+ VERSION     : 4.9.0
+ RELEASE DATE: 2026-11-22
  PURPOSE     : Windows Server in-place upgrade (IPU) readiness assessment and
                post-upgrade verification, with a self-contained HTML report
                and a JSON result file written on the assessed server.
@@ -88,6 +88,12 @@
     load, nothing is collected. The Pester tests use this.
 
 .VERSION HISTORY
+    4.9.0 - Security fixes: passwords in scheduled-task command lines are
+            masked; an existing output folder that is a junction or is
+            owned by an ordinary user is refused; redaction finds names
+            that are HTML encoded in the page and more hosts, addresses,
+            paths and SIDs. Data volumes low on space, C: extension.
+            Post run: pre-upgrade advice is not a finding.
     4.8.0 - Windows Server 2008 and 2008 R2 as a source, with the shortest
             supported route. VMware Tools: how far behind the newest
             release. Patch level from the newest security update. The
@@ -721,7 +727,7 @@ function Get-EolResultKind {
 # 3. CORE
 # =============================================================================
 $ProgressPreference = 'SilentlyContinue'
-$script:CollectorVersion  = '4.8.0'
+$script:CollectorVersion  = '4.9.0'
 # Settings a profile file (-ProfileFile) may set. Mode, target, media path,
 # report folder and redaction describe one run, so they stay arguments only.
 $script:ProfileSettingNames = @(
@@ -1159,12 +1165,56 @@ function New-RestrictedFolder {
     }
 }
 
+function Get-OutputFolderSafetyDecision {
+    # Pure (GHSA-38wc-349v-wg27): may the run write into a folder that already
+    # exists? Not when it is a junction or symbolic link, and, on a local
+    # path, not when its owner is somebody else than SYSTEM, Administrators,
+    # TrustedInstaller or the account running the assessment: a standard user
+    # who creates the folder first becomes its owner and could read the
+    # reports or redirect a SYSTEM run. A network path is not owner-checked,
+    # because its owner is a domain account the server cannot judge.
+    param([bool]$IsReparsePoint, [string]$OwnerSid, [string[]]$TrustedSids, [bool]$IsRemote = $false)
+    if ($IsReparsePoint) { return [pscustomobject]@{ Safe = $false; Reason = 'it is a junction or symbolic link' } }
+    if (-not $IsRemote) {
+        if (-not $OwnerSid) { return [pscustomobject]@{ Safe = $false; Reason = 'its owner could not be read' } }
+        if (@($TrustedSids) -notcontains $OwnerSid) {
+            return [pscustomobject]@{ Safe = $false; Reason = ('it is owned by ' + $OwnerSid + ', which is not SYSTEM, Administrators or the account running the assessment') }
+        }
+    }
+    return [pscustomobject]@{ Safe = $true; Reason = '' }
+}
+
+function Get-OutputFolderFact {
+    # The system side of Get-OutputFolderSafetyDecision: reads the folder.
+    param([string]$Path)
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    $owner = ''
+    try { $owner = [string](Get-Acl -LiteralPath $Path -ErrorAction Stop).GetOwner([System.Security.Principal.SecurityIdentifier]).Value } catch { Write-Swallowed $_ }
+    $trusted = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464') + @($script:ExtraRestrictedSids)
+    try { $trusted += [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value } catch { Write-Swallowed $_ }
+    [pscustomobject]@{
+        IsReparsePoint = [bool]($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+        OwnerSid       = $owner
+        TrustedSids    = @($trusted | Where-Object { $_ })
+        IsRemote       = ($Path -like '\\*' -and $Path -notlike '\\?\*')
+    }
+}
+
 function Initialize-OutputFolder {
     # Creates a folder for the script's own output. Only a folder created by
     # this run is restricted; an existing folder keeps its permissions (it may
     # be shared, e.g. C:\Temp) and the report says whether it is too open.
+    # An existing folder that is a junction or is owned by an ordinary user is
+    # refused (GHSA-38wc-349v-wg27): the run stops with a message.
     param([string]$Path, [bool]$Restrict = $RestrictOutputAcl)
-    if (Test-Path -LiteralPath $Path -PathType Container) { return 'Existing' }
+    if (Test-Path -LiteralPath $Path -PathType Container) {
+        $fact = Get-OutputFolderFact $Path
+        $decision = Get-OutputFolderSafetyDecision $fact.IsReparsePoint $fact.OwnerSid $fact.TrustedSids $fact.IsRemote
+        if (-not $decision.Safe) {
+            throw ('The folder ' + $Path + ' already exists and is not used, because ' + $decision.Reason + '. Give -ReportDirectory a new folder name, or ask an administrator to remove the folder.')
+        }
+        return 'Existing'
+    }
     if ($Restrict) {
         # Created with its access list in one call, so there is no moment
         # when the folder exists with inherited permissions (#139).
@@ -4877,6 +4927,54 @@ function Test-FourPartVersionContext {
     return $false
 }
 
+function Hide-CommandLineSecret {
+    # Pure: masks passwords and tokens in a command line before it is stored in
+    # a result (scheduled-task actions). Runs whether or not redaction is on,
+    # because a masked secret is never worth reporting. Over-masking is fine;
+    # a leaked secret is not. Returns the text and whether anything changed.
+    param([string]$Text)
+    $mask = '********'
+    $out = $Text
+    if ($out) {
+        $value = '("[^"]*"|''[^'']*''|\S+)'
+        $rules = @(
+            # -P x, -Password:x, -pwd=x, -Credential x
+            ('(?i)((?<![\w-])-(?:p|pw|pwd|pass|passwd|password|secret|token|apikey|credential)(?:\s+|[:=]))' + $value),
+            # /p:x, /password:x, /pwd x, /rp x (schtasks)
+            ('(?i)((?<![\w/])/(?:p|pw|pwd|pass|passwd|password|rp)(?:\s+|[:=]))' + $value),
+            # Password=x; Pwd=x; in connection strings and key=value text
+            '(?i)(\b(?:pwd|password|passwd|secret|token|apikey|accountkey|sharedaccesskey)\s*=\s*)([^;"'']+)',
+            # ConvertTo-SecureString 'x' -AsPlainText
+            ('(?i)(ConvertTo-SecureString\s+)' + $value),
+            # net use \\srv\share x /user:d\u   (password before the switches)
+            ('(?i)(\bnet(?:\.exe)?"?\s+use\s+(?:[A-Za-z]:\s+)?\\\\\S+\s+)(?![/*-])' + $value),
+            # net use \\srv\share /user:d\u x   (password after the switches)
+            ('(?i)(\bnet(?:\.exe)?"?\s+use\s+[^;]*?/user:\S+\s+)(?![/*-])' + $value),
+            # scheme://user:x@host
+            '(?i)(://[^/\s:@]+:)([^/\s@]+)(?=@)'
+        )
+        foreach ($rule in $rules) { $out = [regex]::Replace($out, $rule, ('${1}' + $mask)) }
+    }
+    [pscustomobject]@{ Text = $out; Masked = ($out -ne $Text) }
+}
+
+function Register-RedactionHostAlias {
+    # The short name of a host (sqlprod01 for sqlprod01.contoso.local) gets the
+    # placeholder of its full name (GHSA-232q), for this text ($List, replaced
+    # by the caller) and for every later one ($Context.Literals). Only a name
+    # with a digit in it: web, mail or app would hit ordinary words.
+    param([hashtable]$Context, [string]$Fqdn, [string]$Placeholder, $List)
+    $alias = ($Fqdn -split '\.')[0]
+    # The computer and domain names have their own placeholder, and the
+    # redaction key must list the computer name itself.
+    if (@($Context.NetBios | Where-Object { $_ -and $_ -ieq $alias }).Count -gt 0) { return }
+    if ($alias -match '^[A-Za-z][A-Za-z0-9-]{2,}$' -and $alias -match '\d' -and -not $Context.Map.ContainsKey('HOST|' + $alias.ToLowerInvariant())) {
+        $Context.Map['HOST|' + $alias.ToLowerInvariant()] = $Placeholder
+        $Context.Literals[$alias] = 'HOST'
+        $List.Add($alias)
+    }
+}
+
 function Protect-ReportText {
     # Best-effort redaction of one text. Well-known names (BUILTIN, NT
     # AUTHORITY, S-1-5-32-*, 127.0.0.1, 0.0.0.0), versions and file paths are
@@ -4886,6 +4984,7 @@ function Protect-ReportText {
     $ctx = $Context
     $t = $Text
     $ic = [Text.RegularExpressions.RegexOptions]::IgnoreCase
+    $newAliases = New-Object System.Collections.Generic.List[string]
 
     # Names collected during the run (#100), longest first so a GPO name is
     # replaced as a whole before word-level rules see its parts.
@@ -4918,6 +5017,10 @@ function Protect-ReportText {
     }, $ic)
     # MAC addresses
     $t = [regex]::Replace($t, '\b([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b', { param($m) Get-RedactionPlaceholder $ctx 'MAC' $m.Value })
+    # Also written 0050.56ab.cdef or 005056ABCDEF (GHSA-232q). The plain form
+    # needs a letter and a digit, so a 12-digit number is not taken for one.
+    $t = [regex]::Replace($t, '(?<![0-9A-Fa-f.])[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}(?![0-9A-Fa-f])', { param($m) Get-RedactionPlaceholder $ctx 'MAC' $m.Value })
+    $t = [regex]::Replace($t, '(?<![0-9A-Fa-f-])(?=[0-9A-Fa-f]*[A-Fa-f])(?=[0-9A-Fa-f]*\d)[0-9A-Fa-f]{12}(?![0-9A-Fa-f-])', { param($m) Get-RedactionPlaceholder $ctx 'MAC' $m.Value })
     # Resolved user-rights entries "DOMAIN\Name [S-1-5-21-...]" (#156). The
     # name can contain spaces and the domain can be a full DNS name, so the
     # word rules below miss them. Well-known domain RIDs (Domain Admins,
@@ -4934,6 +5037,24 @@ function Protect-ReportText {
     })
     # Domain SIDs (well-known S-1-5-32-*, S-1-5-18 etc. are kept)
     $t = [regex]::Replace($t, '\bS-1-5-21(-\d+){3,4}\b', { param($m) Get-RedactionPlaceholder $ctx 'SID' $m.Value })
+    # Azure AD (Entra) account SIDs (GHSA-232q)
+    $t = [regex]::Replace($t, '\bS-1-12-1(-\d+){4}\b', { param($m) Get-RedactionPlaceholder $ctx 'SID' $m.Value })
+    # The user name in a profile path, C:\Users\jdoe\... (GHSA-232q); the
+    # shared profiles keep their names.
+    $t = [regex]::Replace($t, '(\\Users\\)([^\\/:*?"<>|\r\n;,]+(?=\\)|[^\\/:*?"<>|\s;,]+)', {
+        param($m)
+        $u = $m.Groups[2].Value
+        if ($u -match '^(Public|Default|Default User|All Users|DefaultAppPool|\*|%.*%|(ACCOUNT|HOST|DOMAIN|NAME)-\d+)$') { return $m.Value }
+        return $m.Groups[1].Value + (Get-RedactionPlaceholder $ctx 'ACCOUNT' $u)
+    }, $ic)
+    # A known domain with an account name of several words, Fabrikam\Jane Doe
+    # (GHSA-232q): only when the name ends at a delimiter, so the words after
+    # a short account name are not taken with it.
+    $knownDomains = @($ctx.NetBios | Where-Object { $_ -and $_ -notmatch '^(DOMAIN|HOST)-\d+$' })
+    if ($knownDomains.Count -gt 0) {
+        $kd = ($knownDomains | ForEach-Object { [regex]::Escape($_) }) -join '|'
+        $t = [regex]::Replace($t, '(?<![\\:/\w.-])(?:' + $kd + ')\\[A-Za-z0-9._$-]+(?: [A-Za-z0-9._$-]+){1,3}(?=\s*(?:[|<>;,"''\])]|\r|\n|$))', { param($m) Get-RedactionPlaceholder $ctx 'ACCOUNT' $m.Value }, $ic)
+    }
     # DOMAIN\user. Not after \ : or / (path segments). The domain part must be
     # a known NetBIOS name or an all-caps name that is not a well-known root.
     $skip = '^(BUILTIN|AUTHORITY|SERVICE|APPPOOL|HKLM|HKCU|HKU|HKCR|HKCC|SYSTEM|SOFTWARE)$'
@@ -4953,19 +5074,44 @@ function Protect-ReportText {
     # FQDNs in the server's domain, the domain itself, then the computer name
     if ($ctx.DomainFqdn) {
         $dom = [regex]::Escape($ctx.DomainFqdn)
-        $t = [regex]::Replace($t, '\b[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.' + $dom + '\b', { param($m) Get-RedactionPlaceholder $ctx 'HOST' $m.Value }, $ic)
+        $t = [regex]::Replace($t, '\b[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.' + $dom + '\b', {
+            param($m)
+            $p = Get-RedactionPlaceholder $ctx 'HOST' $m.Value
+            Register-RedactionHostAlias $ctx $m.Value $p $newAliases
+            return $p
+        }, $ic)
         # With any DNS suffix that follows (#156), so "CORP.LOCALDOM" is
         # replaced as a whole when only "corp" is known.
         $t = [regex]::Replace($t, '\b' + $dom + '(?:\.[A-Za-z0-9-]+)*\b', { param($m) Get-RedactionPlaceholder $ctx 'DOMAIN' (Get-RedactionDomainKey $ctx $m.Value) }, $ic)
     }
     # Any other host name with a public or internal top-level domain (#100),
     # except documentation and vendor domains used in report links.
-    $tld = 'com|net|org|edu|gov|mil|int|info|biz|local|lan|corp|internal|intra|intranet|ad|home|cloud|online|dk|se|no|fi|is|de|nl|be|lu|fr|uk|ie|es|pt|it|ch|at|pl|cz|sk|hu|ee|lv|lt|eu|us|ca|au|nz|jp|cn|sg|hk|in'
+    $tld = 'com|net|org|edu|gov|mil|int|info|biz|local|lan|corp|internal|intra|intranet|ad|home|cloud|online|dk|se|no|fi|is|de|nl|be|lu|fr|uk|ie|es|pt|it|ch|at|pl|cz|sk|hu|ee|lv|lt|eu|us|ca|au|nz|jp|cn|sg|hk|in|fo|gl|li|mt|cy|gr|ro|bg|hr|ba|mk|ua|ru|tr|il|ae|sa|za|ng|ke|br|ar|mx|cl|co|pe|kr|tw|th|vn|ph|io|ai|tv|ly|gg|app|dev|tech|group|site|store|shop|xyz|mobi|asia|blog|digital|agency|ltd|inc|llc|gmbh|industries|international|holdings|partners'
     $t = [regex]::Replace($t, '(?<![\w.@-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+(?:' + $tld + ')(?![\w-]|\.[A-Za-z0-9])', {
         param($m)
         $v = $m.Value
         foreach ($keep in $script:RedactionKeepDomains) { if ($v -ieq $keep -or $v.EndsWith('.' + $keep, [StringComparison]::OrdinalIgnoreCase)) { return $v } }
-        return Get-RedactionPlaceholder $ctx 'HOST' $v
+        $p = Get-RedactionPlaceholder $ctx 'HOST' $v
+        Register-RedactionHostAlias $ctx $v $p $newAliases
+        return $p
+    }, $ic)
+    foreach ($alias in $newAliases) {
+        $t = [regex]::Replace($t, '(?<![\w.\\-])' + [regex]::Escape($alias) + '(?![\w-]|\.\w)', { param($m) Get-RedactionPlaceholder $ctx 'HOST' $m.Value }, $ic)
+    }
+    # UNC host names, \\SRV02\data (GHSA-232q); an address is left to the
+    # IPv4 rule below, and \\?\ and \\.\ are device paths.
+    $t = [regex]::Replace($t, '(?<![\w\\])\\\\([A-Za-z0-9][A-Za-z0-9_-]*)(?=\\|\s|$|["''|;,)<>])', {
+        param($m)
+        $h = $m.Groups[1].Value
+        if ($h -match '^(HOST|DOMAIN)-\d+$' -or $h -match '^\d+$' -or $h -ieq 'localhost') { return $m.Value }
+        return '\\' + (Get-RedactionPlaceholder $ctx 'HOST' $h)
+    })
+    # A host with no domain in a link, http://portal:8080/ (GHSA-232q).
+    $t = [regex]::Replace($t, '\b((?:https?|ftps?|sftp|ldaps?|smb|ssh|rdp|file)://)([A-Za-z0-9][A-Za-z0-9_-]*)(?=[:/\s"''|;,)<>?#]|$)', {
+        param($m)
+        $h = $m.Groups[2].Value
+        if ($h -match '^(HOST|DOMAIN)-\d+$' -or $h -match '^\d+$' -or $h -ieq 'localhost') { return $m.Value }
+        return $m.Groups[1].Value + (Get-RedactionPlaceholder $ctx 'HOST' $h)
     }, $ic)
     foreach ($n in @($ctx.NetBios)) {
         if (-not $n) { continue }
@@ -4993,7 +5139,9 @@ function Protect-ReportText {
     # (\4.0.2.39\, but not the UNC host \\10.1.2.3\) is a version (#194).
     $text = $t
     # Followed by "+" it is a version with a build suffix, 11.0.16.1+1 (#213).
-    $t = [regex]::Replace($t, '(?<![\w.])(?<![Vv]ersion[=: ])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![\w.+])', {
+    # A dot after it ends a sentence, "Connected to 10.1.2.3." (GHSA-232q);
+    # only a dot and a word character go on as a longer name.
+    $t = [regex]::Replace($t, '(?<![\w.])(?<![Vv]ersion[=: ])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![\w+]|\.\w)', {
         param($m)
         $before = $(if ($m.Index -ge 1) { $text[$m.Index - 1] } else { [char]0 })
         $before2 = $(if ($m.Index -ge 2) { $text[$m.Index - 2] } else { [char]0 })
@@ -5017,6 +5165,65 @@ function Protect-ReportText {
         return $v
     })
     return $t
+}
+
+function Protect-ReportHtml {
+    # Redacts a finished HTML report (GHSA-232q-x6hc-mm39). The names to
+    # replace were collected as plain text, but the page holds them HTML
+    # encoded, so a name with & ' " < > or a letter such as ae, oe, aa was
+    # never found. The text between the tags and the attribute values are
+    # decoded, redacted with the same rules and map as the JSON, and encoded
+    # again; a piece that did not change keeps its original bytes. Script and
+    # style blocks and comments are redacted as they are. Pure apart from the
+    # shared placeholder map in $Context.
+    param([string]$Html, [hashtable]$Context)
+    if (-not $Html) { return $Html }
+    $sep = '<' + [string][char]1 + '>'
+    $items = New-Object System.Collections.Generic.List[object]   # a literal string, or the index of a piece to redact
+    $src = New-Object System.Collections.Generic.List[string]     # the piece as the rules see it (decoded)
+    $raw = New-Object System.Collections.Generic.List[string]     # the piece as it was in the page
+    $decoded = New-Object System.Collections.Generic.List[bool]
+    $add = {
+        param([string]$Piece, [bool]$Decode)
+        $items.Add($src.Count)
+        $raw.Add($Piece)
+        $decoded.Add($Decode)
+        if ($Decode) { $src.Add([System.Net.WebUtility]::HtmlDecode($Piece)) } else { $src.Add($Piece) }
+    }
+    foreach ($tok in [regex]::Matches($Html, '(?is)<(?:script|style)\b[^>]*>.*?</(?:script|style)\s*>|<!--.*?-->|<[^>]+>|[^<]+|<')) {
+        $v = $tok.Value
+        if ($v.Length -gt 1 -and $v[0] -eq '<' -and $v -match '(?is)^<(?:script|style)\b|^<!--') { & $add $v $false; continue }
+        if ($v.Length -gt 1 -and $v[0] -eq '<') {
+            $pos = 0
+            foreach ($a in [regex]::Matches($v, '(\s[\w:.-]+\s*=\s*)(?:"([^"]*)"|''([^'']*)'')')) {
+                $g = $a.Groups[2]; if (-not $g.Success) { $g = $a.Groups[3] }
+                $items.Add($v.Substring($pos, $g.Index - $pos))
+                & $add $g.Value $true
+                $pos = $g.Index + $g.Length
+            }
+            $items.Add($v.Substring($pos))
+            continue
+        }
+        if ($v -match '^\s*$' -or $v -eq '<') { $items.Add($v); continue }
+        & $add $v $true
+    }
+    if ($src.Count -eq 0) { return $Html }
+    $red = $null
+    $parts = (Protect-ReportText ($src.ToArray() -join $sep) $Context).Split([string[]]@($sep), [StringSplitOptions]::None)
+    if ($parts.Count -eq $src.Count) { $red = $parts }
+    else {
+        # A rule matched across two pieces: redact each piece on its own.
+        $red = @(foreach ($s in $src) { Protect-ReportText $s $Context })
+    }
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($i in $items) {
+        if ($i -is [string]) { [void]$sb.Append($i); continue }
+        $n = [int]$i
+        if ($red[$n] -ceq $src[$n]) { [void]$sb.Append($raw[$n]) }
+        elseif ($decoded[$n]) { [void]$sb.Append([System.Net.WebUtility]::HtmlEncode($red[$n])) }
+        else { [void]$sb.Append($red[$n]) }
+    }
+    return $sb.ToString()
 }
 
 function Protect-ReportObject {
@@ -7249,13 +7456,21 @@ function Invoke-TasksCheck {
         $user = [string]$t.Principal.UserId
         if (-not $user) { $user = [string]$t.Principal.GroupId }
         $actions = @($t.Actions | ForEach-Object { (([string]$_.Execute) + ' ' + ([string]$_.Arguments)).Trim() } | Where-Object { $_ }) -join '; '
+        # Credentials on a task's command line never go into a report (GHSA-3xmq-62gm-6hxj).
+        $hidden = Hide-CommandLineSecret $actions
+        $actions = $hidden.Text
         $fullName = $t.TaskPath + $t.TaskName
         $isBuiltIn = Test-BuiltInTaskAccount $user ([string]$t.Principal.LogonType)
         if ($user -and -not $isBuiltIn) { Add-RedactionLiteral $user 'ACCOUNT' }
+        # A task folder is named by whoever made it, often after the customer
+        # or the product (GHSA-232q).
+        foreach ($segment in @(([string]$t.TaskPath) -split '\\' | Where-Object { $_ })) { Add-RedactionLiteral $segment 'NAME' }
         $script:Data.Snapshot.Tasks += $fullName
         # Windows' own per-user feed tasks: one line for all of them (#214).
         if (Test-WindowsPerUserTask $fullName) { $perUser++; continue }
-        Add-Result 'TASKS' $fullName 'INFO' ('RunAs=' + $user) @(('State=' + $t.State),('Action=' + $actions)) -Source 'Get-ScheduledTask'
+        $detail = @(('State=' + $t.State),('Action=' + $actions))
+        if ($hidden.Masked) { $detail += 'Note=A password or token in the arguments was masked.' }
+        Add-Result 'TASKS' $fullName 'INFO' ('RunAs=' + $user) $detail -Source 'Get-ScheduledTask'
         if ($user -and -not $isBuiltIn) { $named += ($fullName + ' (' + $user + ')') }
     }
     if ($perUser -gt 0) {
@@ -7717,7 +7932,7 @@ function Write-AssessmentReport {
     $results = $script:Results.ToArray()
     $overall = Get-OverallStatus $results
     $html = New-IPUReportHtml -Results $results -CheckRuns $script:CheckRuns.ToArray() -OverallStatus $overall -CompletedTime $completed -Partial:$Partial
-    if ($RedactReport) { $html = Protect-ReportText $html (Get-RedactionContext) }
+    if ($RedactReport) { $html = Protect-ReportHtml $html (Get-RedactionContext) }
     if ($html.Length -lt 2048 -or $html -notmatch '(?is)^\s*<!doctype html' -or $html -notmatch '(?is)</html>\s*$') {
         throw ('HTML validation failed (length {0}).' -f $html.Length)
     }
@@ -7810,6 +8025,8 @@ function Get-RedactionLiteralFromResult {
     $found = @()
     foreach ($r in @($Results)) {
         if ($r.Area -eq 'TASKS' -and [string]$r.Value -match '^RunAs=(.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'ACCOUNT' } }
+        # Task folders: the part of \Folder\Task before the task name (GHSA-232q).
+        if ($r.Area -eq 'TASKS' -and [string]$r.Item -match '^\\(.+)\\[^\\]*$') { foreach ($segment in ($Matches[1] -split '\\')) { $found += [pscustomobject]@{ Value = $segment; Kind = 'NAME' } } }
         if ($r.Area -eq 'SERVICES' -and [string]$r.Details -match '(?:^|\|\s*)LogOnAs=([^|]+)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'ACCOUNT' } }
         if ($r.Area -eq 'GROUP_POLICY' -and [string]$r.Item -match '^GPO: (.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'GPO' } }
         if ($r.Area -eq 'GROUP_POLICY' -and [string]$r.Details -match '(?:^|\|\s*)WMI filter: ([^|]+)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'NAME' } }
@@ -7889,7 +8106,7 @@ function Invoke-RedactExisting {
             $html = [IO.Path]::ChangeExtension($jf.FullName, '.html')
             $note = ''; $written = '.json'
             if (Test-Path -LiteralPath $html) {
-                [IO.File]::WriteAllText($base + '.html', (Protect-ReportText ([IO.File]::ReadAllText($html)) $ctx), (New-Object System.Text.UTF8Encoding($false)))
+                [IO.File]::WriteAllText($base + '.html', (Protect-ReportHtml ([IO.File]::ReadAllText($html)) $ctx), (New-Object System.Text.UTF8Encoding($false)))
                 $written += '/.html'
             } else { $note += ' (no HTML report next to it)' }
             # The run log beside the report (#329), with the same placeholders.

@@ -2,7 +2,7 @@
 # 3. CORE
 # =============================================================================
 $ProgressPreference = 'SilentlyContinue'
-$script:CollectorVersion  = '4.8.0'
+$script:CollectorVersion  = '4.9.0'
 # Settings a profile file (-ProfileFile) may set. Mode, target, media path,
 # report folder and redaction describe one run, so they stay arguments only.
 $script:ProfileSettingNames = @(
@@ -440,12 +440,56 @@ function New-RestrictedFolder {
     }
 }
 
+function Get-OutputFolderSafetyDecision {
+    # Pure (GHSA-38wc-349v-wg27): may the run write into a folder that already
+    # exists? Not when it is a junction or symbolic link, and, on a local
+    # path, not when its owner is somebody else than SYSTEM, Administrators,
+    # TrustedInstaller or the account running the assessment: a standard user
+    # who creates the folder first becomes its owner and could read the
+    # reports or redirect a SYSTEM run. A network path is not owner-checked,
+    # because its owner is a domain account the server cannot judge.
+    param([bool]$IsReparsePoint, [string]$OwnerSid, [string[]]$TrustedSids, [bool]$IsRemote = $false)
+    if ($IsReparsePoint) { return [pscustomobject]@{ Safe = $false; Reason = 'it is a junction or symbolic link' } }
+    if (-not $IsRemote) {
+        if (-not $OwnerSid) { return [pscustomobject]@{ Safe = $false; Reason = 'its owner could not be read' } }
+        if (@($TrustedSids) -notcontains $OwnerSid) {
+            return [pscustomobject]@{ Safe = $false; Reason = ('it is owned by ' + $OwnerSid + ', which is not SYSTEM, Administrators or the account running the assessment') }
+        }
+    }
+    return [pscustomobject]@{ Safe = $true; Reason = '' }
+}
+
+function Get-OutputFolderFact {
+    # The system side of Get-OutputFolderSafetyDecision: reads the folder.
+    param([string]$Path)
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    $owner = ''
+    try { $owner = [string](Get-Acl -LiteralPath $Path -ErrorAction Stop).GetOwner([System.Security.Principal.SecurityIdentifier]).Value } catch { Write-Swallowed $_ }
+    $trusted = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464') + @($script:ExtraRestrictedSids)
+    try { $trusted += [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value } catch { Write-Swallowed $_ }
+    [pscustomobject]@{
+        IsReparsePoint = [bool]($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+        OwnerSid       = $owner
+        TrustedSids    = @($trusted | Where-Object { $_ })
+        IsRemote       = ($Path -like '\\*' -and $Path -notlike '\\?\*')
+    }
+}
+
 function Initialize-OutputFolder {
     # Creates a folder for the script's own output. Only a folder created by
     # this run is restricted; an existing folder keeps its permissions (it may
     # be shared, e.g. C:\Temp) and the report says whether it is too open.
+    # An existing folder that is a junction or is owned by an ordinary user is
+    # refused (GHSA-38wc-349v-wg27): the run stops with a message.
     param([string]$Path, [bool]$Restrict = $RestrictOutputAcl)
-    if (Test-Path -LiteralPath $Path -PathType Container) { return 'Existing' }
+    if (Test-Path -LiteralPath $Path -PathType Container) {
+        $fact = Get-OutputFolderFact $Path
+        $decision = Get-OutputFolderSafetyDecision $fact.IsReparsePoint $fact.OwnerSid $fact.TrustedSids $fact.IsRemote
+        if (-not $decision.Safe) {
+            throw ('The folder ' + $Path + ' already exists and is not used, because ' + $decision.Reason + '. Give -ReportDirectory a new folder name, or ask an administrator to remove the folder.')
+        }
+        return 'Existing'
+    }
     if ($Restrict) {
         # Created with its access list in one call, so there is no moment
         # when the folder exists with inherited permissions (#139).

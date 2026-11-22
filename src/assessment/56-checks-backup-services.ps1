@@ -52,13 +52,21 @@ function Invoke-TasksCheck {
         $user = [string]$t.Principal.UserId
         if (-not $user) { $user = [string]$t.Principal.GroupId }
         $actions = @($t.Actions | ForEach-Object { (([string]$_.Execute) + ' ' + ([string]$_.Arguments)).Trim() } | Where-Object { $_ }) -join '; '
+        # Credentials on a task's command line never go into a report (GHSA-3xmq-62gm-6hxj).
+        $hidden = Hide-CommandLineSecret $actions
+        $actions = $hidden.Text
         $fullName = $t.TaskPath + $t.TaskName
         $isBuiltIn = Test-BuiltInTaskAccount $user ([string]$t.Principal.LogonType)
         if ($user -and -not $isBuiltIn) { Add-RedactionLiteral $user 'ACCOUNT' }
+        # A task folder is named by whoever made it, often after the customer
+        # or the product (GHSA-232q).
+        foreach ($segment in @(([string]$t.TaskPath) -split '\\' | Where-Object { $_ })) { Add-RedactionLiteral $segment 'NAME' }
         $script:Data.Snapshot.Tasks += $fullName
         # Windows' own per-user feed tasks: one line for all of them (#214).
         if (Test-WindowsPerUserTask $fullName) { $perUser++; continue }
-        Add-Result 'TASKS' $fullName 'INFO' ('RunAs=' + $user) @(('State=' + $t.State),('Action=' + $actions)) -Source 'Get-ScheduledTask'
+        $detail = @(('State=' + $t.State),('Action=' + $actions))
+        if ($hidden.Masked) { $detail += 'Note=A password or token in the arguments was masked.' }
+        Add-Result 'TASKS' $fullName 'INFO' ('RunAs=' + $user) $detail -Source 'Get-ScheduledTask'
         if ($user -and -not $isBuiltIn) { $named += ($fullName + ' (' + $user + ')') }
     }
     if ($perUser -gt 0) {

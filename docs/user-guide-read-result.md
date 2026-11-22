@@ -48,7 +48,7 @@ within one run (the same address is always `IP-3`):
 
 | Replaced | Placeholder | Example |
 |---|---|---|
-| Computer name and host names in any domain (IIS bindings, backup and KMS servers, ...), except public documentation and vendor sites such as `learn.microsoft.com` | `HOST-n` | `srv01.corp.example.test`, `shop.customer.example` |
+| Computer name and host names under a known top-level domain (IIS bindings, backup and KMS servers, ...), UNC hosts (`\\srv02\data`), the host in a link (`http://portal:8080/`) and the short name of a host that is seen with its full name (when it has a digit), except public documentation and vendor sites such as `learn.microsoft.com` | `HOST-n` | `srv01.corp.example.test`, `shop.customer.example` |
 | Domain name and NetBIOS domain | `DOMAIN-n` | `corp.example.test`, `CORP` |
 | IPv4 and IPv6 addresses (not masks, `127.0.0.1`, `0.0.0.0`, `::1`) | `IP-n` | `10.20.30.40`, `fe80::1c2d:...` |
 | MAC addresses | `MAC-n` | `00:50:56:AB:CD:EF` |
