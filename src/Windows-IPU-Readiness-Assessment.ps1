@@ -1,8 +1,8 @@
 <#
 ===============================================================================
  SCRIPT NAME : Windows-IPU-Readiness-Assessment.ps1
- VERSION     : 4.9.0
- RELEASE DATE: 2026-11-22
+ VERSION     : 4.9.1
+ RELEASE DATE: 2026-11-23
  PURPOSE     : Windows Server in-place upgrade (IPU) readiness assessment and
                post-upgrade verification, with a self-contained HTML report
                and a JSON result file written on the assessed server.
@@ -88,6 +88,9 @@
     load, nothing is collected. The Pester tests use this.
 
 .VERSION HISTORY
+    4.9.1 - End-of-life: two releases that the installed version cannot tell
+            apart give a MANUAL row that names both, not the first in the
+            list.
     4.9.0 - Security fixes: passwords in scheduled-task command lines are
             masked; an existing output folder that is a junction or is
             owned by an ordinary user is refused; redaction finds names
@@ -749,7 +752,7 @@ function Get-EolResultKind {
 # 3. CORE
 # =============================================================================
 $ProgressPreference = 'SilentlyContinue'
-$script:CollectorVersion  = '4.9.0'
+$script:CollectorVersion  = '4.9.1'
 # Settings a profile file (-ProfileFile) may set. Mode, target, media path,
 # report folder and redaction describe one run, so they stay arguments only.
 $script:ProfileSettingNames = @(

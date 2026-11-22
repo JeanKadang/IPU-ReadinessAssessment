@@ -1,6 +1,6 @@
 {
   "Schema": "IPU-Assessment/1",
-  "CollectorVersion": "4.9.0",
+  "CollectorVersion": "4.9.1",
   "ComputerName": "SRV-APP01",
   "Mode": "Pre",
   "TargetServerVersion": "2025",
