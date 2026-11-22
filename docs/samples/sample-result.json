@@ -14,7 +14,7 @@
     "SPECIAL": 0,
     "BLOCKER": 1,
     "ACTION": 2,
-    "WARNING": 6,
+    "WARNING": 7,
     "MANUAL": 1
   },
   "Facts": {
@@ -30,8 +30,8 @@
     "SqlServer": "MSSQLSERVER=SQL Server 2017",
     "Activation": "Status=Licensed, Channel=Volume:GVLK",
     "CDrive": "Size 100,00 GB, free 22,00 GB",
-    "CExtension": "",
-    "LowDataVolumes": "",
+    "CExtension": "Blocked by P4 (recovery partition, 900 MB) after C:",
+    "LowDataVolumes": "D: 12,5 % free of 200 GB (threshold 20 %, 2 volumes checked)",
     "CompatScan": "0xC1900210 - Setup found no compatibility issues. | Duration=00:11:05 | ImageIndex=2"
   },
   "Results": [
@@ -315,6 +315,21 @@
       "Details": "",
       "Recommendation": "",
       "Source": "",
+      "Command": "",
+      "CommandKind": "",
+      "Link": "",
+      "LinkTitle": ""
+    },
+    {
+      "CheckId": "storage",
+      "Area": "STORAGE",
+      "Item": "DataVolume D:",
+      "Status": "WARNING",
+      "Kind": "Finding",
+      "Value": "Size 200,00 GB, free 25,00 GB (12,5 %)",
+      "Details": "Label=Data | FileSystem=NTFS | ExtendGB=19 | Threshold=20 % free",
+      "Recommendation": "Less than 20 % free. On a virtual machine a disk cannot be extended while a snapshot exists, and the fallback snapshot of the upgrade stays during the change and often for days after it, until the upgrade is approved. If D: needs more space, extend it before the snapshot is taken (about 19 GB reaches 20 % free). If another team owns the volume (database, application), tell them now.",
+      "Source": "Win32_Volume",
       "Command": "",
       "CommandKind": "",
       "Link": "",
