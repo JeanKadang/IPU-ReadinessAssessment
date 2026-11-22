@@ -93,7 +93,9 @@ check is added without one.
 
 ## After the upgrade (`-AssessmentMode Post`)
 
-The same checks run, except `checklist` and `compatscan`. The **post-upgrade comparison** then reads the
+The same checks run, except `checklist` and `compatscan`. A row whose advice is for before the upgrade is written as
+`INFO` and does not count (#445; the table is `$script:PostModeRules`, described in the
+[user guide](user-guide-read-result.md)). The **post-upgrade comparison** then reads the
 pre-upgrade JSON from the same folder and reports:
 
 | Result | Status |

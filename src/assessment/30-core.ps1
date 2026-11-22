@@ -297,6 +297,14 @@ function Add-Result {
     if ($Status -eq 'MANUAL' -and (@('Observation','Evidence') -contains $Kind) -and -not $script:ManualNotCounted.ContainsKey($Area)) {
         throw ("Add-Result: a MANUAL row in {0} ('{1}') must be a Finding so it counts towards the overall status. Use -Kind Finding, or add the area to $script:ManualNotCounted with the reason." -f $Area, $Item)
     }
+    # After the upgrade, advice for before it is not a finding (#445).
+    if ($AssessmentMode -eq 'Post') {
+        $post = Get-PostModeRow $Area $Item $Status $Kind $Recommendation
+        if ($post) {
+            $Status = $post.Status; $Kind = $post.Kind; $Recommendation = $post.Recommendation
+            if ($post.DropCommand) { $Command = ''; $CommandKind = '' }
+        }
+    }
     $detailParts = @()
     foreach ($part in @($Details)) {
         $clean = ConvertTo-CleanText $part

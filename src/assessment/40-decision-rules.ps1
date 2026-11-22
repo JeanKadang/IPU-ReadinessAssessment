@@ -21,7 +21,8 @@ $script:FactSources = [ordered]@{
     # VMwareToolsReleases (#279): versions and release dates from Broadcom KB 304809; newest 13.1.6.0 of 2026-10-30.
     VMwareToolsReleases    = @{ Verified = '2026-11-10'; Source = 'https://knowledge.broadcom.com/external/article/304809/build-numbers-and-versions-of-vmware-too.html' }
     # ExpectedWindowsChanges: live runs (#158); AzureArcSetup per learn.microsoft.com/en-us/azure/azure-arc/servers/onboard-windows-server (#197).
-    ExpectedWindowsChanges = @{ Verified = '2026-10-14'; Source = 'https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/158' }
+    # 2026-11-22 (#445): BITS start type per learn.microsoft.com/windows/win32/bits/bits-startup-type; the Server-Gui features per the Windows Server blog of 2017-04-05.
+    ExpectedWindowsChanges = @{ Verified = '2026-11-22'; Source = 'https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/158' }
     WinReMinPartitionMB    = @{ Verified = '2026-10-13'; Source = 'https://github.com/JeanKadang/IPU-ReadinessAssessment/issues/161' }
     DocLinks               = @{ Verified = '2026-10-13'; Source = 'https://learn.microsoft.com/en-us/windows-server/get-started/perform-in-place-upgrade' }
 }
@@ -927,13 +928,75 @@ function ConvertTo-PendingRenamePath {
 # Changes Microsoft makes during an upgrade (#158), so the post-upgrade
 # comparison can call them expected instead of reporting them as problems.
 # Verified: see $script:FactSources.ExpectedWindowsChanges.
-# Services that newer Windows starts on demand (trigger start, Manual):
-$script:ExpectedManualServices = @('IKEEXT','NlaSvc')
+# Services that newer Windows starts on demand (trigger start, Manual). BITS
+# (#445) is delayed auto-start while it has jobs and demand start when it has
+# none (learn.microsoft.com/windows/win32/bits/bits-startup-type), so a
+# stopped, Manual BITS after the upgrade is its normal state.
+$script:ExpectedManualServices = @('IKEEXT','NlaSvc','BITS')
 # Services and features removed or renamed in newer Windows Server releases:
 $script:ExpectedRemovedServices = @('tiledatamodelsvc')
 # AzureArcSetup is a Feature on Demand (a capability) from Windows Server
 # 2025 on, so it is no longer listed as a feature after the upgrade (#197).
-$script:ExpectedRemovedFeatures = @('PowerShell-V2','PowerShell-ISE','Windows-Defender-Features','Windows-Defender-Gui','AzureArcSetup')
+# The three Server-Gui / User-Interfaces features (#445) exist only in 2012
+# and 2012 R2: from 2016 on the desktop is fixed at installation and is no
+# longer a feature (Microsoft Windows Server blog, 2017-04-05, "Switching
+# between Windows Server 2016 Server Core and Desktop Experience").
+$script:ExpectedRemovedFeatures = @('PowerShell-V2','PowerShell-ISE','Windows-Defender-Features','Windows-Defender-Gui','AzureArcSetup','Server-Gui-Mgmt-Infra','Server-Gui-Shell','User-Interfaces-Infra')
+
+# Post mode (#445): the checks run again after the upgrade, and some of their
+# rows are advice for BEFORE it ("add CPU for the change window", "back up
+# IIS before the IPU"). After the upgrade that advice is not a finding. Each
+# rule names the rows it is for (Area and Item are regular expressions, Status
+# the statuses it applies to, Rec an optional regular expression on the
+# recommendation, so a row with other advice under the same name is left
+# alone) and what becomes of them:
+#   To      'INFO' = documentation only (no longer counted); '' = status kept
+#   Text    the recommendation after the upgrade; {Item} is the row's item.
+#           Not given = the recommendation is kept.
+#   Replace @(pattern, text): a wording change inside the recommendation.
+# What was lost in the upgrade is reported by the comparison, not by these rows.
+$script:PostModeRules = @(
+    @{ Area = '^PERFORMANCE$';        Item = '^(LogicalProcessors|MemoryGB)$';              Status = @('WARNING','ACTION'); To = 'INFO'; Text = '' }
+    @{ Area = '^STORAGE$';            Item = '^PartitionAfterC$';                           Status = @('WARNING');          To = 'INFO'; Text = 'A partition after C: blocks a simple extension of C:. The RecoveryPartitionAfterC row says which one it is and how to remove it.' }
+    @{ Area = '^WORKLOAD$';           Item = '^(?!VDI: )';                                  Status = @('WARNING');          To = 'INFO'; Text = 'Test {Item} after the upgrade and get its owner''s confirmation that it works.' }
+    @{ Area = '^IIS$';                Item = '^Web-Server$';                                Status = @('WARNING');          To = 'INFO'; Text = 'Check that every site and application pool has started and that the bindings answer.' }
+    @{ Area = '^ANTIVIRUS$';          Item = '.';                                           Status = @('WARNING');          To = 'INFO'; Rec = '^Confirm this version supports'; Text = 'Check in the console of the product that the agent on this server reports again.' }
+    @{ Area = '^RDS$';                Item = '^(RDSessionHost|RDLicensingServer)$';         Status = @('ACTION');           To = 'INFO'; Text = 'Check that sessions connect and that the RDS licensing is valid for the new release.' }
+    @{ Area = '^NETWORK$';            Item = '^LBFO team: ';                                Status = @('ACTION');           To = 'INFO'; Rec = '^Microsoft requires NIC Teaming to be disabled'; Text = 'Check that the team is up with all its members, and that the switch ports are set as they were.' }
+    @{ Area = '^PKI$';                Item = '^(CertificationAuthority|ADCSRoleServices)$'; Status = @('ACTION');           To = 'INFO'; Text = 'Check with the PKI team that the CA service runs, issues a certificate and publishes its CRL.' }
+    @{ Area = '^SECURITY$';           Item = '^BitLocker';                                  Status = @('WARNING');          To = 'INFO'; Rec = 'before IPU'; Text = 'Check that BitLocker protection is on (manage-bde -status).' }
+    @{ Area = '^RDP$';                Item = '^DriveRedirection$';                          Status = @('WARNING');          To = 'INFO'; Text = '' }
+    @{ Area = '^LICENSING$';          Item = '^OEMLicense$';                                Status = @('WARNING');          To = 'INFO'; Text = 'The activation row shows the state after the upgrade.' }
+    @{ Area = '^NETWORK_DEPENDENCY$'; Item = '^HostsFile$';                                 Status = @('MANUAL');           To = 'INFO'; Rec = '^Confirm owner and purpose'; Text = 'Entries lost in the upgrade are listed in the post-upgrade comparison. Test the name resolution that depends on the entries.' }
+    @{ Area = '^NETWORK_DEPENDENCY$'; Item = '^StaticRoutes$';                              Status = @('MANUAL');           To = 'INFO'; Rec = '^Confirm each static route'; Text = 'Routes lost in the upgrade are listed in the post-upgrade comparison. Test the destinations that depend on the routes.' }
+    @{ Area = '^FILE_SHARES$';        Item = '^FileShares$';                                Status = @('WARNING');          To = 'INFO'; Text = 'Shares lost in the upgrade are listed in the post-upgrade comparison. Test access from a client with the share owners.' }
+    @{ Area = '^ACCESS$';             Item = '^DomainMembership$';                          Status = @('WARNING');          To = 'INFO'; Text = '' }
+    @{ Area = '^PLATFORM$';           Item = '^(PhysicalOrVirtual|CloudProvider)$';         Status = @('MANUAL');           To = 'INFO'; Rec = '^(Validate model|Microsoft defers)'; Text = '' }
+    @{ Area = '^FEATURE_LIFECYCLE$';  Item = '.';                                           Status = @('WARNING','ACTION'); To = 'INFO' }
+    @{ Area = '^DRIVERS$';            Item = '^UnsignedDrivers$';                           Status = @('WARNING');          To = '';     Text = 'Unsigned drivers may not load on the new release. Check in Device Manager that every device works.' }
+    @{ Area = '^GROUP_POLICY$';       Item = '^GPO: ';                                      Status = @('WARNING');          To = '';     Rec = 'before the change'; Text = 'The server now reports the new release. Check that this WMI filter matches (or excludes) it as intended. A GPO that stopped applying is listed in the post-upgrade comparison.' }
+    @{ Area = '^WINDOWS_HEALTH$';     Item = '^LatestUpdate$';                              Status = @('WARNING','MANUAL'); To = '';     Rec = 'before IPU'; Text = 'Install the latest cumulative update.' }
+    @{ Area = '^WINDOWS_HEALTH$';     Item = '^PendingReboot$';                             Status = @('WARNING','ACTION'); To = '';     Replace = @('Reboot in the pre-change window', 'Reboot the server') }
+)
+
+function Get-PostModeRow {
+    # Pure (#445): what a row becomes in a Post run. $null = unchanged. Only a
+    # row that counts (kind Finding) is touched; the first rule that matches
+    # decides. A row made INFO loses its command: it was for before the upgrade.
+    param([string]$Area, [string]$Item, [string]$Status, [string]$Kind, [string]$Recommendation, [object[]]$Rules = $script:PostModeRules)
+    if ($Kind -ne 'Finding') { return $null }
+    foreach ($rule in @($Rules)) {
+        if ($Area -notmatch $rule.Area -or $Item -notmatch $rule.Item) { continue }
+        if (@($rule.Status) -notcontains $Status) { continue }
+        if ($rule.ContainsKey('Rec') -and $rule['Rec'] -and $Recommendation -notmatch $rule['Rec']) { continue }
+        $out = [ordered]@{ Status = $Status; Kind = $Kind; Recommendation = $Recommendation; DropCommand = $false }
+        if ($rule['To'] -eq 'INFO') { $out.Status = 'INFO'; $out.Kind = 'Evidence'; $out.DropCommand = $true }
+        if ($rule.ContainsKey('Text')) { $out.Recommendation = ([string]$rule['Text']).Replace('{Item}', $Item) }
+        elseif ($rule.ContainsKey('Replace')) { $out.Recommendation = $Recommendation -replace [string]$rule['Replace'][0], [string]$rule['Replace'][1] }
+        return [pscustomobject]$out
+    }
+    return $null
+}
 # Well-known Windows ports and the service that opens them, for baselines
 # without port owners (4.3.0 and older).
 $script:KnownPortServices = @{ 'UDP:500' = 'IKEEXT'; 'UDP:4500' = 'IKEEXT'; 'UDP:1900' = 'SSDPSRV'; 'TCP:2869' = 'SSDPSRV'; 'TCP:5357' = 'FDResPub'; 'UDP:3702' = 'FDResPub' }
@@ -1515,6 +1578,10 @@ function Compare-IPUSnapshot {
         $b = @($Before.($l.Prop) | Where-Object { $_ })
         $a = @($After.($l.Prop) | Where-Object { $_ })
         if ($l.Prop -eq 'Apps') { $b = @($b | ForEach-Object { [string]$_.Name }); $a = @($a | ForEach-Object { [string]$_.Name }) }
+        # The local policy is not a domain GPO (#445): the registry lists it
+        # as applied, gpresult only when it holds settings, so the two ways
+        # of reading the list disagree about it without anything being lost.
+        if ($l.Prop -eq 'Gpos') { $b = @($b | Where-Object { $_ -ne 'Local Group Policy' }) }
         if ($l.Prop -eq 'Tasks') {
             # A task renamed only by its version or GUID still exists (#196).
             $aBase = @($a | ForEach-Object { ConvertTo-TaskBaseName ([string]$_) })
@@ -1526,7 +1593,7 @@ function Compare-IPUSnapshot {
             # Removed or renamed by Microsoft: expected (#158). .NET 3.5 is
             # removed by the upgrade and often needed by applications.
             $known = @($lost | Where-Object { $script:ExpectedRemovedFeatures -contains $_ })
-            if ($known.Count -gt 0) { $diff += (& $make 'INFO' 'Windows features removed or renamed by Microsoft' ('Count=' + $known.Count) ($known -join ', ') 'Expected with the new Windows release (PowerShell 2.0 is removed in Windows Server 2025; Defender features were renamed; Azure Arc Setup became a Feature on Demand). No action unless something depended on them.') }
+            if ($known.Count -gt 0) { $diff += (& $make 'INFO' 'Windows features removed or renamed by Microsoft' ('Count=' + $known.Count) ($known -join ', ') 'Expected with the new Windows release (PowerShell 2.0 is removed in Windows Server 2025; Defender features were renamed; Azure Arc Setup became a Feature on Demand; the Server-Gui and User-Interfaces features do not exist from Windows Server 2016 on, where the desktop is fixed at installation). No action unless something depended on them.') }
             if ($lost -contains 'NET-Framework-Core') { $diff += (& $make 'WARNING' '.NET Framework 3.5 removed by the upgrade' 'NET-Framework-Core' 'Installed before the upgrade, not after.' 'Reinstall .NET Framework 3.5 if an application on this server needs it (from the sources\sxs folder of the installation media): Install-WindowsFeature NET-Framework-Core -Source <media>\sources\sxs') }
             $lost = @($lost | Where-Object { $script:ExpectedRemovedFeatures -notcontains $_ -and $_ -ne 'NET-Framework-Core' })
         }
@@ -1563,7 +1630,8 @@ function Compare-IPUSnapshot {
     # Group Policy can also start applying after the upgrade (#80). Only
     # compared when the baseline has the list (4.2.0 and later).
     if ($null -ne $Before.Gpos -and $null -ne $After.Gpos) {
-        $b = @($Before.Gpos | Where-Object { $_ }); $a = @($After.Gpos | Where-Object { $_ })
+        # Local Group Policy is left out here too (#445, see above).
+        $b = @($Before.Gpos | Where-Object { $_ }); $a = @($After.Gpos | Where-Object { $_ -and $_ -ne 'Local Group Policy' })
         $new = @($a | Where-Object { $b -notcontains $_ } | Sort-Object -Unique)
         if ($new.Count -gt 0) { $diff += (& $make 'WARNING' 'GPOs newly applied after upgrade' ('Count=' + $new.Count) ($new -join ', ') 'These GPOs did not apply before the upgrade. Confirm they are intended for this server (WMI filters on the Windows version often cause this).') }
     }

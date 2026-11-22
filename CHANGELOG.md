@@ -19,6 +19,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Post run: advice for before the upgrade is no longer a finding after it (#445). A real pair of reports (2012 R2 to 2019) showed 13 findings after a good upgrade; seven were pre-upgrade advice ("add CPU for the change window", "back up IIS before the IPU", "get the vendor's IPU procedure") and three were changes that come with the new release. In a Post run such rows are now INFO with a note on what to test, and do not count towards the overall status; rows about a problem the server has now keep their status. The rules are one table (`$script:PostModeRules`) with a pure function. The comparison now knows that the Server-Gui and User-Interfaces features do not exist from Windows Server 2016 on, that BITS is stopped and Manual whenever it has no jobs, and that *Local Group Policy* is not a lost GPO when the two runs read the list in different ways.
 - `-NoTypeInformation` no longer warns on PowerShell 7.4 and newer (#430). It is passed only on Windows PowerShell, where it is still needed to keep the `#TYPE` line out of the CSV files (`RDP-Policy-Assessment.csv` and the fleet overview files). This also fixes the permissions test in `Merge-IPUAssessments.Tests.ps1`, which failed on 7.4+ because of the warning.
 
 ### Documentation
