@@ -4965,6 +4965,9 @@ function Register-RedactionHostAlias {
     # with a digit in it: web, mail or app would hit ordinary words.
     param([hashtable]$Context, [string]$Fqdn, [string]$Placeholder, $List)
     $alias = ($Fqdn -split '\.')[0]
+    # The computer and domain names have their own placeholder, and the
+    # redaction key must list the computer name itself.
+    if (@($Context.NetBios | Where-Object { $_ -and $_ -ieq $alias }).Count -gt 0) { return }
     if ($alias -match '^[A-Za-z][A-Za-z0-9-]{2,}$' -and $alias -match '\d' -and -not $Context.Map.ContainsKey('HOST|' + $alias.ToLowerInvariant())) {
         $Context.Map['HOST|' + $alias.ToLowerInvariant()] = $Placeholder
         $Context.Literals[$alias] = 'HOST'

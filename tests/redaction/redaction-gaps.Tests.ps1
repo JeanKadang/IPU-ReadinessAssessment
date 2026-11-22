@@ -35,6 +35,12 @@ Describe 'Redaction of text that passed through unchanged (GHSA-232q)' {
         ($out -split ' ')[1] | Should -Be ($out -split ' ')[2]
     }
 
+    It 'lists the computer name itself in the key when its full name is seen first' {
+        $ctx = New-RedactionContext 'fv-az1234-567' ''
+        $null = Protect-ReportText 'Host fv-az1234-567.internal.cloudapp.net and fv-az1234-567' $ctx
+        @($ctx.Originals.Values | Where-Object { $_.Kind -eq 'HOST' -and $_.Original -ieq 'fv-az1234-567' }).Count | Should -Be 1
+    }
+
     It 'keeps <What>' -TestCases @(
         @{ What = 'the shared profiles'; In = 'C:\Users\Public\Documents and C:\Users\Default\NTUSER.DAT' }
         @{ What = 'a device path'; In = '\\?\C:\Windows and \\.\pipe\x' }
