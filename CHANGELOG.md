@@ -4,6 +4,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [4.9.1] - 2026-11-23
+
 ### Fixed
 
 - End-of-life: two releases that the installed version cannot tell apart are no longer resolved by list order (#388). When the snapshot has two releases that differ only in a suffix that is dropped (for example SQL Server `13.0-sp2` and `13.0-sp3`), the row is now `MANUAL`, names both releases and gives no date; before, the first one in the list decided, which could show an expired product as supported or the other way round. `Get-EolCycleCandidate` lists the tied releases; `Get-EolCycleMatch` returns none for a tie. The three scripts are rebuilt (`25-eol-core.ps1` is shared).
@@ -391,7 +393,8 @@ Restructure of the 3.x script (released as a script file only).
 
 Local Group Policy backup and RDP readiness. Superseded by 4.0.0.
 
-[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.9.0...HEAD
+[Unreleased]: https://github.com/JeanKadang/IPU-ReadinessAssessment/compare/v4.9.1...HEAD
+[4.9.1]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.9.1
 [4.9.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.9.0
 [4.8.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.8.0
 [4.7.0]: https://github.com/JeanKadang/IPU-ReadinessAssessment/releases/tag/v4.7.0
