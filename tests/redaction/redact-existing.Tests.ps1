@@ -179,6 +179,7 @@ Describe 'RedactExisting recovers every name the collector registers (#172)' {
             'if ($sh.Description) { Add-RedactionLiteral ([string]$sh.Description) ''NAME'' }',
             'foreach ($s in @($script:Data.Services | Where-Object { $_.StartName })) { Add-RedactionLiteral ([string]$s.StartName) ''ACCOUNT'' }',
             'if ($user -and -not $isBuiltIn) { Add-RedactionLiteral $user ''ACCOUNT'' }',
+            'foreach ($segment in @(([string]$t.TaskPath) -split ''\\'' | Where-Object { $_ })) { Add-RedactionLiteral $segment ''NAME'' }',
             'Add-RedactionLiteral ([string]$cluster.Name) ''HOST''',
             'try { foreach ($n in @(Get-ClusterNode -ErrorAction Stop)) { Add-RedactionLiteral ([string]$n.Name) ''HOST''; Add-Result ''CLUSTER'' (''Node: '' + $n.Name) ''INFO'' (''State='' + $n.State) -Source ''Get-ClusterNode'' } } catch { $unread += (''nodes: '' + $_.Exception.Message) }',
             'if ($act.KmsHost) { foreach ($h in @($act.KmsHost, ($act.KmsHost -split ''\.'')[0]) | Select-Object -Unique) { Add-RedactionLiteral $h ''HOST'' }; $script:Data.KmsEndpoint = $act.KmsEndpoint } elseif ($script:Data.ActivationKind -eq ''KMS'') { $script:Data.KmsEndpoint = ''found via DNS'' }',

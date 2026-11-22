@@ -436,7 +436,7 @@ function Write-AssessmentReport {
     $results = $script:Results.ToArray()
     $overall = Get-OverallStatus $results
     $html = New-IPUReportHtml -Results $results -CheckRuns $script:CheckRuns.ToArray() -OverallStatus $overall -CompletedTime $completed -Partial:$Partial
-    if ($RedactReport) { $html = Protect-ReportText $html (Get-RedactionContext) }
+    if ($RedactReport) { $html = Protect-ReportHtml $html (Get-RedactionContext) }
     if ($html.Length -lt 2048 -or $html -notmatch '(?is)^\s*<!doctype html' -or $html -notmatch '(?is)</html>\s*$') {
         throw ('HTML validation failed (length {0}).' -f $html.Length)
     }
@@ -529,6 +529,8 @@ function Get-RedactionLiteralFromResult {
     $found = @()
     foreach ($r in @($Results)) {
         if ($r.Area -eq 'TASKS' -and [string]$r.Value -match '^RunAs=(.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'ACCOUNT' } }
+        # Task folders: the part of \Folder\Task before the task name (GHSA-232q).
+        if ($r.Area -eq 'TASKS' -and [string]$r.Item -match '^\\(.+)\\[^\\]*$') { foreach ($segment in ($Matches[1] -split '\\')) { $found += [pscustomobject]@{ Value = $segment; Kind = 'NAME' } } }
         if ($r.Area -eq 'SERVICES' -and [string]$r.Details -match '(?:^|\|\s*)LogOnAs=([^|]+)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'ACCOUNT' } }
         if ($r.Area -eq 'GROUP_POLICY' -and [string]$r.Item -match '^GPO: (.+)$') { $found += [pscustomobject]@{ Value = $Matches[1]; Kind = 'GPO' } }
         if ($r.Area -eq 'GROUP_POLICY' -and [string]$r.Details -match '(?:^|\|\s*)WMI filter: ([^|]+)') { $found += [pscustomobject]@{ Value = $Matches[1].Trim(); Kind = 'NAME' } }
@@ -608,7 +610,7 @@ function Invoke-RedactExisting {
             $html = [IO.Path]::ChangeExtension($jf.FullName, '.html')
             $note = ''; $written = '.json'
             if (Test-Path -LiteralPath $html) {
-                [IO.File]::WriteAllText($base + '.html', (Protect-ReportText ([IO.File]::ReadAllText($html)) $ctx), (New-Object System.Text.UTF8Encoding($false)))
+                [IO.File]::WriteAllText($base + '.html', (Protect-ReportHtml ([IO.File]::ReadAllText($html)) $ctx), (New-Object System.Text.UTF8Encoding($false)))
                 $written += '/.html'
             } else { $note += ' (no HTML report next to it)' }
             # The run log beside the report (#329), with the same placeholders.
