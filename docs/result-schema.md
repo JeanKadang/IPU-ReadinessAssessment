@@ -56,6 +56,8 @@ Strings, empty or `null` when the check that sets them did not run.
 | `Activation` | `Licensed (KMS client), activated by kms01.corp.example.test:1688, found via DNS. Renewal due in 173 days` (from 4.5.0; before: `Status=Licensed, Channel=Volume:GVLK`) |
 | `Nla` | `On`, `Off` or `Unknown`: RDP Network Level Authentication (from 4.5.0) |
 | `CDrive` | `Size 100,00 GB, free 55,00 GB` |
+| `CExtension` (from 4.9.0) | Whether a partition is in the way of extending the system drive: `Blocked by P3 (recovery partition, 480 MB) after C:`, `Nothing in the way: no partition after C:`, or `Not checked (...)` |
+| `LowDataVolumes` (from 4.9.0) | The other local volumes below `DataVolumeMinFreePercent`: `D: 10,0 % free of 200 GB (threshold 20 %, 3 volumes checked)`, or `None below 20 % free (3 volumes checked)`. Empty when the storage check did not get that far |
 | `CompatScan` | `0xC1900210 - Setup found no compatibility issues.` |
 
 ## `Special` (from 4.5.0)

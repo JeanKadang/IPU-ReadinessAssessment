@@ -257,6 +257,8 @@ Describe 'Checks on a fake server: platform storage network' -Skip:($env:OS -ne 
             $d.Recommendation | Should -Match 'about 25 GB'
             ($d.Details -join ' ') | Should -Match 'Label=Data'
             (Get-Row 'STORAGE' 'DataVolume E:')[0].Status | Should -Be 'OK'
+            # The Summary line (#448): the low one by name, the unreadable one too.
+            $script:Data.DataVolumeSummary | Should -Match '^D: 10[.,]0 % free of 200 GB \(threshold 20 %, 2 volumes checked\); not readable: F:$'
             $f = (Get-Row 'STORAGE' 'DataVolume F:')[0]
             $f.Status | Should -Be 'MANUAL'; $f.Kind | Should -Be 'Finding'
         }
@@ -270,9 +272,15 @@ Describe 'Checks on a fake server: platform storage network' -Skip:($env:OS -ne 
             $script:Fake.CimThrow = @('Win32_Volume')
             (Invoke-TestCheck 'storage').Outcome | Should -Be 'Failed'
             @($script:Results | Where-Object { $_.Item -like 'DataVolume*' }).Count | Should -Be 0
+            # The Summary then says nothing about the drives and that the layout was not checked (#448).
+            $script:Data.ContainsKey('DataVolumeSummary') | Should -BeFalse
+            $script:Data.CExtension | Should -Match '^Not checked'
         }
         It 'enough free space, partitions, mount points and labels' {
             (Invoke-TestCheck 'storage').Outcome | Should -Be 'Completed'
+            # The Summary lines (#448).
+            $script:Data.DataVolumeSummary | Should -Be 'No other local volume'
+            $script:Data.CExtension | Should -Not -Match '^Not checked'
             (Get-Row 'STORAGE' 'CFreeSpace')[0].Status | Should -Be 'OK'
             (Get-Row 'STORAGE' 'PartitionAfterC')[0].Status | Should -Be 'OK'
             (Get-Row 'STORAGE' 'SystemPartition')[0].Status | Should -Be 'OK'

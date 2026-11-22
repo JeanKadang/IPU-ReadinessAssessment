@@ -1880,6 +1880,48 @@ function Get-DataVolumeDecision {
     return @($rows | Sort-Object Name)
 }
 
+function Get-DataVolumeSummary {
+    # Pure (#448): the rows of Get-DataVolumeDecision -> one line for the
+    # Summary and the fleet overview. Names every volume below the threshold
+    # with its free percent and size; a volume that could not be read is named
+    # too, so "none is low" is never said about a volume nobody measured.
+    param([object[]]$Rows, [int]$MinFreePercent = 20, [Globalization.CultureInfo]$Culture = [Globalization.CultureInfo]::InvariantCulture)
+    $rows = @($Rows | Where-Object { $_ })
+    if ($rows.Count -eq 0) { return [pscustomobject]@{ Text = 'No other local volume'; Low = @(); Unknown = @() } }
+    $low = @($rows | Where-Object { $_.Kind -eq 'Low' })
+    $unknown = @($rows | Where-Object { $_.Kind -eq 'Unknown' } | ForEach-Object { [string]$_.Name })
+    $measured = $rows.Count - $unknown.Count
+    if ($low.Count -gt 0) {
+        $text = (@($low | ForEach-Object { [string]$_.Name + ' ' + ([double]$_.FreePercent).ToString('N1', $Culture) + ' % free of ' + ([double]$_.SizeGB).ToString('N0', $Culture) + ' GB' }) -join '; ')
+        $text += ' (threshold ' + $MinFreePercent + ' %, ' + $measured + ' volume' + $(if ($measured -eq 1) { '' } else { 's' }) + ' checked)'
+    } else {
+        $text = 'None below ' + $MinFreePercent + ' % free (' + $measured + ' volume' + $(if ($measured -eq 1) { '' } else { 's' }) + ' checked)'
+    }
+    if ($unknown.Count -gt 0) { $text += '; not readable: ' + ($unknown -join ', ') }
+    return [pscustomobject]@{ Text = $text; Low = @($low | ForEach-Object { [string]$_.Name }); Unknown = $unknown }
+}
+
+function Get-CExtensionSummary {
+    # Pure (#448): can the system drive be extended, in one line for the
+    # Summary. After = the partitions that follow it on the disk
+    # (PartitionNumber, SizeMB, IsRecovery), nearest first. RecoveryKind is
+    # the Kind of Get-RecoveryPartitionDecision: Unknown = the layout could
+    # not be judged, LikelyNew = Setup will probably add a recovery partition.
+    param([string]$SystemDrive = 'C:', [object[]]$After, [string]$RecoveryKind = '', [bool]$Checked = $true)
+    if (-not $Checked) { return 'Not checked (the partition layout could not be read)' }
+    if ($RecoveryKind -eq 'Unknown') { return 'Not checked (the system partition is not in the partition list)' }
+    $parts = @($After | Where-Object { $_ })
+    if ($parts.Count -eq 0) {
+        if ($RecoveryKind -eq 'LikelyNew') { return ('Nothing in the way now: no partition after ' + $SystemDrive + '. Setup will likely add a recovery partition there (see Storage)') }
+        return ('Nothing in the way: no partition after ' + $SystemDrive)
+    }
+    $names = @($parts | ForEach-Object {
+        $size = [math]::Round([double]$_.SizeMB)
+        'P' + $_.PartitionNumber + ' (' + $(if ($_.IsRecovery) { 'recovery partition, ' } else { '' }) + $size + ' MB)'
+    })
+    return ('Blocked by ' + ($names -join ', ') + ' after ' + $SystemDrive)
+}
+
 function Get-RecoveryPartitionDecision {
     # Pure (#161). Partitions of the C: disk: PartitionNumber, Offset,
     # SizeMB, IsRecovery. A recovery partition after C: blocks extending C:

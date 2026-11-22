@@ -144,6 +144,19 @@ function Get-TeamsSummary {
     }
     return $rows
 }
+
+function Get-LowDriveCell {
+    # Pure (#448): what the server table shows for the other drives. Only what
+    # needs attention: the volumes below the threshold, and volumes that could
+    # not be read. "None below ..." and results from before 4.9.0 show nothing.
+    param([string]$Text)
+    if (-not $Text) { return '' }
+    if ($Text -match '^(None below|No other local volume)') {
+        if ($Text -match '(not readable: .+)$') { return $Matches[1] }
+        return ''
+    }
+    return $Text
+}
 # ==============================================================================
 # End-of-life core (ADR 0003). One source part, built into BOTH the assessment
 # and Get-IPUEolStatus.ps1 (ADR 0002 allows shared parts), so the two cannot
@@ -622,6 +635,9 @@ foreach ($f in $files) {
         SqlServer        = $r.Facts.SqlServer
         CompatScan       = $r.Facts.CompatScan
         CDrive           = $r.Facts.CDrive
+        # From assessment 4.9.0 (#448); empty for older results.
+        CExtension       = $(if ($r.Facts.PSObject.Properties['CExtension']) { [string]$r.Facts.CExtension } else { '' })
+        LowDataVolumes   = $(if ($r.Facts.PSObject.Properties['LowDataVolumes']) { [string]$r.Facts.LowDataVolumes } else { '' })
         Activation       = $r.Facts.Activation
         Nla              = $(if ($r.Facts.PSObject.Properties['Nla']) { [string]$r.Facts.Nla } else { '' })
         TopIssues        = ($top -join ' | ')
@@ -753,12 +769,12 @@ if ($teamRows.Count -eq 0) {
 [void]$sb.AppendLine('<p class="muted">Derived from each server''s findings and inventory rows; involve these teams before the upgrade. The rules are in the user guide, "Teams needed".</p></section>')
 if ($unreadable.Count -gt 0) { [void]$sb.AppendLine('<section><h2>Files not read</h2><p>' + (Encode ($unreadable -join ', ')) + '</p></section>') }
 
-[void]$sb.AppendLine('<section><h2>Servers (worst first)</h2><div class="scroll"><table><caption class="sr">Servers, worst overall status first</caption><thead><tr><th>Server</th><th>Mode</th><th>Overall</th><th title="Number of BLOCKER, ACTION, WARNING and MANUAL findings">Findings<br><small>Blocker/Action/Warning/Manual</small></th><th>Teams needed</th><th>Current OS</th><th>Target</th><th>Media</th><th>Platform</th><th>RDP NLA</th><th>SQL</th><th>Top issues</th><th>Not assessed</th><th>Completed</th></tr></thead><tbody>')
+[void]$sb.AppendLine('<section><h2>Servers (worst first)</h2><div class="scroll"><table><caption class="sr">Servers, worst overall status first</caption><thead><tr><th>Server</th><th>Mode</th><th>Overall</th><th title="Number of BLOCKER, ACTION, WARNING and MANUAL findings">Findings<br><small>Blocker/Action/Warning/Manual</small></th><th>Teams needed</th><th>Current OS</th><th>Target</th><th>Media</th><th>Platform</th><th>RDP NLA</th><th>SQL</th><th title="Other local volumes below the free-space threshold; they cannot be extended while the fallback snapshot exists">Low drives</th><th>Top issues</th><th>Not assessed</th><th>Completed</th></tr></thead><tbody>')
 foreach ($s in $latest) {
     $badge = '<span class="badge s-' + ([string]$s.Overall).ToLowerInvariant() + '">' + (Encode $s.Overall) + '</span>'
     if ($s.Partial) { $badge += ' <span class="muted">partial</span>' }
     if ($s.Redacted) { $badge += ' <span class="muted">redacted</span>' }
-    [void]$sb.AppendLine('<tr><td class="nw"><b>' + (Encode $s.ComputerName) + '</b></td><td>' + (Encode $s.Mode) + '</td><td class="nw">' + $badge + '</td><td class="nw">' + $s.Blocker + '/' + $s.Action + '/' + $s.Warning + '/' + $s.Manual + '</td><td>' + (Encode $s.TeamsNeeded) + '</td><td>' + (Encode $s.CurrentOS) + '</td><td class="nw">' + (Encode $s.Target) + '</td><td>' + (Encode $s.InstallationMedia) + '</td><td>' + (Encode $s.Platform) + '</td><td class="nw">' + (Encode $s.Nla) + '</td><td>' + (Encode $s.SqlServer) + '</td><td>' + (Encode $s.TopIssues) + '</td><td>' + (Encode $s.NotAssessed) + '</td><td class="nw muted">' + (Encode $s.Completed) + '</td></tr>')
+    [void]$sb.AppendLine('<tr><td class="nw"><b>' + (Encode $s.ComputerName) + '</b></td><td>' + (Encode $s.Mode) + '</td><td class="nw">' + $badge + '</td><td class="nw">' + $s.Blocker + '/' + $s.Action + '/' + $s.Warning + '/' + $s.Manual + '</td><td>' + (Encode $s.TeamsNeeded) + '</td><td>' + (Encode $s.CurrentOS) + '</td><td class="nw">' + (Encode $s.Target) + '</td><td>' + (Encode $s.InstallationMedia) + '</td><td>' + (Encode $s.Platform) + '</td><td class="nw">' + (Encode $s.Nla) + '</td><td>' + (Encode $s.SqlServer) + '</td><td>' + (Encode (Get-LowDriveCell $s.LowDataVolumes)) + '</td><td>' + (Encode $s.TopIssues) + '</td><td>' + (Encode $s.NotAssessed) + '</td><td class="nw muted">' + (Encode $s.Completed) + '</td></tr>')
 }
 [void]$sb.AppendLine('</tbody></table></div>')
 # What the Findings column counts (#324).

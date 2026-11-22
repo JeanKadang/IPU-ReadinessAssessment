@@ -494,6 +494,54 @@ Describe 'End-of-life verdicts in the fleet overview (#275)' {
     }
 }
 
+Describe 'C: extension and low drives in the fleet overview (#448)' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot '..\src\merge\15-teams.ps1')
+        $dir = Join-Path $TestDrive 'drv448'; New-Item -ItemType Directory -Path $dir | Out-Null
+        $new = New-FakeResult 'SRV-NEW' -Overall 'WARNING'
+        $new.Facts | Add-Member -NotePropertyName CExtension -NotePropertyValue 'Blocked by P3 (recovery partition, 480 MB) after C:'
+        $new.Facts | Add-Member -NotePropertyName LowDataVolumes -NotePropertyValue 'D: 10,0 % free of 200 GB (threshold 20 %, 2 volumes checked)'
+        Save-Result $new $dir 'SRV-NEW-IPU-Assessment.json'
+        $fine = New-FakeResult 'SRV-FINE' -Overall 'OK'
+        $fine.Facts | Add-Member -NotePropertyName CExtension -NotePropertyValue 'Nothing in the way: no partition after C:'
+        $fine.Facts | Add-Member -NotePropertyName LowDataVolumes -NotePropertyValue 'None below 20 % free (3 volumes checked)'
+        Save-Result $fine $dir 'SRV-FINE-IPU-Assessment.json'
+        Save-Result (New-FakeResult 'SRV-OLD' -Overall 'OK') $dir 'SRV-OLD-IPU-Assessment.json'
+        $script:DrvOut = Join-Path $TestDrive 'drv448-out'
+        $null = & $script:MergeScript -InputFolder $dir -OutputFolder $script:DrvOut
+        $script:DrvRows = @(Import-Csv -LiteralPath (Join-Path $script:DrvOut 'IPU-Fleet-Servers.csv') -Delimiter ';')
+        $script:DrvHtml = Get-Content -LiteralPath (Join-Path $script:DrvOut 'IPU-Fleet-Overview.html') -Raw
+    }
+    It 'the servers CSV has both columns, next to CDrive' {
+        $names = @($script:DrvRows[0].PSObject.Properties | ForEach-Object { $_.Name })
+        $i = [array]::IndexOf($names, 'CDrive')
+        $names[$i + 1] | Should -Be 'CExtension'
+        $names[$i + 2] | Should -Be 'LowDataVolumes'
+        $row = @($script:DrvRows | Where-Object { $_.ComputerName -eq 'SRV-NEW' })[0]
+        $row.CExtension | Should -Be 'Blocked by P3 (recovery partition, 480 MB) after C:'
+        $row.LowDataVolumes | Should -Be 'D: 10,0 % free of 200 GB (threshold 20 %, 2 volumes checked)'
+    }
+    It 'a result from before 4.9.0 has both columns empty' {
+        $row = @($script:DrvRows | Where-Object { $_.ComputerName -eq 'SRV-OLD' })[0]
+        $row.CExtension | Should -BeNullOrEmpty
+        $row.LowDataVolumes | Should -BeNullOrEmpty
+    }
+    It 'the server table has a Low drives column that shows only what needs attention' {
+        $script:DrvHtml | Should -Match '>Low drives</th>'
+        $script:DrvHtml | Should -Match '<td>D: 10,0 % free of 200 GB \(threshold 20 %, 2 volumes checked\)</td>'
+        $script:DrvHtml | Should -Not -Match 'None below 20 % free'
+    }
+    It 'Get-LowDriveCell: <Text> shows <Expected>' -TestCases @(
+        @{ Text = '';                                                             Expected = '' }
+        @{ Text = 'No other local volume';                                        Expected = '' }
+        @{ Text = 'None below 20 % free (3 volumes checked)';                     Expected = '' }
+        @{ Text = 'None below 20 % free (1 volume checked); not readable: F:';    Expected = 'not readable: F:' }
+        @{ Text = 'D: 10,0 % free of 200 GB (threshold 20 %, 2 volumes checked)'; Expected = 'D: 10,0 % free of 200 GB (threshold 20 %, 2 volumes checked)' }
+    ) {
+        Get-LowDriveCell $Text | Should -Be $Expected
+    }
+}
+
 Describe 'Teams needed in the fleet overview (#323, #374)' {
     BeforeAll {
         # The pure functions live in a part of the merge script: load it as it is built in.

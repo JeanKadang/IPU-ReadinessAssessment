@@ -46,6 +46,8 @@
         "Activation": { "$ref": "#/definitions/text" },
         "Nla": { "$ref": "#/definitions/text" },
         "CDrive": { "$ref": "#/definitions/text" },
+        "CExtension": { "$ref": "#/definitions/text" },
+        "LowDataVolumes": { "$ref": "#/definitions/text" },
         "CompatScan": { "$ref": "#/definitions/text" }
       },
       "additionalProperties": false

@@ -158,6 +158,8 @@ function Get-ReportFact {
         @('RDP access', (Get-RdpAccessFact)),
         @('RDP drive redirection', $script:Data.DriveRedirection),
         @('C: drive', $script:Data.CSummary),
+        @('C: extension', $script:Data.CExtension),
+        @('Other drives low on space', $script:Data.DataVolumeSummary),
         @('Memory GB / logical CPUs', ((Get-ResultText $Results 'PERFORMANCE' 'MemoryGB') + ' / ' + (Get-ResultText $Results 'PERFORMANCE' 'LogicalProcessors'))),
         @('Evidence copies (unredacted)', $EvidenceRoot),
         @('Policy evidence', $script:Data.PolicyEvidence),
@@ -174,6 +176,8 @@ function Get-ReportFact {
             @('RDP access', (Get-RdpAccessFact)),
             @('UAC', $script:Data.UacSummary),
             @('C: drive', $script:Data.CSummary),
+            @('C: extension', $script:Data.CExtension),
+            @('Other drives low on space', $script:Data.DataVolumeSummary),
             @('Endpoint protection', (& $factValue $epp 'antivirus'))
         )
     }
@@ -505,6 +509,8 @@ function New-AssessmentJsonObject {
             SqlServer        = $script:Data.SqlSummary
             Activation       = $script:Data.ActivationSummary
             CDrive           = $script:Data.CSummary
+            CExtension       = [string]$script:Data.CExtension
+            LowDataVolumes   = [string]$script:Data.DataVolumeSummary
             CompatScan       = (Get-ResultText $Results 'COMPAT_SCAN' 'SetupCompatibilityScan')
         }
         Results             = @($Results | Select-Object CheckId,Area,Item,Status,Kind,Value,Details,Recommendation,Source,Command,CommandKind,Link,LinkTitle)
