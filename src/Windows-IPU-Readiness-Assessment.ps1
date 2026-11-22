@@ -546,22 +546,37 @@ function ConvertTo-EolWindowsRelease {
     return $Version
 }
 
-function Get-EolCycleMatch {
-    # Pure: the release whose number is the longest prefix of the version.
-    # 8.2.12 matches release 8.2 (not 8); 1.10.3 matches 1.10 (not 1.1).
+function Get-EolCycleCandidate {
+    # Pure: every release whose number is the longest prefix of the version.
+    # Normally one; several when releases differ only in a suffix that is
+    # dropped (13.0-sp2 and 13.0-sp3 both read as 13.0) (#388).
     param($Cycles, [string]$Version)
     $v = @(ConvertTo-EolSegment $Version)
-    $best = $null; $bestLen = 0
+    $best = @(); $bestLen = 0
     foreach ($c in @($Cycles)) {
         $s = @(ConvertTo-EolSegment ([string]$c.cycle))
         if ($s.Count -eq 0 -or $v.Count -lt $s.Count) { continue }
         $same = $true
         for ($i = 0; $i -lt $s.Count; $i++) { if ($s[$i] -ne $v[$i]) { $same = $false; break } }
-        if ($same -and $s.Count -gt $bestLen) { $best = $c; $bestLen = $s.Count }
+        if (-not $same) { continue }
+        if ($s.Count -gt $bestLen) { $best = @($c); $bestLen = $s.Count }
+        elseif ($s.Count -eq $bestLen) { $best += $c }
     }
     return $best
 }
 
+function Get-EolCycleMatch {
+    # Pure: the release whose number is the longest prefix of the version.
+    # 8.2.12 matches release 8.2 (not 8); 1.10.3 matches 1.10 (not 1.1).
+    # When two releases tie, the installed version cannot tell them apart
+    # and no release is returned (#388): the newest, or the oldest, would be
+    # a guess, and a wrong one reads as a supported or an expired product.
+    # Get-EolDecision turns that into a MANUAL row that names the releases.
+    param($Cycles, [string]$Version)
+    $candidates = @(Get-EolCycleCandidate $Cycles $Version)
+    if ($candidates.Count -eq 1) { return $candidates[0] }
+    return $null
+}
 function ConvertTo-EolDate {
     # Pure: a snapshot date as text, a DateTime (PowerShell 7 parses
     # ISO dates in JSON itself) or a boolean -> a date, or $null.
@@ -591,6 +606,13 @@ function Get-EolDecision {
     # different releases that a number comparison would not tell apart.
     if ($Product -eq 'windows-server') { $c = @(@($Cycles) | Where-Object { [string]$_.cycle -eq $lookup }) | Select-Object -First 1 }
     else { $c = Get-EolCycleMatch $Cycles $lookup }
+    if ($null -eq $c -and $Product -ne 'windows-server') {
+        $tied = @(Get-EolCycleCandidate $Cycles $lookup)
+        if ($tied.Count -gt 1) {
+            $result.Text = $name + ' ' + $Version + ' fits more than one release in the snapshot (' + (($tied | ForEach-Object { [string]$_.cycle }) -join ', ') + '), and the version cannot tell them apart. Check which release is installed on the vendor lifecycle page.'
+            return [pscustomobject]$result
+        }
+    }
     if ($null -eq $c) {
         $result.Text = $name + ' ' + $Version + ' matches no known release. Check the vendor lifecycle page.'
         return [pscustomobject]$result
