@@ -22,6 +22,28 @@ Describe 'Get-EolCycleMatch' {
     It 'the longest release number wins' { (Get-EolCycleMatch $script:Cycles '8.2.12').cycle | Should -Be '8.2' }
     It 'falls back to the shorter release' { (Get-EolCycleMatch $script:Cycles '8.4.0').cycle | Should -Be '8' }
     It 'no match' { Get-EolCycleMatch $script:Cycles '9.0' | Should -BeNullOrEmpty }
+    Context 'two releases that the version cannot tell apart (#388)' {
+        BeforeAll { $script:Tied = @((New-Cycle '13.0-sp2' '2020-01-01'), (New-Cycle '13.0-sp3' '2026-07-14'), (New-Cycle '12.0' '2016-01-01')) }
+        It 'a tie returns no release, whatever the order' {
+            Get-EolCycleMatch $script:Tied '13.0.6300.2' | Should -BeNullOrEmpty
+            Get-EolCycleMatch @($script:Tied[1], $script:Tied[0]) '13.0.6300.2' | Should -BeNullOrEmpty
+        }
+        It 'the candidates are both releases' {
+            (@(Get-EolCycleCandidate $script:Tied '13.0.6300.2') | ForEach-Object { $_.cycle }) -join ',' | Should -Be '13.0-sp2,13.0-sp3'
+        }
+        It 'a longer match breaks the tie' {
+            $c = @((New-Cycle '13.0-sp2' '2020-01-01'), (New-Cycle '13.0.6300' '2030-01-01'))
+            (Get-EolCycleMatch $c '13.0.6300.2').cycle | Should -Be '13.0.6300'
+        }
+        It 'Get-EolDecision is MANUAL, names both releases and gives no date' {
+            $d = Get-EolDecision 'sql-server' '13.0.6300.2' $script:Tied ([datetime]'2026-11-22')
+            $d.Status | Should -Be 'MANUAL'
+            $d.State | Should -Be 'Unknown'
+            $d.Cycle | Should -Be ''
+            $d.Text | Should -Match '13\.0-sp2, 13\.0-sp3'
+            $d.EolDate | Should -Be ''
+        }
+    }
     It 'a version shorter than the release number does not match' { Get-EolCycleMatch @((New-Cycle '4.8.1' $false)) '4.8' | Should -BeNullOrEmpty }
     It '.NET Framework 4.8.x is not 4.8.1' {
         $c = @((New-Cycle '4.8.1' $false), (New-Cycle '4.8' $false))
@@ -373,4 +395,4 @@ Describe 'Verdicts for detected products - the shared core (#275)' {
         foreach ($s in 'EndingSoon', 'SecurityOnly') { Get-EolResultKind ([pscustomobject]@{ State = $s }) | Should -Be 'Observation' }
         Get-EolResultKind ([pscustomobject]@{ State = 'Supported' }) | Should -Be 'Evidence'
     }
-}
+}
