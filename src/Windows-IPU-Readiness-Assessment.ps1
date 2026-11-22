@@ -244,6 +244,9 @@ param(
     [ValidateRange(1, 365)][int]$AVMaxAgeDays = 3,
     [ValidateRange(1, 3650)][int]$CertificateWarningDays = 90,
     [ValidateRange(1, 180)][int]$KmsRenewWarnDays = 165,   # a KMS activation lasts 180 days and renews every 7: below 165 days left, two renewals were missed
+    # A data volume with less free space than this is a WARNING (#443): it
+    # cannot be extended while the fallback snapshot of the upgrade exists.
+    [ValidateRange(1, 90)][int]$DataVolumeMinFreePercent = 20,
     [ValidateRange(1, 10240)][int]$SystemPartitionMinFreeMB = 50,
     [ValidateRange(1, 10240)][int]$RecoveryPartitionMinFreeMB = 250,   # Microsoft's WinRE servicing guidance
 
@@ -724,7 +727,7 @@ $script:CollectorVersion  = '4.8.0'
 $script:ProfileSettingNames = @(
     'TargetMediaLanguage','BlockDomainControllerIPU','BlockVdiIPU','PkiAllowedTargets',
     'MinimumCFreeGB','ExtendBlockGB','MinimumMemoryGB','MaxPatchAgeDays','UptimeWarningDays','GroupPolicyMaxAgeDays','AVMaxAgeDays',
-    'CertificateWarningDays','KmsRenewWarnDays','SystemPartitionMinFreeMB','RecoveryPartitionMinFreeMB',
+    'CertificateWarningDays','KmsRenewWarnDays','DataVolumeMinFreePercent','SystemPartitionMinFreeMB','RecoveryPartitionMinFreeMB',
     'RunDISMScanHealth','RunSFCVerifyOnly','DISMTimeoutMinutes','SFCTimeoutMinutes','SlowCheckBudgetMinutes','CompatScanTimeoutMinutes',
     'EvidenceRoot','EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip','EnableIISConfigEvidence','EnableNetworkEvidence','EnablePrintBackup','PrintBackupTimeoutMinutes',
     'WriteJson','RestrictOutputAcl','NumberCultureName','WriteRedactionKey'
@@ -3988,6 +3991,43 @@ function ConvertFrom-ReagentcInfo {
     return $r
 }
 
+function Get-DataVolumeDecision {
+    # Pure (#443): the local fixed volumes (Win32_Volume: Name, Label,
+    # FileSystem, Capacity, FreeSpace) -> one row per data volume. The system
+    # drive is left out (CFreeSpace measures it), and so is a volume with no
+    # drive letter and no mount point (system reserved, recovery). Below
+    # MinFreePercent is Low: on a virtual machine the disk cannot be extended
+    # while the fallback snapshot of the upgrade exists, so the owner must
+    # know before the change. A size that cannot be read is Unknown, never fine.
+    # ExtendGB: how much to add to reach MinFreePercent again.
+    param([object[]]$Volumes, [string]$SystemDrive = 'C:', [int]$MinFreePercent = 20)
+    $rows = @()
+    $system = ([string]$SystemDrive).TrimEnd('\')
+    foreach ($v in @($Volumes)) {
+        if (-not $v) { continue }
+        $name = ([string]$v.Name).TrimEnd('\')
+        if (-not $name) { continue }
+        if ($name.StartsWith('\\?\')) { continue }
+        if ($system -and $name -eq $system) { continue }
+        $row = [ordered]@{ Name = $name; Label = [string]$v.Label; FileSystem = [string]$v.FileSystem; SizeGB = $null; FreeGB = $null; FreePercent = $null; ExtendGB = 0; Kind = 'Unknown'; Status = 'MANUAL' }
+        $size = 0.0; $free = 0.0
+        $readable = ($null -ne $v.Capacity -and $null -ne $v.FreeSpace -and [double]::TryParse([string]$v.Capacity, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$size) -and [double]::TryParse([string]$v.FreeSpace, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$free) -and $size -gt 0 -and $free -ge 0 -and $free -le $size)
+        if ($readable) {
+            $percent = $free / $size * 100
+            $row.SizeGB = [math]::Round($size / 1GB, 2); $row.FreeGB = [math]::Round($free / 1GB, 2)
+            # Rounded down, so 19.96 is shown as 19.9 and not as the 20 it is below.
+            $row.FreePercent = [math]::Floor($percent * 10) / 10
+            if ($percent -lt $MinFreePercent) {
+                $row.Kind = 'Low'; $row.Status = 'WARNING'
+                $share = $MinFreePercent / 100.0
+                $row.ExtendGB = [int][math]::Max(1, [math]::Ceiling((($share * $size) - $free) / (1 - $share) / 1GB))
+            } else { $row.Kind = 'Ok'; $row.Status = 'OK' }
+        }
+        $rows += [pscustomobject]$row
+    }
+    return @($rows | Sort-Object Name)
+}
+
 function Get-RecoveryPartitionDecision {
     # Pure (#161). Partitions of the C: disk: PartitionNumber, Offset,
     # SizeMB, IsRecovery. A recovery partition after C: blocks extending C:
@@ -6172,6 +6212,24 @@ function Invoke-StorageCheck {
         Add-Result 'STORAGE' 'CFreeSpace' 'ACTION' $script:Data.CSummary ('RequiredExpansionGB=' + $needed) -Recommendation ('Extend ' + $sys + ' by at least ' + $needed + ' GB to reach the ' + $MinimumCFreeGB + ' GB free-space target.') -Source 'Win32_LogicalDisk' -Command (Get-RecommendationCommand 'CFreeSpace').Command -CommandKind 'Check'
     } else {
         Add-Result 'STORAGE' 'CFreeSpace' 'OK' $script:Data.CSummary -Source 'Win32_LogicalDisk'
+    }
+
+    # Data volumes (#443): drive letters and mount points other than the
+    # system drive. A failed query stops the check (not completed), so a
+    # missing list never reads as "no volume is low".
+    foreach ($dv in @(Get-DataVolumeDecision (Get-CimRequired 'Win32_Volume' 'DriveType=3') $sys $DataVolumeMinFreePercent)) {
+        $item = 'DataVolume ' + $dv.Name
+        $about = @(); if ($dv.Label) { $about += ('Label=' + $dv.Label) }; if ($dv.FileSystem) { $about += ('FileSystem=' + $dv.FileSystem) }
+        if ($dv.Kind -eq 'Unknown') {
+            Add-Result 'STORAGE' $item 'MANUAL' 'Size or free space could not be read' $about -Recommendation ('Check the free space of ' + $dv.Name + ' by hand. A volume that is nearly full cannot be extended while the fallback snapshot of the upgrade exists.') -Kind 'Finding' -Source 'Win32_Volume'
+            continue
+        }
+        $value = 'Size ' + (Format-Number $dv.SizeGB) + ' GB, free ' + (Format-Number $dv.FreeGB) + ' GB (' + (Format-Number $dv.FreePercent 1) + ' %)'
+        if ($dv.Kind -eq 'Low') {
+            Add-Result 'STORAGE' $item 'WARNING' $value ($about + @(('ExtendGB=' + $dv.ExtendGB), ('Threshold=' + $DataVolumeMinFreePercent + ' % free'))) -Recommendation ('Less than ' + $DataVolumeMinFreePercent + ' % free. On a virtual machine a disk cannot be extended while a snapshot exists, and the fallback snapshot of the upgrade stays during the change and often for days after it, until the upgrade is approved. If ' + $dv.Name + ' needs more space, extend it before the snapshot is taken (about ' + $dv.ExtendGB + ' GB reaches ' + $DataVolumeMinFreePercent + ' % free). If another team owns the volume (database, application), tell them now.') -Source 'Win32_Volume'
+        } else {
+            Add-Result 'STORAGE' $item 'OK' $value $about -Source 'Win32_Volume'
+        }
     }
 
     if (-not (Test-CommandAvailable 'Get-Disk')) {

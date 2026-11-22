@@ -66,6 +66,24 @@ function Invoke-StorageCheck {
         Add-Result 'STORAGE' 'CFreeSpace' 'OK' $script:Data.CSummary -Source 'Win32_LogicalDisk'
     }
 
+    # Data volumes (#443): drive letters and mount points other than the
+    # system drive. A failed query stops the check (not completed), so a
+    # missing list never reads as "no volume is low".
+    foreach ($dv in @(Get-DataVolumeDecision (Get-CimRequired 'Win32_Volume' 'DriveType=3') $sys $DataVolumeMinFreePercent)) {
+        $item = 'DataVolume ' + $dv.Name
+        $about = @(); if ($dv.Label) { $about += ('Label=' + $dv.Label) }; if ($dv.FileSystem) { $about += ('FileSystem=' + $dv.FileSystem) }
+        if ($dv.Kind -eq 'Unknown') {
+            Add-Result 'STORAGE' $item 'MANUAL' 'Size or free space could not be read' $about -Recommendation ('Check the free space of ' + $dv.Name + ' by hand. A volume that is nearly full cannot be extended while the fallback snapshot of the upgrade exists.') -Kind 'Finding' -Source 'Win32_Volume'
+            continue
+        }
+        $value = 'Size ' + (Format-Number $dv.SizeGB) + ' GB, free ' + (Format-Number $dv.FreeGB) + ' GB (' + (Format-Number $dv.FreePercent 1) + ' %)'
+        if ($dv.Kind -eq 'Low') {
+            Add-Result 'STORAGE' $item 'WARNING' $value ($about + @(('ExtendGB=' + $dv.ExtendGB), ('Threshold=' + $DataVolumeMinFreePercent + ' % free'))) -Recommendation ('Less than ' + $DataVolumeMinFreePercent + ' % free. On a virtual machine a disk cannot be extended while a snapshot exists, and the fallback snapshot of the upgrade stays during the change and often for days after it, until the upgrade is approved. If ' + $dv.Name + ' needs more space, extend it before the snapshot is taken (about ' + $dv.ExtendGB + ' GB reaches ' + $DataVolumeMinFreePercent + ' % free). If another team owns the volume (database, application), tell them now.') -Source 'Win32_Volume'
+        } else {
+            Add-Result 'STORAGE' $item 'OK' $value $about -Source 'Win32_Volume'
+        }
+    }
+
     if (-not (Test-CommandAvailable 'Get-Disk')) {
         foreach ($d in @(Get-CimSafe 'Win32_DiskDrive' | Sort-Object Index)) { Add-Result 'STORAGE' ('Disk' + $d.Index) 'INFO' ('SizeGB=' + (Format-Number ($d.Size/1GB))) ('Model=' + $d.Model) -Source 'Win32_DiskDrive' }
         return

@@ -8,7 +8,7 @@ $script:CollectorVersion  = '4.8.0'
 $script:ProfileSettingNames = @(
     'TargetMediaLanguage','BlockDomainControllerIPU','BlockVdiIPU','PkiAllowedTargets',
     'MinimumCFreeGB','ExtendBlockGB','MinimumMemoryGB','MaxPatchAgeDays','UptimeWarningDays','GroupPolicyMaxAgeDays','AVMaxAgeDays',
-    'CertificateWarningDays','KmsRenewWarnDays','SystemPartitionMinFreeMB','RecoveryPartitionMinFreeMB',
+    'CertificateWarningDays','KmsRenewWarnDays','DataVolumeMinFreePercent','SystemPartitionMinFreeMB','RecoveryPartitionMinFreeMB',
     'RunDISMScanHealth','RunSFCVerifyOnly','DISMTimeoutMinutes','SFCTimeoutMinutes','SlowCheckBudgetMinutes','CompatScanTimeoutMinutes',
     'EvidenceRoot','EnableRDPPolicyEvidence','LgpoExe','PolicyEvidenceRoot','CreatePolicyEvidenceZip','EnableIISConfigEvidence','EnableNetworkEvidence','EnablePrintBackup','PrintBackupTimeoutMinutes',
     'WriteJson','RestrictOutputAcl','NumberCultureName','WriteRedactionKey'

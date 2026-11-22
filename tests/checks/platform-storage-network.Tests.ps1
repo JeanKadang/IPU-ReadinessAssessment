@@ -241,6 +241,36 @@ Describe 'Checks on a fake server: platform storage network' -Skip:($env:OS -ne 
                 $r.Recommendation | Should -Match 'Extend D: by'
             } finally { $env:SystemDrive = $before }
         }
+        It 'a data volume low on free space is a WARNING that explains the snapshot; others are OK; unreadable is MANUAL (#443)' {
+            $script:Fake.Cim['Win32_Volume|DriveType=3'] = @(
+                [pscustomobject]@{ Name = 'C:\'; Label = 'System'; FileSystem = 'NTFS'; Capacity = [uint64]100GB; FreeSpace = [uint64]1GB }
+                [pscustomobject]@{ Name = 'D:\'; Label = 'Data';   FileSystem = 'NTFS'; Capacity = [uint64]200GB; FreeSpace = [uint64]20GB }
+                [pscustomobject]@{ Name = 'E:\'; Label = 'Logs';   FileSystem = 'ReFS'; Capacity = [uint64]100GB; FreeSpace = [uint64]60GB }
+                [pscustomobject]@{ Name = 'F:\'; Label = '';       FileSystem = '';     Capacity = $null;         FreeSpace = $null }
+            )
+            (Invoke-TestCheck 'storage').Outcome | Should -Be 'Completed'
+            (Get-Row 'STORAGE' 'DataVolume C:').Count | Should -Be 0
+            $d = (Get-Row 'STORAGE' 'DataVolume D:')[0]
+            $d.Status | Should -Be 'WARNING'; $d.Kind | Should -Be 'Finding'
+            $d.Value | Should -Match '10[.,]0 %'
+            $d.Recommendation | Should -Match 'snapshot'
+            $d.Recommendation | Should -Match 'about 25 GB'
+            ($d.Details -join ' ') | Should -Match 'Label=Data'
+            (Get-Row 'STORAGE' 'DataVolume E:')[0].Status | Should -Be 'OK'
+            $f = (Get-Row 'STORAGE' 'DataVolume F:')[0]
+            $f.Status | Should -Be 'MANUAL'; $f.Kind | Should -Be 'Finding'
+        }
+        It 'the threshold for data volumes is a setting (#443)' {
+            $script:Fake.Cim['Win32_Volume|DriveType=3'] = @([pscustomobject]@{ Name = 'D:\'; Label = 'Data'; FileSystem = 'NTFS'; Capacity = [uint64]200GB; FreeSpace = [uint64]20GB })
+            $DataVolumeMinFreePercent = 5
+            $null = Invoke-TestCheck 'storage'
+            (Get-Row 'STORAGE' 'DataVolume D:')[0].Status | Should -Be 'OK'
+        }
+        It 'a volume list that cannot be read stops the check; it is not "no volume is low" (#443)' {
+            $script:Fake.CimThrow = @('Win32_Volume')
+            (Invoke-TestCheck 'storage').Outcome | Should -Be 'Failed'
+            @($script:Results | Where-Object { $_.Item -like 'DataVolume*' }).Count | Should -Be 0
+        }
         It 'enough free space, partitions, mount points and labels' {
             (Invoke-TestCheck 'storage').Outcome | Should -Be 'Completed'
             (Get-Row 'STORAGE' 'CFreeSpace')[0].Status | Should -Be 'OK'

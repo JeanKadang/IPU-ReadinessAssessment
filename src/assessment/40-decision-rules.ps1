@@ -1774,6 +1774,43 @@ function ConvertFrom-ReagentcInfo {
     return $r
 }
 
+function Get-DataVolumeDecision {
+    # Pure (#443): the local fixed volumes (Win32_Volume: Name, Label,
+    # FileSystem, Capacity, FreeSpace) -> one row per data volume. The system
+    # drive is left out (CFreeSpace measures it), and so is a volume with no
+    # drive letter and no mount point (system reserved, recovery). Below
+    # MinFreePercent is Low: on a virtual machine the disk cannot be extended
+    # while the fallback snapshot of the upgrade exists, so the owner must
+    # know before the change. A size that cannot be read is Unknown, never fine.
+    # ExtendGB: how much to add to reach MinFreePercent again.
+    param([object[]]$Volumes, [string]$SystemDrive = 'C:', [int]$MinFreePercent = 20)
+    $rows = @()
+    $system = ([string]$SystemDrive).TrimEnd('\')
+    foreach ($v in @($Volumes)) {
+        if (-not $v) { continue }
+        $name = ([string]$v.Name).TrimEnd('\')
+        if (-not $name) { continue }
+        if ($name.StartsWith('\\?\')) { continue }
+        if ($system -and $name -eq $system) { continue }
+        $row = [ordered]@{ Name = $name; Label = [string]$v.Label; FileSystem = [string]$v.FileSystem; SizeGB = $null; FreeGB = $null; FreePercent = $null; ExtendGB = 0; Kind = 'Unknown'; Status = 'MANUAL' }
+        $size = 0.0; $free = 0.0
+        $readable = ($null -ne $v.Capacity -and $null -ne $v.FreeSpace -and [double]::TryParse([string]$v.Capacity, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$size) -and [double]::TryParse([string]$v.FreeSpace, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$free) -and $size -gt 0 -and $free -ge 0 -and $free -le $size)
+        if ($readable) {
+            $percent = $free / $size * 100
+            $row.SizeGB = [math]::Round($size / 1GB, 2); $row.FreeGB = [math]::Round($free / 1GB, 2)
+            # Rounded down, so 19.96 is shown as 19.9 and not as the 20 it is below.
+            $row.FreePercent = [math]::Floor($percent * 10) / 10
+            if ($percent -lt $MinFreePercent) {
+                $row.Kind = 'Low'; $row.Status = 'WARNING'
+                $share = $MinFreePercent / 100.0
+                $row.ExtendGB = [int][math]::Max(1, [math]::Ceiling((($share * $size) - $free) / (1 - $share) / 1GB))
+            } else { $row.Kind = 'Ok'; $row.Status = 'OK' }
+        }
+        $rows += [pscustomobject]$row
+    }
+    return @($rows | Sort-Object Name)
+}
+
 function Get-RecoveryPartitionDecision {
     # Pure (#161). Partitions of the C: disk: PartitionNumber, Offset,
     # SizeMB, IsRecovery. A recovery partition after C: blocks extending C:

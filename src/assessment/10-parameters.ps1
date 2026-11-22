@@ -44,6 +44,9 @@ param(
     [ValidateRange(1, 365)][int]$AVMaxAgeDays = 3,
     [ValidateRange(1, 3650)][int]$CertificateWarningDays = 90,
     [ValidateRange(1, 180)][int]$KmsRenewWarnDays = 165,   # a KMS activation lasts 180 days and renews every 7: below 165 days left, two renewals were missed
+    # A data volume with less free space than this is a WARNING (#443): it
+    # cannot be extended while the fallback snapshot of the upgrade exists.
+    [ValidateRange(1, 90)][int]$DataVolumeMinFreePercent = 20,
     [ValidateRange(1, 10240)][int]$SystemPartitionMinFreeMB = 50,
     [ValidateRange(1, 10240)][int]$RecoveryPartitionMinFreeMB = 250,   # Microsoft's WinRE servicing guidance
 
