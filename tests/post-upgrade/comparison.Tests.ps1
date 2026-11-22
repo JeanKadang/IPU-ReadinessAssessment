@@ -437,3 +437,143 @@ Describe 'Get-SnapshotWithoutList (#306)' {
         @($snap.PSObject.Properties).Count | Should -Be 3
     }
 }
+
+Describe 'Get-PostModeRow: advice for before the upgrade is not a finding after it (#445)' {
+    It '<Area> / <Item> (<Status>) becomes <To>' -TestCases @(
+        @{ Area = 'PERFORMANCE'; Item = 'LogicalProcessors'; Status = 'WARNING'; Rec = 'Setup will be noticeably slower on 2 logical CPUs; consider adding CPU temporarily for the change window.'; To = 'INFO' }
+        @{ Area = 'PERFORMANCE'; Item = 'LogicalProcessors'; Status = 'ACTION';  Rec = 'Add CPU before IPU; setup on a single logical CPU is very slow.'; To = 'INFO' }
+        @{ Area = 'PERFORMANCE'; Item = 'MemoryGB';          Status = 'WARNING'; Rec = 'Below the project threshold of 8 GB; consider adding memory before IPU.'; To = 'INFO' }
+        @{ Area = 'STORAGE';     Item = 'PartitionAfterC';   Status = 'WARNING'; Rec = 'A partition after C: (often WinRE) blocks simple extension of C:. Plan the layout change before the window if C: needs to grow.'; To = 'INFO' }
+        @{ Area = 'WORKLOAD';    Item = 'File Server';       Status = 'WARNING'; Rec = 'Document shares and permissions; confirm users are informed of the outage.'; To = 'INFO' }
+        @{ Area = 'WORKLOAD';    Item = 'Oracle Database';   Status = 'WARNING'; Rec = 'Engage the application owner and confirm Oracle Database supports Windows Server 2019.'; To = 'INFO' }
+        @{ Area = 'IIS';         Item = 'Web-Server';        Status = 'WARNING'; Rec = 'Immediately before the IPU, run the appcmd.exe add backup command shown'; To = 'INFO' }
+        @{ Area = 'ANTIVIRUS';   Item = 'Contoso EDR';       Status = 'WARNING'; Rec = "Confirm this version supports Windows Server 2019 and get the vendor's IPU procedure."; To = 'INFO' }
+        @{ Area = 'RDS';         Item = 'RDSessionHost';     Status = 'ACTION';  Rec = 'Plan a longer IPU window, record the licensing configuration'; To = 'INFO' }
+        @{ Area = 'NETWORK';     Item = 'LBFO team: Team1';  Status = 'ACTION';  Rec = 'Microsoft requires NIC Teaming to be disabled before IPU and re-enabled afterwards.'; To = 'INFO' }
+        @{ Area = 'PKI';         Item = 'CertificationAuthority'; Status = 'ACTION'; Rec = 'Engage the PKI team: verify CA database and private-key backup'; To = 'INFO' }
+        @{ Area = 'SECURITY';    Item = 'BitLocker C:';      Status = 'WARNING'; Rec = 'Confirm the recovery key is escrowed and retrievable before IPU.'; To = 'INFO' }
+        @{ Area = 'RDP';         Item = 'DriveRedirection';  Status = 'WARNING'; Rec = 'If you plan to copy media or tools over an RDP-mapped drive, use another route'; To = 'INFO' }
+        @{ Area = 'RDP';         Item = 'RDPAccessReadiness'; Status = 'MANUAL'; Rec = 'Test an end-to-end RDP logon with the account that will be used in the change window.'; To = 'INFO' }
+        @{ Area = 'LICENSING';   Item = 'OEMLicense';        Status = 'WARNING'; Rec = 'Confirm the target licence/key before IPU.'; To = 'INFO' }
+        @{ Area = 'NETWORK_DEPENDENCY'; Item = 'HostsFile';  Status = 'MANUAL';  Rec = 'Confirm owner and purpose of each hosts entry and test the affected name resolution after IPU.'; To = 'INFO' }
+        @{ Area = 'NETWORK_DEPENDENCY'; Item = 'StaticRoutes'; Status = 'MANUAL'; Rec = 'Confirm each static route is still needed and test it after IPU.'; To = 'INFO' }
+        @{ Area = 'FILE_SHARES'; Item = 'FileShares';        Status = 'WARNING'; Rec = 'Shared folders must be reachable again right after the upgrade.'; To = 'INFO' }
+        @{ Area = 'ACCESS';      Item = 'DomainMembership';  Status = 'WARNING'; Rec = 'Workgroup server: confirm it is onboarded in CyberArk/PAM'; To = 'INFO' }
+        @{ Area = 'PLATFORM';    Item = 'PhysicalOrVirtual'; Status = 'MANUAL';  Rec = 'Validate model, firmware, storage controller and NIC driver support'; To = 'INFO' }
+        @{ Area = 'FEATURE_LIFECYCLE'; Item = 'SMB 1.0';     Status = 'ACTION';  Rec = 'Removed in the target release.'; To = 'INFO' }
+        @{ Area = 'DRIVERS';     Item = 'UnsignedDrivers';   Status = 'WARNING'; Rec = 'Unsigned drivers may not load after the upgrade. Replace them with signed versions before IPU.'; To = 'WARNING' }
+        @{ Area = 'GROUP_POLICY'; Item = 'GPO: Servers 2012'; Status = 'WARNING'; Rec = 'After the upgrade the server reports Windows Server 2019. Check that this filter still matches (or still excludes) it as intended, before the change.'; To = 'WARNING' }
+        @{ Area = 'WINDOWS_HEALTH'; Item = 'LatestUpdate';   Status = 'WARNING'; Rec = 'Install the latest cumulative update before IPU; Setup and Dynamic Update are most reliable on a current source OS.'; To = 'WARNING' }
+        @{ Area = 'WINDOWS_HEALTH'; Item = 'PendingReboot';  Status = 'WARNING'; Rec = 'The paths show which product left the pending rename. Reboot in the pre-change window; if the same entries come back, ask the owner.'; To = 'WARNING' }
+    ) {
+        $r = Get-PostModeRow $Area $Item $Status 'Finding' $Rec
+        $r | Should -Not -BeNullOrEmpty
+        $r.Status | Should -Be $To
+        if ($To -eq 'INFO') { $r.Kind | Should -Be 'Evidence'; $r.DropCommand | Should -BeTrue } else { $r.Kind | Should -Be 'Finding'; $r.DropCommand | Should -BeFalse }
+        # What is left never tells the reader to do something before the upgrade.
+        $r.Recommendation | Should -Not -Match 'before (the )?(IPU|upgrade|change)|change window|pre-change|Setup will|outage|IPU procedure'
+    }
+    It 'names the workload in the test advice' {
+        (Get-PostModeRow 'WORKLOAD' 'DFS Replication' 'WARNING' 'Finding' 'Confirm DFSR health and backlog before IPU').Recommendation | Should -Match '^Test DFS Replication after the upgrade'
+    }
+    It 'a feature row keeps its text and only stops counting' {
+        (Get-PostModeRow 'FEATURE_LIFECYCLE' 'SMB 1.0' 'ACTION' 'Finding' 'Microsoft no longer develops it.').Recommendation | Should -Be 'Microsoft no longer develops it.'
+    }
+    It 'leaves a row alone when it is a real state problem: <Area> / <Item> (<Status>)' -TestCases @(
+        @{ Area = 'WORKLOAD';   Item = 'VDI: Citrix Virtual Delivery Agent'; Status = 'BLOCKER'; Rec = 'Take the server out of the IPU plan.' }
+        @{ Area = 'WORKLOAD';   Item = 'VDI: Citrix Virtual Delivery Agent'; Status = 'WARNING'; Rec = 'Hand it to the VDI / Endpoint Team.' }
+        @{ Area = 'ANTIVIRUS';  Item = 'Microsoft Defender Antivirus';       Status = 'WARNING'; Rec = 'Update Defender signatures before IPU.' }
+        @{ Area = 'NETWORK';    Item = 'LBFO team: Team1';                   Status = 'ACTION';  Rec = 'LBFO under a Hyper-V vSwitch is not supported on Windows Server 2022/2025.' }
+        @{ Area = 'NETWORK_DEPENDENCY'; Item = 'HostsFile';                  Status = 'MANUAL';  Rec = 'The hosts file could not be read. Open it by hand.' }
+        @{ Area = 'RDP';        Item = 'RDPAccessReadiness';                 Status = 'ACTION';  Rec = 'Fix the local RDP block and test an end-to-end logon, or plan console-only access for the change.' }
+        @{ Area = 'STORAGE';    Item = 'CFreeSpace';                         Status = 'ACTION';  Rec = 'Extend C: by at least 40 GB.' }
+        @{ Area = 'STORAGE';    Item = 'DataVolume D:';                      Status = 'WARNING'; Rec = 'Less than 20 % free.' }
+        @{ Area = 'STORAGE';    Item = 'RecoveryPartitionAfterC';            Status = 'WARNING'; Rec = 'This partition blocks extending C: later.' }
+        @{ Area = 'CERTIFICATES'; Item = 'IIS https *:443';                  Status = 'WARNING'; Rec = 'Renew soon and verify the binding after IPU.' }
+        @{ Area = 'POST_UPGRADE'; Item = 'Automatic services no longer running'; Status = 'ACTION'; Rec = 'Start them.' }
+        @{ Area = 'EXCHANGE';   Item = 'ExchangeServerRole';                 Status = 'BLOCKER'; Rec = 'Microsoft does not support an in-place OS upgrade on a server with Exchange installed.' }
+        @{ Area = 'SQL';        Item = 'Instance: MSSQLSERVER';              Status = 'BLOCKER'; Rec = 'Not supported on the target.' }
+    ) {
+        Get-PostModeRow $Area $Item $Status 'Finding' $Rec | Should -BeNullOrEmpty
+    }
+    It 'only touches rows that count: observations, checklist items and evidence stay as they are' {
+        foreach ($kind in 'Observation', 'Checklist', 'Evidence') {
+            Get-PostModeRow 'PERFORMANCE' 'LogicalProcessors' 'WARNING' $kind 'Setup will be noticeably slower' | Should -BeNullOrEmpty
+        }
+    }
+    It 'every rule is well formed, and its text is not advice for before the upgrade' {
+        $script:PostModeRules.Count | Should -BeGreaterThan 15
+        foreach ($rule in $script:PostModeRules) {
+            $rule.Area | Should -Match '^\^[A-Z_]+\$$'
+            { [regex]$rule.Item } | Should -Not -Throw
+            @($rule.Status).Count | Should -BeGreaterThan 0
+            foreach ($s in @($rule.Status)) { @('BLOCKER', 'ACTION', 'WARNING', 'MANUAL') | Should -Contain $s }
+            @('INFO', '') | Should -Contain $rule.To
+            $script:AreaMap.ContainsKey($rule.Area.Trim('^', '$')) | Should -BeTrue -Because ($rule.Area + ' must be a report area')
+            if ($rule.ContainsKey('Text')) { $rule.Text | Should -Not -Match 'before (the )?(IPU|upgrade)|change window' }
+        }
+    }
+    It 'a rule that depends on the wording of a recommendation still finds that wording in the checks' {
+        # If a check rewords its advice, the rule would silently stop matching.
+        $source = (Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot '..\..\src\assessment') -Filter '*.ps1' | ForEach-Object { Get-Content -LiteralPath $_.FullName } | Where-Object { $_ -notmatch '^\s*@\{ Area = ' }) -join "`n"
+        foreach ($rule in @($script:PostModeRules | Where-Object { $_.ContainsKey('Rec') })) {
+            $pattern = ([string]$rule.Rec).TrimStart('^')
+            $source | Should -Match $pattern -Because ('the rule for ' + $rule.Area + ' ' + $rule.Item + ' looks for this text')
+        }
+        foreach ($rule in @($script:PostModeRules | Where-Object { $_.ContainsKey('Replace') })) { $source | Should -Match ([string]$rule.Replace[0]) }
+    }
+}
+
+Describe 'Add-Result in a Post run (#445)' {
+    BeforeEach { $script:Results.Clear() }
+    It 'pre-upgrade advice is written as INFO, without its command, and does not count' {
+        $AssessmentMode = 'Post'
+        Add-Result 'IIS' 'Web-Server' 'WARNING' 'Installed' -Recommendation 'Immediately before the IPU, run the appcmd.exe add backup command shown.' -Command 'appcmd add backup PreIPU' -CommandKind 'Change'
+        Add-Result 'STORAGE' 'CFreeSpace' 'ACTION' 'free 5 GB' -Recommendation 'Extend C:.' -Command 'Get-Volume' -CommandKind 'Check'
+        $iis = $script:Results[0]
+        $iis.Status | Should -Be 'INFO'; $iis.Kind | Should -Be 'Evidence'
+        $iis.Command | Should -BeNullOrEmpty
+        $iis.Recommendation | Should -Match 'has started'
+        $script:Results[1].Status | Should -Be 'ACTION'
+        $script:Results[1].Command | Should -Be 'Get-Volume'
+        Get-OverallStatus $script:Results | Should -Be 'ACTION'
+        @($script:Results | Where-Object { $_.Kind -eq 'Finding' }).Count | Should -Be 1
+    }
+    It 'the same row is a finding with its command in a Pre run' {
+        $AssessmentMode = 'Pre'
+        Add-Result 'IIS' 'Web-Server' 'WARNING' 'Installed' -Recommendation 'Immediately before the IPU, run the appcmd.exe add backup command shown.' -Command 'appcmd add backup PreIPU' -CommandKind 'Change'
+        $script:Results[0].Status | Should -Be 'WARNING'; $script:Results[0].Kind | Should -Be 'Finding'
+        $script:Results[0].Command | Should -Be 'appcmd add backup PreIPU'
+    }
+}
+
+Describe 'Compare-IPUSnapshot: changes that come with the new release (#445)' {
+    It 'the Server-Gui and User-Interfaces features of 2012 R2 are INFO, not missing' {
+        $d = Compare-IPUSnapshot ([pscustomobject]@{ Features = @('Server-Gui-Mgmt-Infra', 'Server-Gui-Shell', 'User-Interfaces-Infra', 'FS-FileServer') }) ([pscustomobject]@{ Features = @('FS-FileServer') })
+        $r = @($d | Where-Object { $_.Item -eq 'Windows features removed or renamed by Microsoft' })[0]
+        $r.Status | Should -Be 'INFO'
+        $r.Details | Should -Be 'Server-Gui-Mgmt-Infra, Server-Gui-Shell, User-Interfaces-Infra'
+        $r.Recommendation | Should -Match 'Windows Server 2016'
+        @($d | Where-Object { $_.Item -eq 'Windows features missing after upgrade' }).Count | Should -Be 0
+    }
+    It 'BITS stopped with start type Manual is its normal state, not a service that stopped' {
+        $before = [pscustomobject]@{ Services = @([pscustomobject]@{ Name = 'BITS'; State = 'Running'; StartMode = 'Auto' }) }
+        $d = Compare-IPUSnapshot $before ([pscustomobject]@{ Services = @([pscustomobject]@{ Name = 'BITS'; State = 'Stopped'; StartMode = 'Manual' }) })
+        @($d | Where-Object { $_.Item -eq 'Automatic services no longer running' }).Count | Should -Be 0
+        @($d | Where-Object { $_.Item -eq 'Service changes made by Windows' })[0].Details | Should -Match '^BITS \(Stopped, Manual\)'
+        # Still Automatic and stopped is a real finding; disabled is reported as disabled.
+        $d = Compare-IPUSnapshot $before ([pscustomobject]@{ Services = @([pscustomobject]@{ Name = 'BITS'; State = 'Stopped'; StartMode = 'Auto' }) })
+        @($d | Where-Object { $_.Item -eq 'Automatic services no longer running' })[0].Status | Should -Be 'ACTION'
+        $d = Compare-IPUSnapshot $before ([pscustomobject]@{ Services = @([pscustomobject]@{ Name = 'BITS'; State = 'Stopped'; StartMode = 'Disabled' }) })
+        @($d | Where-Object { $_.Item -eq 'Automatic services now disabled' }).Count | Should -Be 1
+    }
+    It 'Local Group Policy is not a lost or a new GPO when the two runs read the list in different ways' {
+        $withLocal = [pscustomobject]@{ Gpos = @('Default Domain Policy', 'Local Group Policy', 'Servers') }
+        $without = [pscustomobject]@{ Gpos = @('Default Domain Policy', 'Servers') }
+        (Compare-IPUSnapshot $withLocal $without).Count | Should -Be 0
+        (Compare-IPUSnapshot $without $withLocal).Count | Should -Be 0
+        # A domain GPO that stopped applying is still reported.
+        $d = Compare-IPUSnapshot $withLocal ([pscustomobject]@{ Gpos = @('Default Domain Policy') })
+        @($d | Where-Object { $_.Item -eq 'Applied GPOs missing after upgrade' })[0].Details | Should -Be 'Servers'
+    }
+}
