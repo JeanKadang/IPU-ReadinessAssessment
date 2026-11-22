@@ -453,6 +453,7 @@ Describe 'Get-PostModeRow: advice for before the upgrade is not a finding after 
         @{ Area = 'PKI';         Item = 'CertificationAuthority'; Status = 'ACTION'; Rec = 'Engage the PKI team: verify CA database and private-key backup'; To = 'INFO' }
         @{ Area = 'SECURITY';    Item = 'BitLocker C:';      Status = 'WARNING'; Rec = 'Confirm the recovery key is escrowed and retrievable before IPU.'; To = 'INFO' }
         @{ Area = 'RDP';         Item = 'DriveRedirection';  Status = 'WARNING'; Rec = 'If you plan to copy media or tools over an RDP-mapped drive, use another route'; To = 'INFO' }
+        @{ Area = 'RDP';         Item = 'RDPAccessReadiness'; Status = 'MANUAL'; Rec = 'Test an end-to-end RDP logon with the account that will be used in the change window.'; To = 'INFO' }
         @{ Area = 'LICENSING';   Item = 'OEMLicense';        Status = 'WARNING'; Rec = 'Confirm the target licence/key before IPU.'; To = 'INFO' }
         @{ Area = 'NETWORK_DEPENDENCY'; Item = 'HostsFile';  Status = 'MANUAL';  Rec = 'Confirm owner and purpose of each hosts entry and test the affected name resolution after IPU.'; To = 'INFO' }
         @{ Area = 'NETWORK_DEPENDENCY'; Item = 'StaticRoutes'; Status = 'MANUAL'; Rec = 'Confirm each static route is still needed and test it after IPU.'; To = 'INFO' }
@@ -484,6 +485,7 @@ Describe 'Get-PostModeRow: advice for before the upgrade is not a finding after 
         @{ Area = 'ANTIVIRUS';  Item = 'Microsoft Defender Antivirus';       Status = 'WARNING'; Rec = 'Update Defender signatures before IPU.' }
         @{ Area = 'NETWORK';    Item = 'LBFO team: Team1';                   Status = 'ACTION';  Rec = 'LBFO under a Hyper-V vSwitch is not supported on Windows Server 2022/2025.' }
         @{ Area = 'NETWORK_DEPENDENCY'; Item = 'HostsFile';                  Status = 'MANUAL';  Rec = 'The hosts file could not be read. Open it by hand.' }
+        @{ Area = 'RDP';        Item = 'RDPAccessReadiness';                 Status = 'ACTION';  Rec = 'Fix the local RDP block and test an end-to-end logon, or plan console-only access for the change.' }
         @{ Area = 'STORAGE';    Item = 'CFreeSpace';                         Status = 'ACTION';  Rec = 'Extend C: by at least 40 GB.' }
         @{ Area = 'STORAGE';    Item = 'DataVolume D:';                      Status = 'WARNING'; Rec = 'Less than 20 % free.' }
         @{ Area = 'STORAGE';    Item = 'RecoveryPartitionAfterC';            Status = 'WARNING'; Rec = 'This partition blocks extending C: later.' }
