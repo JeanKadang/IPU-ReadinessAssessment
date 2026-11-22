@@ -55,6 +55,9 @@ function Invoke-TasksCheck {
         $fullName = $t.TaskPath + $t.TaskName
         $isBuiltIn = Test-BuiltInTaskAccount $user ([string]$t.Principal.LogonType)
         if ($user -and -not $isBuiltIn) { Add-RedactionLiteral $user 'ACCOUNT' }
+        # A task folder is named by whoever made it, often after the customer
+        # or the product (GHSA-232q).
+        foreach ($segment in @(([string]$t.TaskPath) -split '\\' | Where-Object { $_ })) { Add-RedactionLiteral $segment 'NAME' }
         $script:Data.Snapshot.Tasks += $fullName
         # Windows' own per-user feed tasks: one line for all of them (#214).
         if (Test-WindowsPerUserTask $fullName) { $perUser++; continue }
