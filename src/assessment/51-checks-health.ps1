@@ -242,6 +242,37 @@ function Invoke-PendingRebootCheck {
     }
 }
 
+function Add-CumulativeUpdateResult {
+    # Reads cu-table.json (-CuTablePath, then next to the script, then the
+    # report folder; a file read, no network call) and adds the row that names
+    # the installed cumulative update. A file that cannot be read is MANUAL.
+    param([string]$BuildText)
+    $scriptFolder = ''
+    if ($script:ScriptFolder) { $scriptFolder = $script:ScriptFolder }
+    $searched = @(Get-CuTableSearchPath $CuTablePath $scriptFolder $ReportDirectory)
+    $found = ''
+    foreach ($candidate in $searched) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { $found = $candidate; break }
+    }
+    if ($CuTablePath -and -not $found) {
+        Add-Result 'WINDOWS_HEALTH' 'CumulativeUpdate' 'MANUAL' 'The cumulative update table named with -CuTablePath was not found' @(('Looked in: ' + ($searched -join '; '))) -Recommendation 'Check the path, or copy cu-table.json from the release next to the script.' -Source 'cu-table.json'
+        return
+    }
+    $table = $null
+    if ($found) {
+        try { $table = Get-Content -LiteralPath $found -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
+        catch {
+            Add-Result 'WINDOWS_HEALTH' 'CumulativeUpdate' 'MANUAL' 'The cumulative update table could not be read' @($found, $_.Exception.Message) -Recommendation 'Replace cu-table.json with the copy from the release.' -Source 'cu-table.json'
+            return
+        }
+    }
+    $lookup = Get-CumulativeUpdateLookup $table $BuildText
+    $d = Get-CumulativeUpdateDecision $lookup $MaxPatchMonthsBehind (Get-Date)
+    $details = @($d.Details)
+    if ($found) { $details += ('Table=' + $found) }
+    Add-Result 'WINDOWS_HEALTH' 'CumulativeUpdate' $d.Status $d.Value $details -Recommendation $d.Recommendation -Kind $d.Kind -Source 'cu-table.json, CurrentVersion registry (UBR)'
+}
+
 function Invoke-PatchLevelCheck {
     $fixes = @()
     # SilentlyContinue: An empty or failed list is reported as MANUAL below ('No dated update history').
@@ -259,6 +290,9 @@ function Invoke-PatchLevelCheck {
     $ubr = Get-RegistryValueSafe $cvKey 'UBR'
     if ($build.Exists -and $build.Value) { $buildText = [string]$build.Value }
     if ($ubr.Exists -and $null -ne $ubr.Value -and $buildText) { $buildText += '.' + $ubr.Value }
+    # The installed cumulative update from the table next to the script (#267).
+    # Its own row, before the update-date verdict below, which can return early.
+    Add-CumulativeUpdateResult $buildText
     $patch = Get-PatchLevelDecision $fixes (Get-Date) $MaxPatchAgeDays $buildText
     if ($patch.Kind -eq 'NoHistory') {
         Add-Result 'WINDOWS_HEALTH' 'LatestUpdate' 'MANUAL' $patch.Value -Recommendation 'Confirm the server has the latest cumulative and servicing stack updates before IPU.' -Source 'Get-HotFix'

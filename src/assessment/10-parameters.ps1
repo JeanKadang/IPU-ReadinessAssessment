@@ -39,6 +39,8 @@ param(
     [ValidateRange(1, 1024)][int]$ExtendBlockGB = 10,
     [ValidateRange(1, 4096)][int]$MinimumMemoryGB = 8,
     [ValidateRange(1, 3650)][int]$MaxPatchAgeDays = 60,
+    # Months the installed cumulative update may be behind the newest one in cu-table.json (#267).
+    [ValidateRange(1, 60)][int]$MaxPatchMonthsBehind = 2,
     [ValidateRange(1, 3650)][int]$UptimeWarningDays = 60,
     [ValidateRange(1, 365)][int]$GroupPolicyMaxAgeDays = 7,
     [ValidateRange(1, 365)][int]$AVMaxAgeDays = 3,
@@ -88,6 +90,10 @@ param(
     # End-of-life snapshot (eol-snapshot.json, ADR 0003). Blank = look next to
     # the script, then in the report folder. Reading a file makes no network call.
     [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$EolSnapshotPath = '',
+
+    # Cumulative update table (cu-table.json, #267): which monthly update is installed
+    # and how many months behind it is. Blank = next to the script, then in the report folder.
+    [ValidateScript({ $_ -eq '' -or [IO.Path]::IsPathRooted($_) })][string]$CuTablePath = '',
 
     # Output.
     [ValidateScript({ [IO.Path]::IsPathRooted($_) })][string]$ReportDirectory = 'C:\Temp\IPU-Assessment',

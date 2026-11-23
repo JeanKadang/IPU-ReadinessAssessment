@@ -134,6 +134,7 @@ These are project values, not Microsoft minimums (unless noted).
 | `ExtendBlockGB` | 10 | Step size for that recommendation: the shortfall is rounded up to a multiple of this (for example 12 GB short with a 10 GB step recommends 20 GB) |
 | `MinimumMemoryGB` | 8 | Below this, a `WARNING` recommends adding memory |
 | `MaxPatchAgeDays` | 60 | Warn when the newest security (cumulative) update is older |
+| `MaxPatchMonthsBehind` | 2 | Warn when the installed cumulative update is more than this many monthly releases behind the newest one in `cu-table.json` (#267) |
 | `UptimeWarningDays` | 60 | Warn on long uptime (a reboot is overdue) |
 | `GroupPolicyMaxAgeDays` | 7 | Domain members: warn when Group Policy has not applied for longer |
 | `AVMaxAgeDays` | 3 | Warn when antivirus signatures are older |
@@ -206,6 +207,7 @@ deliberately not inside the report folder, which is retrieved and shared.
 | `WriteJson` | `$true` | Write the result JSON (also the post-upgrade baseline) |
 | `RestrictOutputAcl` | `$true` | Folders the script creates (report folder, evidence folders) get access for SYSTEM and Administrators only. Existing folders are never changed, but one that is a junction or symbolic link, or a local folder owned by anyone but SYSTEM, Administrators or the account that runs the assessment, is refused: the run stops with the reason, and `-ReportDirectory` needs a new folder name. The folder above it is not checked (it is usually `C:\Temp`, which every user may write to; [ADR 0009](adr/0009-redaction-parent-folder-and-known-gaps.md)): use a folder under a parent only administrators control if that matters. Otherwise the report warns, with the `icacls` command to fix it, if an existing folder is readable by Everyone, Authenticated Users or Users. `$false` keeps inherited permissions |
 | `NumberCultureName` | `da-DK` | Culture used to format numbers in the SA result line. Invalid values fall back to invariant. The default is kept for existing SA jobs; set your own in a [profile file](#site-data-files-patterns-and-profile) |
+| `CuTablePath` | blank | The cumulative update table (`cu-table.json`, #267): build and update revision to KB, release month and months behind. Blank = next to the script, then in `ReportDirectory`. Without a table the report says the cumulative update is not identified |
 | `EolSnapshotPath` | blank | The EOL snapshot (`eol-snapshot.json`). Blank = next to the script, then in `ReportDirectory`. See [End-of-life data](user-guide-fleet.md#end-of-life-data) |
 | `RedactExisting` | blank | A folder or report file: write redacted copies of existing reports and stop (see [Sharing a report: redaction](user-guide-read-result.md#sharing-a-report-redaction)) |
 | `RedactReport` | `$false` | Replace names, addresses, accounts, SIDs and certificate details with placeholders in the HTML and JSON, for sharing outside the team. See [Sharing a report: redaction](user-guide-read-result.md#sharing-a-report-redaction) |
@@ -267,7 +269,7 @@ case-insensitively; keep them specific, because a broad word matches unrelated s
 `PolicyEvidenceRoot`, `CreatePolicyEvidenceZip`, `EnableIISConfigEvidence`, `EnableNetworkEvidence`, `EnablePrintBackup`,
 `PrintBackupTimeoutMinutes`), `WriteJson`, `RestrictOutputAcl`, `NumberCultureName` and `WriteRedactionKey`. Each value must pass the same
 checks as the parameter (range, type, absolute path), and a list such as `PkiAllowedTargets` may not be empty. `AssessmentMode`, `TargetServerVersion`,
-`TargetMediaPath`, `ReportDirectory`, `RedactReport`, `RedactExisting`, `EolSnapshotPath` and the two file parameters describe one run and cannot
+`TargetMediaPath`, `ReportDirectory`, `RedactReport`, `RedactExisting`, `EolSnapshotPath`, `CuTablePath` and the two file parameters describe one run and cannot
 be set in a profile. Settings passed as arguments win; the *Profile file* row names them. `RestrictOutputAcl` from a profile
 reaches the evidence folders only: the report folder is set up before the file is read, and the row says so (#261).
 

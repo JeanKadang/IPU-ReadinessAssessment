@@ -7,6 +7,7 @@
 30-core.ps1
 35-check-data.ps1
 40-decision-rules.ps1
+41-cu-table.ps1
 50-checks.ps1
 51-checks-health.ps1
 52-checks-workloads.ps1

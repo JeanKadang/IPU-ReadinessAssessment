@@ -17,6 +17,7 @@ check pendingreboot Completed
   WINDOWS_HEALTH | PendingReboot | OK | Evidence
   WINDOWS_HEALTH | Uptime | OK | Evidence
 check patchlevel Completed
+  WINDOWS_HEALTH | CumulativeUpdate | INFO | Observation
   WINDOWS_HEALTH | LatestUpdate | OK | Evidence
 check history Completed
   UPGRADE_HISTORY | OSInstallDate | INFO | Evidence

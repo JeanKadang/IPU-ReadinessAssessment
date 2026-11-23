@@ -102,6 +102,7 @@ BeforeAll {
     $script:CheckIds = @($script:Writes.Keys)
     $script:FunctionOwner = @{}
     foreach ($name in 'Invoke-RdpPolicyAssessment', 'Save-RdpPolicyEvidence', 'Invoke-RdpEnablementAssessment', 'Invoke-RdpNlaAssessment', 'Invoke-RdpListenerAssessment', 'Invoke-RdpUserRightAssessment', 'Find-RdpDriveBlock', 'Add-RdpVerdictResult', 'Close-RdpPolicyEvidence') { $script:FunctionOwner[$name] = 'rdp' }
+    $script:FunctionOwner['Add-CumulativeUpdateResult'] = 'patchlevel'
     $script:OtherFunctions = @($script:CheckPartFunctions.Values | Where-Object { $_.Name -ne 'Register-AssessmentCheck' -and -not $script:CheckBodyFunction.ContainsKey($_.Name) })
     foreach ($f in $script:OtherFunctions) {
         if ($script:FunctionOwner.ContainsKey($f.Name)) {
