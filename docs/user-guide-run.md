@@ -295,6 +295,24 @@ arguments behave the same (#131). Another site sets its own values in a profile 
 `"NumberCultureName": "en-US"` or `"BlockDomainControllerIPU": false`, and runs the merge with `-Delimiter ','` if
 its Excel expects commas.
 
+### The cumulative update table
+
+The release contains `cu-table.json` (in the repository `src/cu-table.json`) next to the scripts. It maps a build and
+its update revision (UBR), for example `20348.5870`, to the monthly cumulative update: KB number, release date and
+update type, for Windows Server 2016, 2019, 2022 and 2025. Copy it to the server next to the `.ps1`, or give
+`-CuTablePath`. The assessment reads it as a file; nothing is fetched. The `CumulativeUpdate` row then names the
+installed update, its release month and how many monthly releases it is behind the newest one in the table.
+
+- **Where it comes from.** The facts (build, UBR, KB number, date, update type) are read from Microsoft's
+  [Windows Server release information](https://learn.microsoft.com/en-us/windows/release-health/windows-server-release-info)
+  page by `build/Update-CuTable.ps1`. The "CU table" workflow runs it every Wednesday and opens a pull request when
+  rows were added; a person reviews and merges it. The release workflow stops when the table is older than three months.
+- **What it does not cover.** Windows Server 2012 R2 is not on that page, and its update history gives no build. A
+  server on 2012 R2, or on a build the table does not list, gets an INFO row: the age comes from the update dates only.
+  A UBR that is missing for a covered build is MANUAL, never OK.
+- **Months behind** is measured against the newest monthly release in the table, so a table that is older than 60
+  days says so on the row. Use the table from the newest release.
+
 ## Running from OpenText Server Automation
 
 The script is designed for SA Ad-Hoc Scripting, normally as the SA Agent (LocalSystem).

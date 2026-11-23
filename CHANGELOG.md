@@ -6,7 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- The installed cumulative update is looked up by build and update revision (UBR) in a table, `cu-table.json`, next to the script (#267, #457, #458). The new `CumulativeUpdate` row in the Windows health chapter names the KB, the release month and how many monthly releases the server is behind the newest one in the table; more than `-MaxPatchMonthsBehind` (default 2) is a WARNING, a UBR the table does not have is MANUAL, and no table, or a build it does not cover, is INFO. `-CuTablePath` names the file. The table is a data file so that a monthly refresh needs no script release; the shipped table and its refresh workflow follow in #459.
+- The installed cumulative update is looked up by build and update revision (UBR) in a table, `cu-table.json`, next to the script (#267, #457, #458). The new `CumulativeUpdate` row in the Windows health chapter names the KB, the release month and how many monthly releases the server is behind the newest one in the table; more than `-MaxPatchMonthsBehind` (default 2) is a WARNING, a UBR the table does not have is MANUAL, and no table, or a build it does not cover, is INFO. `-CuTablePath` names the file. The table is a data file so that a monthly refresh needs no script release. It ships with the release as `cu-table.json` (536 rows for Windows Server 2016, 2019, 2022 and 2025, read from Microsoft's Windows Server release information page; facts only) and is refreshed weekly by the new "CU table" workflow through a pull request (#459, `build/Update-CuTable.ps1`). The release stops when the table is older than three months. Windows Server 2012 R2 is not on that page and is not covered yet.
 
 ### Security
 

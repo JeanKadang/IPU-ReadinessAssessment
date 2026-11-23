@@ -5436,7 +5436,7 @@ function Test-CuTableContent {
             $seen[$ubr] = $true
             if ([string]$row.kb -notmatch '^KB\d{6,8}$') { $problems += ($label + ': kb "' + [string]$row.kb + '" is not like KB1234567.') }
             if (-not (ConvertTo-CuDateText $row.released)) { $problems += ($label + ': released is not a date (yyyy-MM-dd).') }
-            if ($row.PSObject.Properties['type'] -and @('B', 'OOB', 'C', 'D') -notcontains [string]$row.type) { $problems += ($label + ': type "' + [string]$row.type + '" is not B, OOB, C or D.') }
+            if ($row.PSObject.Properties['type'] -and @('B', 'OOB', 'C', 'D', 'A', 'E') -notcontains [string]$row.type) { $problems += ($label + ': type "' + [string]$row.type + '" is not B, OOB, C, D, A or E.') }
         }
     }
     return @($problems)
