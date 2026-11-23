@@ -321,6 +321,55 @@ Describe 'Checks on a fake server: windows health' -Skip:($env:OS -ne 'Windows_N
         }
     }
 
+    Context 'patchlevel: the cumulative update table (#267)' {
+        BeforeEach {
+            # No table next to the script or in the report folder unless a test writes one.
+            $script:ScriptFolder = Join-Path $TestDrive 'nowhere'
+            $ReportDirectory = Join-Path $TestDrive 'noreport'
+            $CuTablePath = ''
+            $script:TableFile = Join-Path $TestDrive 'cu-table.json'
+        }
+        It 'no table is an INFO row, and the update-date row is unchanged' {
+            $null = Invoke-TestCheck 'patchlevel'
+            $r = (Get-Row 'WINDOWS_HEALTH' 'CumulativeUpdate')[0]
+            $r.Status | Should -Be 'INFO'; $r.Value | Should -Match 'No cumulative update table'
+            (Get-Row 'WINDOWS_HEALTH' 'LatestUpdate')[0].Status | Should -Be 'OK'
+        }
+        It 'a table that has the build names the KB and the months behind' {
+            [IO.File]::WriteAllText($script:TableFile, '{ "schema": "IPU-CuTable/1", "asOf": "' + (Get-Date).ToString('yyyy-MM-dd') + '", "releases": { "14393": [ { "ubr": 7428, "kb": "KB1234567", "released": "2026-07-14" }, { "ubr": 7500, "kb": "KB1234568", "released": "2026-10-13" } ] } }')
+            $CuTablePath = $script:TableFile
+            $null = Invoke-TestCheck 'patchlevel'
+            $r = (Get-Row 'WINDOWS_HEALTH' 'CumulativeUpdate')[0]
+            $r.Value | Should -Match 'KB1234567'
+            $r.Status | Should -Be 'WARNING'
+            ($r.Details -join ' ') | Should -Match 'MonthsBehind=3'
+        }
+        It 'a UBR missing from a table that covers the build is MANUAL' {
+            [IO.File]::WriteAllText($script:TableFile, '{ "schema": "IPU-CuTable/1", "asOf": "2026-11-01", "releases": { "14393": [ { "ubr": 1, "kb": "KB1234567", "released": "2026-07-14" } ] } }')
+            $CuTablePath = $script:TableFile
+            $null = Invoke-TestCheck 'patchlevel'
+            (Get-Row 'WINDOWS_HEALTH' 'CumulativeUpdate')[0].Status | Should -Be 'MANUAL'
+        }
+        It 'a table that is not JSON is MANUAL, and the update-date row still runs' {
+            [IO.File]::WriteAllText($script:TableFile, 'not json')
+            $CuTablePath = $script:TableFile
+            (Invoke-TestCheck 'patchlevel').Outcome | Should -Be 'Completed'
+            (Get-Row 'WINDOWS_HEALTH' 'CumulativeUpdate')[0].Status | Should -Be 'MANUAL'
+            (Get-Row 'WINDOWS_HEALTH' 'LatestUpdate')[0].Status | Should -Be 'OK'
+        }
+        It 'a -CuTablePath that does not exist is MANUAL' {
+            $CuTablePath = Join-Path $TestDrive 'missing.json'
+            $null = Invoke-TestCheck 'patchlevel'
+            (Get-Row 'WINDOWS_HEALTH' 'CumulativeUpdate')[0].Status | Should -Be 'MANUAL'
+        }
+        It 'the row is still written when there is no dated update history' {
+            $script:Fake.HotFixes = @()
+            $null = Invoke-TestCheck 'patchlevel'
+            @(Get-Row 'WINDOWS_HEALTH' 'CumulativeUpdate').Count | Should -Be 1
+            (Get-Row 'WINDOWS_HEALTH' 'LatestUpdate')[0].Status | Should -Be 'MANUAL'
+        }
+    }
+
     Context 'history' {
         It 'no upgrade evidence on a clean install' {
             (Invoke-TestCheck 'history').Outcome | Should -Be 'Completed'

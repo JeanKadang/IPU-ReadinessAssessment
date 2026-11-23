@@ -4,6 +4,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- The installed cumulative update is looked up by build and update revision (UBR) in a table, `cu-table.json`, next to the script (#267, #457, #458). The new `CumulativeUpdate` row in the Windows health chapter names the KB, the release month and how many monthly releases the server is behind the newest one in the table; more than `-MaxPatchMonthsBehind` (default 2) is a WARNING, a UBR the table does not have is MANUAL, and no table, or a build it does not cover, is INFO. `-CuTablePath` names the file. The table is a data file so that a monthly refresh needs no script release; the shipped table and its refresh workflow follow in #459.
+
 ### Security
 
 - `-RedactExisting` now masks passwords and tokens in the task command lines of reports made before 4.9.0, in the JSON and in the HTML, with the same note as a live run (#451, follow-up to GHSA-3xmq-62gm-6hxj). The parent of the output folder stays unchecked and three kinds of name stay best effort; both are recorded in [ADR 0009](docs/adr/0009-redaction-parent-folder-and-known-gaps.md).
