@@ -4,6 +4,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- `-RedactExisting` now masks passwords and tokens in the task command lines of reports made before 4.9.0, in the JSON and in the HTML, with the same note as a live run (#451, follow-up to GHSA-3xmq-62gm-6hxj). The parent of the output folder stays unchecked and three kinds of name stay best effort; both are recorded in [ADR 0009](docs/adr/0009-redaction-parent-folder-and-known-gaps.md).
+
 ## [4.9.1] - 2026-11-23
 
 ### Fixed

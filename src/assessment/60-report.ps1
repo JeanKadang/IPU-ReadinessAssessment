@@ -557,6 +557,35 @@ function Get-RedactionLiteralFromResult {
     return ,$found
 }
 
+function Hide-TaskActionInResult {
+    # Reports made before 4.9.0 still hold the passwords of scheduled-task
+    # command lines (GHSA-3xmq-62gm-6hxj, #451). Masks the Action= detail of
+    # every TASKS row of a loaded result with Hide-CommandLineSecret, adds the
+    # same note the live run adds, and returns the original/masked pairs so the
+    # caller can mask the same text in the HTML. Changes the rows it is given.
+    param([object[]]$Results)
+    $pairs = @()
+    foreach ($r in @($Results)) {
+        if ($r.Area -ne 'TASKS' -or -not $r.PSObject.Properties['Details']) { continue }
+        $details = @($r.Details)
+        $changed = $false
+        for ($i = 0; $i -lt $details.Count; $i++) {
+            if ([string]$details[$i] -notmatch '(?s)^Action=(.*)$') { continue }
+            $original = $Matches[1]
+            $hidden = Hide-CommandLineSecret $original
+            if (-not $hidden.Masked) { continue }
+            $details[$i] = 'Action=' + $hidden.Text
+            $pairs += [pscustomobject]@{ Original = $original; Masked = $hidden.Text }
+            $changed = $true
+        }
+        if ($changed) {
+            $details += 'Note=A password or token in the arguments was masked.'
+            $r.Details = $details
+        }
+    }
+    return $pairs
+}
+
 function Invoke-RedactExisting {
     # -RedactExisting (#101): writes REDACTED- copies of existing reports
     # without collecting anything. The originals are not changed. Returns the
@@ -592,6 +621,10 @@ function Invoke-RedactExisting {
             $domain = ''
             $member = @($obj.Results | Where-Object { $_.Area -eq 'ACCESS' -and $_.Item -eq 'DomainMembership' -and [string]$_.Value -match '^Domain=' }) | Select-Object -First 1
             if ($member) { $domain = ([string]$member.Value).Substring(7) }
+            # Passwords in task command lines of reports made before 4.9.0 (#451):
+            # masked in the rows here and in the HTML below, whatever the rules
+            # find afterwards.
+            $maskPairs = @(Hide-TaskActionInResult @($obj.Results))
             $script:Data = @{}
             foreach ($l in (Get-RedactionLiteralFromResult @($obj.Results))) { Add-RedactionLiteral $l.Value $l.Kind }
             $ctx = New-RedactionContext ([string]$obj.ComputerName) $domain
@@ -610,7 +643,9 @@ function Invoke-RedactExisting {
             $html = [IO.Path]::ChangeExtension($jf.FullName, '.html')
             $note = ''; $written = '.json'
             if (Test-Path -LiteralPath $html) {
-                [IO.File]::WriteAllText($base + '.html', (Protect-ReportHtml ([IO.File]::ReadAllText($html)) $ctx), (New-Object System.Text.UTF8Encoding($false)))
+                $page = [IO.File]::ReadAllText($html)
+                foreach ($pair in $maskPairs) { $page = $page.Replace((ConvertTo-HtmlText $pair.Original), (ConvertTo-HtmlText $pair.Masked)) }
+                [IO.File]::WriteAllText($base + '.html', (Protect-ReportHtml $page $ctx), (New-Object System.Text.UTF8Encoding($false)))
                 $written += '/.html'
             } else { $note += ' (no HTML report next to it)' }
             # The run log beside the report (#329), with the same placeholders.
