@@ -68,7 +68,7 @@ A four-part number is kept as a version when its surroundings say so: after *ver
 number after a product name looks exactly like an address and is replaced (#243).
 
 > **Redaction is best effort.** It recognises the patterns above and the names the script itself collected
-> (accounts, GPO names). Company words inside product, task or file names, or an unusual format, can stay visible.
+> (accounts, GPO names). Company words inside product, task or file names, the name of another server in free text, or an unusual format, can stay visible ([ADR 0009](adr/0009-redaction-parent-folder-and-known-gaps.md)).
 > **Read a redacted report before you share it.**
 
 **Redact a report that already exists.** To share a report you already have, without running the assessment script again:
