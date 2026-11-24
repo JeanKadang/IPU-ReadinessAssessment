@@ -77,6 +77,19 @@ so a new check that reads the inventory must be added to the table.
 
 A new check is a function `Invoke-<Name>Check` in the part of its chapter, one `Register-Check` line in `Register-AssessmentCheck` (the order of the lines is the run order), and a row in `docs/checks.md`. The tests find a check body through that line.
 
+## Data files that ship with the scripts
+
+`src/eol-snapshot.json` (end-of-life dates, ADR 0003) and `src/cu-table.json` (cumulative updates by build and UBR, #267)
+are data, not parts: the release copies them next to the scripts, and each has a workflow that refreshes it through a pull
+request and a check that stops the release when it is too old.
+
+- `build/Update-CuTable.ps1` reads Microsoft's Windows Server release information page and rewrites `src/cu-table.json`
+  (one row per line, sorted, so a diff shows only new rows). `-InputFile` reads a saved copy of the page. It refuses to
+  replace the table with fewer rows than it has, which is what a changed page layout looks like.
+- `build/Test-CuTable.ps1 -CheckAge` validates the file with the same `Test-CuTableContent` the assessment uses.
+- The pure functions are in `src/assessment/41-cu-table.ps1`; the tests are `tests/decision-rules/cumulative-update-table.Tests.ps1`
+  and `tests/CuTable.Tests.ps1`.
+
 ## Later: another script
 
 A dedicated cluster assessment (#153) can get its own manifest that lists the shared parts (report, redaction, JSON,

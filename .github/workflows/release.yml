@@ -104,17 +104,23 @@ jobs:
           # it cannot confirm that a release is still supported, so stale data
           # must not go out unnoticed.
           ./build/Test-EolSnapshot.ps1 -Path src/eol-snapshot.json -CheckAge -MaxAgeMonths 6
+      - name: Require a recent cumulative update table
+        shell: pwsh
+        run: |
+          # The table ships with the scripts (#267). Older than three months it
+          # misses monthly updates, so months behind would be understated.
+          ./build/Test-CuTable.ps1 -Path src/cu-table.json -CheckAge -MaxAgeMonths 3
       - name: Build the zip and hashes
         run: |
           name="IPU-ReadinessAssessment-$VERSION"
           mkdir -p "dist/$name/docs"
-          cp src/Windows-IPU-Readiness-Assessment.ps1 src/Merge-IPUAssessments.ps1 src/Get-IPUEolStatus.ps1 src/eol-snapshot.json README.md CHANGELOG.md LICENSE SECURITY.md "dist/$name/"
+          cp src/Windows-IPU-Readiness-Assessment.ps1 src/Merge-IPUAssessments.ps1 src/Get-IPUEolStatus.ps1 src/eol-snapshot.json src/cu-table.json README.md CHANGELOG.md LICENSE SECURITY.md "dist/$name/"
           cp docs/user-guide.md docs/user-guide-run.md docs/user-guide-read-result.md docs/user-guide-fleet.md docs/user-guide-develop.md docs/checks.md docs/result-schema.md docs/result-schema.json "dist/$name/docs/"
           cp -r docs/examples "dist/$name/docs/"
           cp -r docs/samples "dist/$name/docs/"
           (cd dist && zip -r -X "$name.zip" "$name")
-          (cd dist && cp "$name/Windows-IPU-Readiness-Assessment.ps1" "$name/Merge-IPUAssessments.ps1" "$name/Get-IPUEolStatus.ps1" "$name/eol-snapshot.json" . \
-            && sha256sum "$name.zip" Windows-IPU-Readiness-Assessment.ps1 Merge-IPUAssessments.ps1 Get-IPUEolStatus.ps1 eol-snapshot.json > SHA256SUMS.txt)
+          (cd dist && cp "$name/Windows-IPU-Readiness-Assessment.ps1" "$name/Merge-IPUAssessments.ps1" "$name/Get-IPUEolStatus.ps1" "$name/eol-snapshot.json" "$name/cu-table.json" . \
+            && sha256sum "$name.zip" Windows-IPU-Readiness-Assessment.ps1 Merge-IPUAssessments.ps1 Get-IPUEolStatus.ps1 eol-snapshot.json cu-table.json > SHA256SUMS.txt)
           cat dist/SHA256SUMS.txt
           awk -v v="$VERSION" '$0 ~ "^## \\[" v "\\]" {on=1; next} on && /^## \[/ {exit} on {print}' CHANGELOG.md > dist/notes.md
           {

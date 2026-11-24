@@ -1,0 +1,56 @@
+name: CU table
+
+# Weekly refresh of src/cu-table.json from Microsoft's Windows Server release
+# information page (#267, #459). The table holds facts only (build, update
+# revision, KB number, date, update type). Opens a pull request when the rows
+# changed (a Patch Tuesday, an out-of-band or a preview release); does nothing
+# otherwise. Fails, instead of replacing the table, when the page gives fewer
+# rows than the table has (a changed page layout). A maintainer reviews and
+# merges the pull request. No third-party action: git, gh and PowerShell only.
+#
+# Needs Settings > Actions > General > "Allow GitHub Actions to create and
+# approve pull requests". Checks do not start on a pull request opened with
+# GITHUB_TOKEN: close and reopen the pull request to run them.
+on:
+  schedule:
+    - cron: '23 6 * * 3'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  refresh:
+    name: refresh
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read the release information
+        id: fetch
+        shell: pwsh
+        run: |
+          ./build/Update-CuTable.ps1 -Path src/cu-table.json
+      - name: Check the new table
+        if: steps.fetch.outputs.action == 'PullRequest'
+        shell: pwsh
+        run: ./build/Test-CuTable.ps1 -Path src/cu-table.json -CheckAge
+      - name: Open the pull request
+        if: steps.fetch.outputs.action == 'PullRequest'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REASON: ${{ steps.fetch.outputs.reason }}
+        run: |
+          branch="src/cu-table-$(date -u +%Y-%m-%d)"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$branch"
+          git add src/cu-table.json
+          git commit -m "data: refresh the cumulative update table" -m "$REASON"
+          git push --force origin "$branch"
+          gh pr create --base main --head "$branch" --title "data: refresh the cumulative update table" \
+            --body "Refs #267
+
+          $REASON Read from Microsoft's Windows Server release information page (facts only). Review the diff of src/cu-table.json, then merge." \
+            --label documentation
